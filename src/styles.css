@@ -1,0 +1,322 @@
+/* Repotory Agent Shell — first screen.
+   The brand band is the printed cream card of the Repotory family (the same
+   field the JetBrains plugin uses), so the two products read as one thing
+   before the user has read a word. Everything else is a plain token-driven
+   surface: cards, chips, one quiet type ramp. */
+
+:root {
+  --bg-page: #f5f5f3;
+  --bg-card: #ffffff;
+  --bg-sunken: #eeece8;
+  --bg-hover: #eceae6;
+
+  --border-subtle: #e0ded8;
+  --border-default: #ccc9c1;
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #555555;
+  --text-tertiary: #6a6a6a;
+
+  --accent: #2563eb;
+  --accent-soft: #eff6ff;
+  --success: #2d6a2d;
+  --success-soft: #e8f3e8;
+  --warning: #8b6f3a;
+  --warning-soft: #f5efe6;
+
+  --brand-field: #f5f0e4;
+  --brand-ink: #1b1b1b;
+  --brand-ink-soft: #555555;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 2px 10px rgba(0, 0, 0, 0.08);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+
+  color: var(--text-primary);
+  background-color: var(--bg-page);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-page: #17181a;
+    --bg-card: #1f2124;
+    --bg-sunken: #26282c;
+    --bg-hover: #2b2e33;
+
+    --border-subtle: #2f3237;
+    --border-default: #3c4046;
+
+    --text-primary: #f2f2f0;
+    --text-secondary: #b6b8bb;
+    --text-tertiary: #93969a;
+
+    --accent: #60a5fa;
+    --accent-soft: #1c2634;
+    --success: #7cc47c;
+    --success-soft: #1d2a1d;
+    --warning: #d9b773;
+    --warning-soft: #2a2418;
+
+    --brand-field: #23241f;
+    --brand-ink: #f0efe9;
+    --brand-ink-soft: #b3b2ab;
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 2px 12px rgba(0, 0, 0, 0.45);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------- brand */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 24px;
+  background: var(--brand-field);
+  color: var(--brand-ink);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.brand__text {
+  min-width: 0;
+}
+
+.brand__name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.brand__tagline {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--brand-ink-soft);
+}
+
+.brand .chip {
+  margin-left: auto;
+  border-color: var(--brand-ink-soft);
+  color: var(--brand-ink-soft);
+}
+
+/* ---------------------------------------------------------------- panels */
+
+.panels {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  padding: 20px 24px;
+  align-content: start;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 16px 18px 18px;
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.card__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.card__head .chip {
+  margin-left: auto;
+}
+
+.card__hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.meta {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* ---------------------------------------------------------------- chips */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.chip--ok {
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: transparent;
+}
+
+.chip--warn {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: transparent;
+}
+
+.chip--quiet {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- memory */
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.tool {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+/* ---------------------------------------------------------------- backends */
+
+.backends {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.backend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+}
+
+.backend + .backend {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.backend__name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.backend__path {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- boundary */
+
+.boundary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.boundary li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.boundary li + li {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.boundary__name {
+  font-weight: 600;
+  font-size: 13.5px;
+  min-width: 72px;
+}
+
+.boundary__note {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------------- milestones */
+
+.milestones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 24px 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.milestone {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 3px 10px;
+  border: 1px dashed var(--border-default);
+  border-radius: 999px;
+}
+
+.milestone--next {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-style: solid;
+  border-color: transparent;
+  font-weight: 600;
+}

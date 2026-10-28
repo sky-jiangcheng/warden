@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Repotory Agent Shell</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div class="app">
+      <header class="brand">
+        <div class="brand__text">
+          <h1 class="brand__name">Repotory Agent Shell</h1>
+          <p class="brand__tagline">本地 Agent 入口 · 记忆层由 Repotory MCP 提供</p>
+        </div>
+        <span class="chip chip--quiet">local-only</span>
+      </header>
+
+      <main class="panels">
+        <section class="card">
+          <div class="card__head">
+            <h2 class="card__title">记忆层</h2>
+            <span class="chip" id="memory-chip">检测中</span>
+          </div>
+          <p class="card__hint">
+            Shell 不自建记忆：项目上下文与会话交接都走 Repotory 的 MCP 工具。
+          </p>
+          <p class="meta" id="memory-path"></p>
+          <div class="tools" id="memory-tools"></div>
+        </section>
+
+        <section class="card">
+          <div class="card__head">
+            <h2 class="card__title">模型运行时</h2>
+            <span class="chip" id="default-chip"></span>
+          </div>
+          <p class="card__hint">
+            模型请求一律经 Rust 后端代理，前端不直连任何端口。
+          </p>
+          <ul class="backends" id="backends"></ul>
+        </section>
+
+        <section class="card">
+          <div class="card__head">
+            <h2 class="card__title">第一版产品边界</h2>
+            <span class="chip chip--quiet">Phase 2–4</span>
+          </div>
+          <ul class="boundary">
+            <li><span class="boundary__name">聊天</span><span class="boundary__note">与本地模型就当前项目对话</span></li>
+            <li><span class="boundary__name">读项目</span><span class="boundary__note">附加仓库路径与最近 diff</span></li>
+            <li><span class="boundary__name">执行命令</span><span class="boundary__note">白名单工具，写操作需确认</span></li>
+            <li><span class="boundary__name">记忆面板</span><span class="boundary__note">待确认知识与跨会话结论</span></li>
+            <li><span class="boundary__name">人工确认</span><span class="boundary__note">危险动作默认禁止</span></li>
+          </ul>
+        </section>
+      </main>
+
+      <footer class="milestones">
+        <span class="milestone milestone--next">M1 接入 Repotory MCP</span>
+        <span class="milestone">M2 与本地模型聊当前仓库</span>
+        <span class="milestone">M3 安全执行命令</span>
+        <span class="milestone">M4 跨会话记忆</span>
+        <span class="milestone">M5 一键安装</span>
+        <span class="milestone">M6 独立分发</span>
+      </footer>
+    </div>
+  </body>
+</html>
