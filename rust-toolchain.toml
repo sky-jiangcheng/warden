@@ -1,0 +1,15 @@
+# The Rust toolchain this repository builds with.
+#
+# Why a file and not a version in the workflow: a pinned version in the YAML
+# and the version on a developer's machine are two truths that drift. The
+# `dtolnay/rust-toolchain` action reads this file, so CI and every local
+# checkout resolve the same toolchain — one truth, one place.
+#
+# The version is the one this repository was developed and verified against
+# (cargo check / clippy / test all green on it). Bump it deliberately, not
+# incidentally: an MSRV bump can break the build for anyone on an older
+# toolchain, and that shows up as a red CI run rather than as a clear message.
+#
+# `edition = "2024"` in Cargo.toml requires Rust 1.85 or newer.
+[toolchain]
+channel = "1.98.0"

@@ -115,12 +115,19 @@ mod tests {
     #[test]
     fn ollama_is_the_only_implemented_backend() {
         let backends = detect_backends();
-        let ollama = backends.iter().find(|b| b.id == "ollama").expect("ollama entry");
+        let ollama = backends
+            .iter()
+            .find(|b| b.id == "ollama")
+            .expect("ollama entry");
         assert_eq!(ollama.state, "ready");
 
         for planned in backends.iter().filter(|b| b.id != "ollama") {
             assert_eq!(planned.state, "planned");
-            assert!(!planned.available, "{} must not claim availability", planned.id);
+            assert!(
+                !planned.available,
+                "{} must not claim availability",
+                planned.id
+            );
             assert!(planned.path.is_none());
         }
     }

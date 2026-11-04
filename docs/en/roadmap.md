@@ -6,19 +6,24 @@
 ## The shape
 
 ```
-Repotory MCP memory layer     ↑ lightweight Agent Shell (Tauri)      ↑ local models (Ollama / llama.cpp / MLX)
+Repotory MCP memory layer     ↑ copilot (Agent, Tauri)             ↑ local models (Ollama / llama.cpp / MLX)
                              ↑ tool layer (Git / Shell / file index / database CLI)
                              ↑ mainstream clients (Claude Code / Cursor / VS Code / JetBrains)
 ```
 
-The Shell is not closed: the memory layer is open over MCP; the Shell itself only does "local model entry + memory panels + task confirmation".
+The memory layer is open over MCP; the copilot itself only does "local model entry + command execution + memory panels".
+
+**It and the Repotory desktop app are two products**: the desktop app is the **workbench** (browse,
+edit, approve, govern), the copilot is the **assistant** (read, chat, execute). They share the memory
+layer and the protocol — not the interface, and not the lifecycle.
 
 ## Phase 0: repository and positioning (1 week) — current phase
 
-Split the Agent Shell out of Repotory explicitly while keeping it tightly bound.
+Split the copilot out of Repotory explicitly, making it **its own product**, while keeping it tightly
+bound.
 
 - Create the `repotory-agent-shell` repository;
-- Position it: a local Agent Shell that talks to Repotory MCP by default;
+- Position it: an **independent copilot** that talks to Repotory MCP by default;
 - Lock the stack: Tauri v2 + Rust backend + TS frontend;
 - Ollama first as the model entry, llama.cpp / MLX later;
 - Default model Qwen3 8B Q4, proven on an M4 Pro first;
@@ -28,16 +33,19 @@ Split the Agent Shell out of Repotory explicitly while keeping it tightly bound.
 
 ## Phase 1: wire up the MCP memory layer (1–2 weeks)
 
-Make the Shell consume Repotory's memory reliably.
+Make the copilot consume Repotory's memory reliably.
 
 - Confirm these MCP tools are stable: `repotory_context`, `repotory_handoff`, `repotory_notes_search`, `repotory_projects_list`, `repotory_scan` (the original roadmap's `repotory_pending` and `repotory_snapshot` do not exist in Repotory — see [product.md, open question 1](product.md#1-repotory_pending-and-repotory_snapshot-do-not-exist-in-repotory));
-- Implement the MCP client on the Shell side:
+- **Fetch the tool list dynamically**: use MCP's `tools/list` in place of the hardcoded copy (it has
+  already drifted — see [product.md, the memory-layer contract](product.md#the-memory-layer-contract));
+- Implement the MCP client on the Agent side (**copy the path the two IDE plugins already walk**:
+  spawn the `repotory-mcp` child process over stdio):
   - auto-discover the local Repotory MCP;
   - check the connection at startup;
   - degrade to plain chat when it fails;
 - Minimal proof:
   - open a repository;
-  - the Shell calls `repotory_context`;
+  - the Agent calls `repotory_context`;
   - the context goes into the model request;
   - the answer is written back with `repotory_handoff`.
 
@@ -53,7 +61,7 @@ No UI polish in this phase — the data path comes first.
 - Attach context retrieved from Repotory;
 - Every model request goes through Rust; no port is exposed to the frontend.
 
-Goal: open the Shell, pick a repository, talk to the local model about the project.
+Goal: open the copilot, pick a repository, talk to the local model about the project.
 
 ## Phase 3: the tool execution layer (2–3 weeks)
 
@@ -76,10 +84,13 @@ No fully automatic Agent in this phase — human-in-the-loop first.
 Three panels:
 
 - **Current context**: the current repository, branch, recent diff, injected memory;
-- **Pending knowledge**: Repotory's pending knowledge, with approve / reject;
+- **Approved knowledge**: a read-only view over `repotory_wiki_search` (**pages awaiting approval are
+  invisible to the copilot — that is the workbench's business**, see
+  [product.md, open question 2](product.md#2-phase-4s-approve--reject-collides-with-adr-0015s-human-gate-resolved-option-c));
 - **Cross-session memory**: last session's conclusions, handoff summary, tasks that can continue.
 
-This is the phase that separates the Shell from a plain chat tool. How approve / reject relates to ADR-0015's human gate is [product.md, open question 2](product.md#2-phase-4s-approve--reject-collides-with-adr-0015s-human-gate).
+This is the phase that separates the copilot from a plain chat tool. **The panels are read-only** —
+approving always happens in the Repotory desktop app.
 
 ## Phase 5: local model management (1–2 weeks)
 
@@ -98,8 +109,11 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 - Optional Homebrew cask;
 - The App Store build ships no model and points at Ollama;
 - A `repotory-agent init` one-shot initializer;
-- A minimal VS Code / JetBrains adapter;
-- A README that says it plainly: the Shell is the entry point, Repotory is the memory, MCP is the open protocol.
+- A README that says it plainly: the copilot is the entry point, Repotory is the memory, MCP is the
+  open protocol;
+- **The version coupling written down**: which copilot version pairs with which Repotory version
+  (without a capability handshake that is an implicit constraint — see
+  [product.md, open question 4](product.md#4-version-coupling-with-repotory)).
 
 ## Milestones
 
@@ -114,4 +128,8 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 
 ## The trade-off
 
-Do not turn the Shell into a "full IDE" on day one. Make it Repotory's best local entry point first: open it and chat about the project, see the memory, run commands safely, continue where the last session stopped. Once that path works, consider Claude Code, Cursor, VS Code and JetBrains — or turning the Shell into a more general local Agent platform.
+Do not turn the copilot into a "full IDE" on day one. Make it a good local assistant first: open it and chat about the project, see the memory, run commands safely, continue where the last session stopped. Once that path works, consider Claude Code, Cursor, VS Code and JetBrains — or turning it into a more general local Agent platform.
+
+**The tray and residency are not in this roadmap** — they are the carrier of "close the workbench and
+an assistant is still there", which under ADR-0047 decision 5 belongs to the copilot's own form
+decision (the form is decided by user feedback, not preset).

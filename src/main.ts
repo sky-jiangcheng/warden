@@ -1,4 +1,4 @@
-// Repotory Agent Shell — first screen.
+// Repotory Agent — first screen.
 //
 // The window asks the Rust side for one status payload and renders it. The
 // frontend owns no runtime knowledge: which model backends exist, and whether
@@ -15,7 +15,6 @@ type BackendStatus = {
 type MemoryStatus = {
   available: boolean;
   path: string | null;
-  tools: string[];
 };
 
 type ShellStatus = {
@@ -46,7 +45,6 @@ function setChip(el: HTMLElement, text: string, variant: "ok" | "warn" | "quiet"
 function renderMemory(status: ShellStatus) {
   const chip = pick<HTMLElement>("#memory-chip");
   const path = pick<HTMLElement>("#memory-path");
-  const tools = pick<HTMLElement>("#memory-tools");
 
   if (status.memory.available) {
     setChip(chip, "已安装", "ok");
@@ -54,13 +52,6 @@ function renderMemory(status: ShellStatus) {
   } else {
     setChip(chip, "未安装", "warn");
     path.textContent = "未找到 repotory-mcp —— 安装 Repotory 后即可接入记忆层";
-  }
-
-  for (const tool of status.memory.tools) {
-    const tag = document.createElement("span");
-    tag.className = "tool";
-    tag.textContent = tool;
-    tools.appendChild(tag);
   }
 }
 

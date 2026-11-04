@@ -1,0 +1,124 @@
+# CI test gate / CI 测试门禁
+#
+# Rationale / 背景: this repository had no CI at all — the docs-mirror guard
+# existed as a script but nothing ran it, so the ZH/EN pair could drift silently
+# and nobody would find out until a reader did. This workflow is the gate: every
+# push to master and every pull request must pass all three gates before it can
+# land.
+#
+# Three jobs, independent and parallel: a failure reads as "docs" / "frontend" /
+# "rust" in the checks list instead of hiding inside one red job.
+#
+# What this gate does NOT do: it does not build the Tauri application bundle.
+# Packaging (dmg/icns) needs platform SDKs and belongs in a release workflow
+# triggered by a tag, the same split the Repotory main repo uses.
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+# Repeated pushes on one branch keep only the newest run; the older in-flight
+# ones are cancelled, so the queue does not pile up and the required check stays
+# fresh.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# The gate only needs to read the repo. Least privilege, and it keeps the token
+# from being usable as a write credential inside untrusted PR code.
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------- docs ----
+  # The bilingual manual is a strict 1:1 mirror (docs/** ↔ docs/en/**). That
+  # invariant is easy to break — edit one side, forget the other — and it is
+  # invisible in review because both files still look fine on their own. The
+  # guard is the script; this job is what makes it actually run.
+  docs:
+    name: Docs mirror
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check the ZH/EN mirror
+        run: npm run check:docs
+
+  # ----------------------------------------------------------- frontend ----
+  # `npm run build` runs `tsc && vite build`, so it type-checks first and then
+  # bundles. Both halves matter: the type checker catches the mistakes a bundle
+  # would happily ship, and the bundle catches the imports a type checker
+  # accepts but the browser cannot resolve.
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build
+
+  # --------------------------------------------------------------- rust ----
+  # Three checks, in the order that fails fastest:
+  #   cargo fmt --check  — formatting is not a matter of taste here; CI must not
+  #                         be the thing that decides it, and a reformat-only
+  #                         commit is noise in the history.
+  #   cargo clippy       — lint. Kept separate from the test job so a lint
+  #                         finding reads as "clippy" instead of hiding inside a
+  #                         red test run.
+  #   cargo test         — the suite. One test currently guards the memory
+  #                         layer against re-introducing the hardcoded MCP tool
+  #                         list, and its negative assertions were verified to
+  #                         turn red when that list comes back.
+  rust:
+    name: Rust fmt, clippy and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The version comes from rust-toolchain.toml, so CI and every local
+      # checkout resolve the same toolchain — one truth, one place.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@v1
+
+      # The crates.io index is fetched over the sparse protocol; the default
+      # git protocol makes this step minutes slower on a cold cache.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        # `-D warnings` turns a lint into a build failure. Without it clippy
+        # prints advice that everyone learns to scroll past.
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        working-directory: src-tauri
+        run: cargo test --all-targets

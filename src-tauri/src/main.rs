@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    repotory_agent_shell_lib::run()
+    repotory_agent_lib::run()
 }

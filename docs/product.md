@@ -1,25 +1,45 @@
 # 定位与边界
 
-> 本页定死 Phase 0 的三件事：这个 Shell 是什么、第一版做到哪、以及哪些决定要留给维护者拍板。
+> 本页定死 Phase 0 的三件事：这个 copilot 是什么、第一版做到哪、以及哪些决定要留给维护者拍板。
 > 路线（Phase 与里程碑）在 [roadmap.md](roadmap.md)。
 
 ## 一句话定位
 
-**Repotory Agent Shell 是本地 Agent 的入口，不是又一个 Agent 平台。** 它把"跟本地模型聊当前项目"这件事做成一个窗口，把"记得什么"交给 Repotory。
+**Repotory Agent 是一个独立产品：一个跑在本机的 copilot，不是又一个 Agent 平台，也不是 Repotory 桌面端的一个界面。** 它把"跟本地模型聊当前项目"这件事做成一个窗口，把"记得什么"交给 Repotory。
 
 ## 三个角色，三条边界
 
 | 角色 | 归属 | 负责 | 不负责 |
 |---|---|---|---|
-| 入口 | Agent Shell（本仓库） | 本地模型入口、记忆面板、任务确认 | 检索排序、项目知识存储 |
-| 记忆 | [Repotory](https://github.com/sky-jiangcheng/repotory) | 项目上下文、会话交接、待确认知识 | 决定 Agent 长什么样 |
-| 协议 | MCP | Shell 与记忆层之间唯一的通道 | —— |
+| copilot | Agent（本仓库） | 本地模型入口、命令执行、记忆面板 | 检索排序、项目知识存储、**审批** |
+| 记忆 | [Repotory](https://github.com/sky-jiangcheng/repotory) | 项目上下文、会话交接、已批准的知识页 | 决定 copilot 长什么样 |
+| 协议 | MCP | Agent 与记忆层之间唯一的通道 | —— |
 
 三条边界是硬的：
 
-1. **Shell 不复制 Repotory 的检索逻辑。** 上下文从 `repotory_context` 来，不自己排 FTS、不自己算 embedding、不自建向量库。
-2. **Shell 不直连 Repotory 的数据库。** 只走 MCP 工具。数据库是 Repotory 的私有实现，Shell 没有理由知道它的存在。
-3. **Shell 不做完整 IDE。** 路由是 Repotory 的（`repotory_notes_read` / `repotory_notes_update` 等），Shell 只消费。
+1. **Agent 不复制 Repotory 的检索逻辑。** 上下文从 `repotory_context` 来，不自己排 FTS、不自己算 embedding、不自建向量库。
+2. **Agent 不直连 Repotory 的数据库。** 只走 MCP 工具。数据库是 Repotory 的私有实现，Agent 没有理由知道它的存在。
+3. **Agent 不做完整 IDE。** 路由是 Repotory 的（`repotory_notes_read` / `repotory_notes_update` 等），Agent 只消费。
+
+## 与 Repotory 桌面端的关系：两个产品，各担一件事
+
+**不是主从，不是同一产品的两个前端。**
+
+| | Repotory 桌面端 | Agent（copilot） |
+|---|---|---|
+| 定位 | **工作台** | **助手** |
+| 干什么 | 浏览、编辑、**审批**、治理 | 读、聊、执行 |
+| 记忆通道 | 直接用 `internal/service` | **只走 MCP** |
+| 审批（approve / reject） | **有**（人在场） | **没有**——MCP 工具面里就没有这两个工具 |
+| 关掉它 | 工作台没了 | copilot 照常跑 |
+| 界面 | 三栏外壳 + 小机器人浮层 | 自己的窗口 + 托盘 |
+
+**审批权留在人手里，而且不是靠约定维持的。** Repotory 的 MCP 工具面在知识页上只注册了两个**纯读**工具（`repotory_wiki_search` / `repotory_wiki_read`），
+写侧的闸门是"把内容发布进检索是人的行为"（ADR-0015 决策③）。
+**Agent 走 MCP，就自动站在闸门外——它想越都越不过去。**
+
+**Agent 需要 `repotory-mcp` 二进制存在才能拿到记忆。**
+**没装 Repotory 就没有记忆**——这一点必须在首屏说清楚，不能假装。
 
 ## 第一版产品边界
 
@@ -30,7 +50,7 @@ Phase 0 定下的五项，做到就算第一版：
 | 聊天 | 与本地模型就当前项目对话，流式输出 | 选一个仓库 + 一段提问 → 有回答 |
 | 读项目 | 附加仓库路径、最近 git diff、Repotory 检索到的上下文 | 附加项可勾选、可预览 |
 | 执行命令 | 白名单工具执行，写操作需人工确认 | 命令完整显示、危险项默认禁止、执行有日志 |
-| 记忆面板 | 当前上下文 / 待确认知识 / 跨会话结论三块 | 三块都能看到真实数据 |
+| 记忆面板 | 当前上下文 / 已批准知识 / 跨会话结论三块 | 三块都能看到真实数据 |
 | 人工确认 | 危险动作不自动执行 | 确认前能看到完整命令与影响面 |
 
 ## Phase 0 定死的决议
@@ -38,44 +58,60 @@ Phase 0 定下的五项，做到就算第一版：
 | 决议 | 内容 | 代价 |
 |---|---|---|
 | 技术栈 | Tauri v2 + Rust 后端 + TypeScript 前端 | 与 Repotory 桌面端（Wails/Go）不是同一套栈，两边共享的只有数据与协议 |
+| **选 Tauri 的理由** | **它自带托盘**（菜单栏图标 + 点击唤起 + 后台常驻）——Wails v2 没有托盘（`pkg/menu` 的 `TrayMenu` 是死类型，外部 `systray` 要 cgo） | **Tauri 用系统 WebView，不是 Swift/AppKit 原生控件**——它是"独立进程 + 真托盘 + 真分发渠道"，**不是"原生 UI 框架"** |
 | 模型入口 | 先 Ollama；后续 llama.cpp / MLX 走插件式后端，不硬编码 | 后端注册表要先立住（`src-tauri/src/model_backends.rs`） |
 | 默认模型 | `qwen3:8b`（Qwen3 8B Q4），M4 Pro 上先跑通 | 换模型要用户自己在 Ollama 里 pull |
-| 记忆通道 | MCP，不自建 | Shell 依赖 Repotory 的 MCP 二进制存在 |
+| 记忆通道 | MCP，不自建 | Agent 依赖 Repotory 的 MCP 二进制存在 |
 
 模型后端的注册表已经按"插件式"立住了：Ollama 是唯一实现，`llama.cpp` 与 `MLX` 声明为 `planned`，UI 调一个命令拿到全部后端状态，新增后端不需要改前端。
 
+**「看用户喜好」的部分明确交给用户**：模型后端、是否常驻、界面形态都不由本仓决定。
+
 ## 记忆层契约
 
-Shell 要消费的 MCP 工具，都来自 Repotory 现存的 `repotory_*` 工具集（以 Repotory 主仓库为准）：
+Agent 要消费的 MCP 工具，都来自 Repotory 现存的 `repotory_*` 工具集（以 Repotory 主仓库为准）：
 
 - `repotory_context` —— 项目上下文，Phase 1 的主数据源
 - `repotory_handoff` —— 写会话交接，Phase 1 的出口
-- `repotory_notes_search` / `repotory_notes_read` / `repotory_notes_create` / `repotory_notes_list` / `repotory_notes_update` —— 笔记读写
+- `repotory_notes_search` / `repotory_notes_read` / `repotory_notes_create` / `repotory_notes_list` / `repotory_notes_update` / `repotory_notes_organize` —— 笔记读写
 - `repotory_projects_list` / `repotory_projects_stats` —— 项目清单
+- `repotory_wiki_search` / `repotory_wiki_read` —— **已批准**的知识页（纯读）
 - `repotory_scan` —— 发现本地 Git 仓库
+- `repotory_ask` —— 带出处的证据问答（ADR-0033）
+- `repotory_agent_score` / `repotory_integrity` —— 自省
 
-工具名的唯一真相在 Repotory 主仓库；本仓库的 `src-tauri/src/memory_layer.rs` 里有一份副本，仅用于首屏展示，**不是**契约来源。
+工具名的唯一真相在 Repotory 主仓库。
+**本仓库不保留那份清单的副本**——Phase 1 改成启动时用 MCP 的 `tools/list` 动态拉取。
+（Phase 0 的 `src-tauri/src/memory_layer.rs` 里有一份硬编码副本，**它已经漂了**：
+少列了 `notes_read` / `notes_update` / `notes_organize` / `projects_stats` / `wiki_search` / `wiki_read` / `ask` / `agent_score` / `integrity` 中的多个，
+而这份副本的注释自己写着"不是契约来源"。**Phase 1 之前必须换成动态拉取**——
+一份会漂的清单比没有清单更坏，因为它让人以为那是真的。）
 
 ## 待确认（需要维护者拍板）
 
-### 1. 路线文档里的 `repotory_pending` / `repotory_snapshot` 在 Repotory 里不存在
+### 1. ~~`repotory_pending` 与 `repotory_snapshot` 在 Repotory 里不存在~~（已澄清）
 
 原路线 Phase 1 列的四个工具中，`repotory_context`、`repotory_handoff` 确实存在，但 `repotory_pending` 与 `repotory_snapshot` 在 Repotory 的 MCP 工具集里**没有对应物**：
 
 - "待确认知识"在 Repotory 里的真实形态是 wiki 页状态 `pending / approved / rejected`（`internal/db/wiki.go`）；
 - 快照（snapshot）是 Repotory 的本地备份机制（ADR-0025 L1），是内部能力，不是 MCP 工具。
 
-**待定**：Shell 的"待确认知识"面板读哪个接口。
+**结论**：**待确认知识面板 = `repotory_wiki_search` 的只读视图。**
+MCP 面上没有"列出待批准页"的工具——**因为「谁能看到未批准的内容」本身就是闸门的一部分**。
+面板因此只能显示已批准的页，**待批准的页在 copilot 里看不见**（这是对的：那是工作台的事）。
 
-### 2. Phase 4 的 approve / reject 与 ADR-0015 的人类闸门冲突
+### 2. ~~Phase 4 的 approve / reject 与 ADR-0015 的人类闸门冲突~~（已解决：选项 C）
 
-Repotory 把 `ListPendingWikiPages` / `ApproveWikiPage` / `RejectWikiPage` 标为桌面专属（ADR-0015 决策 3：把内容发布进检索是人的行为，没有第二个调用者）。Shell 的记忆面板要 approve / reject，就必须越这道闸：
+原问题：Phase 4 的记忆面板想做 approve / reject，但 ADR-0015 把
+`ApproveWikiPage` / `RejectWikiPage` 标为桌面专属（"把内容发布进检索是人的行为，没有第二个调用者"）。
 
-- **选项 A**：Shell 走本地 RPC 桥（与 JetBrains 插件同一条路）直连 Repotory 服务，绕开 MCP；
-- **选项 B**：等 Repotory 侧提供一个受控的 MCP 工具，由 Repotory 自己保证只有人在场时才允许写；
-- **选项 C**：Phase 4 只做只读面板（看得到待确认知识），approve 仍回 Repotory 桌面端做。
+**现在不需要拍板了——MCP 工具面本来就只有纯读的知识页工具**
+（`cmd/mcp/tools_wiki.go` 只注册 `wiki_search` / `wiki_read`，注释写明闸门在写侧）。
+**走 MCP 就自动站在闸门外**，不需要额外的机制。
 
-**待定**：选哪条。这条决定 Phase 4 的工作量，也决定 Shell 是不是必须依赖本地服务而不只是 MCP 进程。
+**结论：选项 C，且它不是妥协，是分工。**
+**审批永远在 Repotory 桌面端（工作台）做**——那里有人在场。
+copilot 的记忆面板是**只读**的。
 
 ### 3. MCP 客户端的"自动发现"到底自动到什么程度
 
@@ -83,8 +119,22 @@ Repotory 把 `ListPendingWikiPages` / `ApproveWikiPage` / `RejectWikiPage` 标�
 
 **待定**：启动时是否自动拉起 MCP 进程，以及拉起后的连接失败如何降级（路线写的是"降级为普通聊天"）。
 
+**参考**：两个 IDE 插件（VS Code / JetBrains）**都是自己拉起 `repotory-mcp` 子进程走 stdio**——
+那条路已经跑通了，可以照抄。
+
 ### 4. 与 Repotory 的版本耦合
 
-Shell 消费的 MCP 工具集会随 Repotory 演进（`repotory_*` 可能增删）。是否需要一次能力协商（Shell 问一句"你有哪些工具"，而不是假定清单），还是靠 Repotory 的语义化版本约束。
+Agent 消费的 MCP 工具集会随 Repotory 演进（`repotory_*` 可能增删）。是否需要一次能力协商
+（Agent 问一句"你有哪些工具"，而不是假定清单），还是靠 Repotory 的语义化版本约束。
 
-**待定**：不做能力协商的话，Shell 与 Repotory 的版本组合就是一个隐式约束，需要写进 README 与安装器。
+**待定**：不做能力协商的话，Agent 与 Repotory 的版本组合就是一个隐式约束，
+**需要写进 README 与安装器**（不能只在脑子里）。
+**已定的部分**：工具清单**动态拉取**（见上节），所以新增工具不会因为清单没更新而不可见——
+**能力协商解决的是"工具被删了/改名了"，不是"工具新增了"**。
+
+### 5. copilot 要不要执行写操作
+
+本仓定的是"走 MCP，只有一组写工具"（`notes_create` / `notes_update` / `notes_organize` / `handoff`）。
+但**"要不要让 copilot 写笔记"是产品决定，不是技术决定**。
+
+**待定**：写操作要不要也要求人工确认（Phase 0 的「人工确认」能力目前只覆盖命令执行）。

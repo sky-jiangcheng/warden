@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Repotory Agent Shell</title>
+    <title>Repotory Agent</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
 
@@ -12,8 +12,8 @@
     <div class="app">
       <header class="brand">
         <div class="brand__text">
-          <h1 class="brand__name">Repotory Agent Shell</h1>
-          <p class="brand__tagline">本地 Agent 入口 · 记忆层由 Repotory MCP 提供</p>
+          <h1 class="brand__name">Repotory Agent</h1>
+          <p class="brand__tagline">本地 copilot · 记忆层由 Repotory MCP 提供</p>
         </div>
         <span class="chip chip--quiet">local-only</span>
       </header>
@@ -25,10 +25,10 @@
             <span class="chip" id="memory-chip">检测中</span>
           </div>
           <p class="card__hint">
-            Shell 不自建记忆：项目上下文与会话交接都走 Repotory 的 MCP 工具。
+            copilot 不自建记忆：项目上下文与会话交接都走 Repotory 的 MCP 工具。
+            工具清单在连接时由服务端给出，本仓不抄一份。
           </p>
           <p class="meta" id="memory-path"></p>
-          <div class="tools" id="memory-tools"></div>
         </section>
 
         <section class="card">
@@ -51,7 +51,7 @@
             <li><span class="boundary__name">聊天</span><span class="boundary__note">与本地模型就当前项目对话</span></li>
             <li><span class="boundary__name">读项目</span><span class="boundary__note">附加仓库路径与最近 diff</span></li>
             <li><span class="boundary__name">执行命令</span><span class="boundary__note">白名单工具，写操作需确认</span></li>
-            <li><span class="boundary__name">记忆面板</span><span class="boundary__note">待确认知识与跨会话结论</span></li>
+            <li><span class="boundary__name">记忆面板</span><span class="boundary__note">已批准知识与跨会话结论</span></li>
             <li><span class="boundary__name">人工确认</span><span class="boundary__note">危险动作默认禁止</span></li>
           </ul>
         </section>

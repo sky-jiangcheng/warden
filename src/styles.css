@@ -1,4 +1,4 @@
-/* Repotory Agent Shell — first screen.
+/* Repotory Agent — first screen.
    The brand band is the printed cream card of the Repotory family (the same
    field the JetBrains plugin uses), so the two products read as one thing
    before the user has read a word. Everything else is a plain token-driven
@@ -209,24 +209,6 @@ body {
 
 .chip--quiet {
   background: transparent;
-}
-
-/* ---------------------------------------------------------------- memory */
-
-.tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.tool {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
-  color: var(--text-secondary);
 }
 
 /* ---------------------------------------------------------------- backends */

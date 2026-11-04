@@ -6,35 +6,40 @@
 ## 一张图
 
 ```
-Repotory MCP 记忆层        ↑ 轻量 Agent Shell（Tauri）        ↑ 本地模型（Ollama / llama.cpp / MLX）
+Repotory MCP 记忆层        ↑ copilot（Agent，Tauri）           ↑ 本地模型（Ollama / llama.cpp / MLX）
                           ↑ 工具层（Git / Shell / 文件索引 / 数据库 CLI）
                           ↑ 主流客户端（Claude Code / Cursor / VS Code / JetBrains）
 ```
 
-Shell 不封闭：记忆层通过 MCP 开放；Shell 本身只做"本地模型入口 + 记忆面板 + 任务确认"。
+记忆层通过 MCP 开放；copilot 本身只做"本地模型入口 + 命令执行 + 记忆面板"。
+
+**它与 Repotory 桌面端是两个产品**：桌面端是**工作台**（浏览、编辑、审批、治理），
+copilot 是**助手**（读、聊、执行）。两者共享记忆层与协议，不共享界面，也不共享生命周期。
 
 ## Phase 0：仓库与定位（1 周）—— 当前阶段
 
-把 Agent Shell 从 Repotory 里明确分出来，但保持强绑定。
+把 copilot 从 Repotory 里明确分出来，做成**自己的产品**，但保持强绑定。
 
-- 新建 `repotory-agent-shell` 仓库；
-- 明确定位：本地 Agent Shell，默认接 Repotory MCP；
-- 技术栈定死：Tauri v2 + Rust 后端 + TS 前端；
+- 仓库 `repotory-agent`（原名 `repotory-agent-shell`，2026-11-04 改名）；
+- 明确定位：**独立 copilot**，默认接 Repotory MCP；
+- 技术栈定死：Tauri v2 + Rust 后端 + TS 前端（**选 Tauri 的硬理由是它自带托盘**）；
 - 模型入口先选 Ollama，后续可加 llama.cpp / MLX；
 - 默认模型选 Qwen3 8B Q4，M4 Pro 上先跑通；
 - 定义第一版产品边界：聊天、读项目、执行命令、记忆面板、人工确认。
 
 **当前进度**：仓库与骨架已落地，定位/边界/决议写在 [product.md](product.md)，首屏展示记忆层与模型运行时的探测结果。
+**待补**：CI 门禁（docs mirror + 前端 build + `cargo check` / `clippy` / `test`）、品牌图标（现为 Tauri 默认图）。
 
 ## Phase 1：MCP 记忆层打通（1–2 周）
 
-让 Shell 能稳定消费 Repotory 的记忆能力。
+让 copilot 能稳定消费 Repotory 的记忆能力。
 
-- 确认这些 MCP 工具稳定可用：`repotory_context`、`repotory_handoff`、`repotory_notes_search`、`repotory_projects_list`、`repotory_scan`（原路线中的 `repotory_pending` / `repotory_snapshot` 在 Repotory 里不存在，见 [product.md 待确认 1](product.md#1-路线文档里的-repotory_pending--repotory_snapshot-在-repotory-里不存在)）；
-- Shell 侧实现 MCP Client：
+- 确认这些 MCP 工具稳定可用：`repotory_context`、`repotory_handoff`、`repotory_notes_search`、`repotory_projects_list`、`repotory_scan`（原路线中的 `repotory_pending` / `repotory_snapshot` 在 Repotory 里不存在，见 [product.md 待确认 1](product.md#1-repotory_pending-与-repotory_snapshot-在-repotory-里不存在已澄清)）；
+- **工具清单动态拉取**：用 MCP 的 `tools/list` 取代那份硬编码副本（它已经漂了，见 [product.md 记忆层契约](product.md#记忆层契约)）；
+- Agent 侧实现 MCP Client（**照抄两个 IDE 插件的路子**：拉起 `repotory-mcp` 子进程走 stdio）：
   - 自动发现本地 Repotory MCP；
   - 启动时检查连接状态；
-  - 失败时降级为普通聊天；
+  - 失败时降级为普通聊天（**首屏要说清「没装 Repotory 就没有记忆」，不能假装**）；
 - 最小验证：
   - 打开某个仓库；
   - Shell 调用 `repotory_context`；
@@ -78,10 +83,10 @@ Shell 不封闭：记忆层通过 MCP 开放；Shell 本身只做"本地模型�
 让 Repotory 的价值在 UI 上可见。三个面板：
 
 - **当前上下文**：当前仓库、分支、最近 diff、已注入记忆；
-- **Pending 知识**：Repotory 待确认的知识，支持 approve / reject；
+- **已批准知识**：`repotory_wiki_search` 的只读视图（**待批准的页在 copilot 里看不见——那是工作台的事**，见 [product.md 待确认 2](product.md#2-phase-4-的-approve--reject-与-adr-0015-人类闸门冲突已解决选项-c)）；
 - **跨会话记忆**：上次会话的结论、handoff 摘要、可继续任务。
 
-这一阶段是 Shell 和纯聊天工具拉开差距的关键。approve / reject 与 ADR-0015 人类闸门的关系见 [product.md 待确认 2](product.md#2-phase-4-的-approve--reject-与-adr-0015-的人类闸门冲突)。
+这一阶段是 copilot 和纯聊天工具拉开差距的关键。**面板是只读的**——审批永远在 Repotory 桌面端做。
 
 ## Phase 5：本地模型管理（1–2 周）
 
@@ -98,14 +103,14 @@ Shell 不封闭：记忆层通过 MCP 开放；Shell 本身只做"本地模型�
 
 ## Phase 6：分发与上架（1–2 周）
 
-让 Shell 能真正被用起来。
+让 copilot 能真正被用起来。
 
 - macOS dmg 打包；
 - 可选 Homebrew cask；
 - App Store 版本默认不带模型，引导用户安装 Ollama；
 - 提供 `repotory-agent init` 一键初始化；
-- 提供 VS Code / JetBrains 插件的最小适配；
-- README 里写清楚：Shell 是入口，Repotory 是记忆层，MCP 是开放协议。
+- README 里写清楚：copilot 是入口，Repotory 是记忆层，MCP 是开放协议；
+- **写清版本耦合**：哪个 copilot 版本配哪个 Repotory 版本（不做能力协商的话这是隐式约束，见 [product.md 待确认 4](product.md#4-与-repotory-的版本耦合)）。
 
 ## 里程碑
 
@@ -120,4 +125,7 @@ Shell 不封闭：记忆层通过 MCP 开放；Shell 本身只做"本地模型�
 
 ## 路线取舍
 
-不要一开始就把 Shell 做成"完整 IDE"。先让它成为 Repotory 的最佳本地入口：打开就能聊项目、能看到记忆、能安全执行命令、能跨会话继续。等这条路径跑顺了，再考虑接 Claude Code、Cursor、VS Code、JetBrains，或者把 Shell 做成更通用的本地 Agent 平台。
+不要一开始就把 copilot 做成"完整 IDE"。先让它成为一个好用的本地助手：打开就能聊项目、能看到记忆、能安全执行命令、能跨会话继续。等这条路径跑顺了，再考虑接 Claude Code、Cursor、VS Code、JetBrains，或者把它做成更通用的本地 Agent 平台。
+
+**托盘与常驻不在这份路线里**——它是「关掉工作台还有助手在」那条路的载体，
+按 ADR-0047 决策⑤ 归在 copilot 自己的形态决策下（形态由使用者反馈决定，不预设）。
