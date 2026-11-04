@@ -1,9 +1,14 @@
 # The Rust toolchain this repository builds with.
 #
 # Why a file and not a version in the workflow: a pinned version in the YAML
-# and the version on a developer's machine are two truths that drift. The
-# `dtolnay/rust-toolchain` action reads this file, so CI and every local
-# checkout resolve the same toolchain — one truth, one place.
+# and the version on a developer's machine are two truths that drift.
+# `actions-rust-lang/setup-rust-toolchain` reads this file when the workflow
+# gives it no `toolchain` input, so CI and every local checkout resolve the
+# same toolchain — one truth, one place.
+#
+# (`dtolnay/rust-toolchain` does NOT work for this: its `toolchain` input is
+# `required: true` and the action exits 1 when the input is empty. Its `stable`
+# branch has a default, but a default is still a second truth.)
 #
 # The version is the one this repository was developed and verified against
 # (cargo check / clippy / test all green on it). Bump it deliberately, not

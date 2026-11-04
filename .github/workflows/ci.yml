@@ -99,15 +99,54 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # The Tauri crate tree reaches `webkit2gtk-sys` and `gtk-sys`, whose
+      # build scripts call pkg-config. Without the -dev packages the build
+      # fails at "webkit2gtk-4.1 not found" — a link error, not a Rust one,
+      # so it reads like a toolchain problem and sends you the wrong way.
+      #
+      # The GitHub-hosted Ubuntu image does not carry these; Tauri documents
+      # this exact list for Debian/Ubuntu. `libayatana-appindicator3-dev` is
+      # the tray icon's library — the name differs from the old
+      # `libappindicator3-dev`, which does not exist on 24.04.
+      - name: Install the Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            build-essential \
+            file \
+            curl \
+            wget
+
       # The version comes from rust-toolchain.toml, so CI and every local
       # checkout resolve the same toolchain — one truth, one place.
+      #
+      # This is `actions-rust-lang/setup-rust-toolchain`, NOT
+      # `dtolnay/rust-toolchain`: the latter's `toolchain` input is
+      # `required: true` and it exits 1 when the input is empty, so it cannot
+      # be used to defer the version to a file. This action reads
+      # rust-toolchain.toml when no `toolchain` input is given, which is
+      # exactly the single-source-of-truth property this repository wants.
+      #
+      # `components` is set explicitly because the toolchain file's
+      # `components` key is not the mechanism this action uses to decide
+      # which components to install; without it the fmt and clippy steps
+      # below fail with "component not found".
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          components: rustfmt, clippy
 
       # The crates.io index is fetched over the sparse protocol; the default
       # git protocol makes this step minutes slower on a cold cache.
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
 
       - name: Check formatting
         working-directory: src-tauri
