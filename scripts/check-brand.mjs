@@ -66,12 +66,17 @@ if (!tauriConf) {
   if (tauriConf.productName !== brand.agent) {
     report('src-tauri/tauri.conf.json · productName', brand.agent, tauriConf.productName)
   }
-  const win = tauriConf.app?.windows?.[0]
-  if (!win) {
-    issues.push('src-tauri/tauri.conf.json: 读不到 app.windows[0]')
-  } else if (win.title !== brand.agent) {
-    report('src-tauri/tauri.conf.json · app.windows[0].title', brand.agent, win.title)
+  // Every window, not just the first: the companion window (windows[1]) is
+  // the one users see in the dock next to the chat window.
+  const wins = tauriConf.app?.windows ?? []
+  if (wins.length === 0) {
+    issues.push('src-tauri/tauri.conf.json: 读不到 app.windows')
   }
+  wins.forEach((win, i) => {
+    if (win.title !== brand.agent) {
+      report(`src-tauri/tauri.conf.json · app.windows[${i}].title`, brand.agent, win.title)
+    }
+  })
 }
 
 const indexHtml = existsSync(join(root, 'index.html')) ? read('index.html') : null

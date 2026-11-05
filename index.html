@@ -4,7 +4,26 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Warden</title>
+    <script>
+      /* Apply the stored theme before first paint so a dark-session reload
+         does not flash light. main.ts owns the three-state preference; this
+         only mirrors its resolution early enough to avoid the flash. */
+      (function () {
+        if (new URLSearchParams(location.search).get("surface") === "companion") document.documentElement.dataset.surface = "companion";
+        try {
+          var pref = localStorage.getItem("warden-theme") || "system";
+          var dark =
+            pref === "dark" ||
+            (pref === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.setAttribute("data-theme", "dark");
+        } catch (e) {
+          /* private mode: fall through to the light default */
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
 
@@ -23,18 +42,54 @@
       </div>
     </div>
 
-    <div class="app">
+    <div class="app" id="main-surface">
       <header class="brand">
-        <div class="brand__text">
-          <h1 class="brand__name">Warden</h1>
-          <p class="brand__tagline">
-            本地 copilot · 自己认仓库，自己记你要什么
-          </p>
-        </div>
-        <span class="chip chip--quiet" id="brand-chip">检测中</span>
+        <img class="brand__mark" src="/src/assets/warden.png" alt="" width="36" height="36" />
+        <div class="brand__text"><h1 class="brand__name">Warden</h1><span class="brand__status" id="brand-chip" role="status">正在连接</span></div>
+        <nav class="brand__actions" aria-label="窗口操作">
+          <button class="icon-btn" id="topics-open" type="button" aria-label="切换对话主题" title="对话历史" aria-haspopup="dialog" aria-controls="topics-sheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h12M4 19h8" /></svg></button>
+          <button class="icon-btn" id="topic-new" type="button" aria-label="新建对话主题" title="新建对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
+          <button class="icon-btn" id="settings-open" type="button" aria-label="打开设置" title="设置" aria-haspopup="dialog" aria-controls="settings-sheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M12 4v16M19 4v16M2 9h6M9 15h6M16 8h6" /></svg></button>
+          <button class="icon-btn" id="chat-hide" type="button" aria-label="收起到桌面伙伴" title="收起到桌面伙伴"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg></button>
+        </nav>
       </header>
-
-      <main class="panels">
+      <main class="conversation" aria-label="Warden 对话">
+        <div class="topic-bar"><button class="topic-title" id="topic-title" type="button" aria-haspopup="dialog" aria-controls="topics-sheet">新对话</button><span class="sync-label" id="sync-status" role="status">连接中</span><button class="text-btn" id="sync-retry" type="button" hidden>重试</button></div>
+        <details class="metrics" id="metrics-panel">
+          <summary><span class="metric-heading">工作一览</span><span id="metrics-summary">代码量 · 今日活动</span><span class="chevron" aria-hidden="true">⌄</span></summary>
+          <div class="metrics__grid">
+            <div><strong id="metric-lines">—</strong><span>代码行</span></div><div><strong id="metric-commits">—</strong><span>今日提交</span></div><div><strong id="metric-changes">—</strong><span>今日增 / 删</span></div>
+            <div><strong id="metric-repos">—</strong><span>仓库</span></div><div><strong id="metric-notes">—</strong><span>记忆笔记</span></div><div><strong id="metric-reviews">—</strong><span>待人工审批</span></div>
+          </div>
+          <div class="metrics__foot"><span id="metrics-status" role="status">尚未读取</span><button class="text-btn" id="metrics-refresh" type="button">刷新</button></div>
+        </details>
+        <p class="environment-note" id="environment-note" hidden>浏览器预览 · 未连接本机服务。对话、指标与同步需在 Warden 桌面端使用。</p>
+        <div class="chat__log" id="chat-log" tabindex="0" role="region" aria-label="对话记录">
+          <section class="chat__empty" id="chat-empty">
+            <span class="empty__eyebrow">YOUR QUIET COPILOT</span><h2>留一点空间，<br />想清楚再出发。</h2><p>关于代码，关于接下来的工作。<br />从一个问题开始，我在这里。</p>
+            <div class="suggestions" aria-label="开始对话的建议">
+              <button type="button" data-suggestion="帮我梳理这个项目的结构与入口。"><span>梳理项目结构</span><span aria-hidden="true">↗</span></button>
+              <button type="button" data-suggestion="帮我回顾今天的代码改动，并整理需要留意的问题。"><span>回顾今天的改动</span><span aria-hidden="true">↗</span></button>
+              <button type="button" data-suggestion="我想继续上次的工作，帮我梳理已有上下文与下一步。"><span>接着上次的思路</span><span aria-hidden="true">↗</span></button>
+            </div>
+          </section><div id="chat-messages"></div>
+          <button class="jump-latest" id="jump-latest" type="button" hidden>回到最新消息 ↓</button>
+        </div>
+        <div class="composer-area">
+          <p class="chat-error" id="chat-error" role="alert"></p>
+          <form class="chat__form" id="chat-form">
+            <label class="sr-only" for="chat-input">给 Warden 的消息</label><textarea id="chat-input" rows="3" placeholder="有什么想一起想一想？" aria-describedby="compose-help" spellcheck="false"></textarea>
+            <div class="composer-context"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3zM3 7V5h6l2 2h8" /></svg><select id="chat-context" aria-label="对话仓库，发送后固定" title="对话仓库，发送后固定"><option value="">不附加仓库</option></select></div>
+            <div class="composer-toolbar"><div class="model-pickers"><select id="chat-provider" aria-label="Provider"><option value="">选择 provider</option></select><span class="picker-divider" aria-hidden="true">/</span><select id="chat-model" aria-label="模型"><option value="">选择模型</option></select></div><button class="send-btn" id="chat-send" type="submit" aria-label="发送消息" title="发送 · Enter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></button></div>
+          </form>
+          <div class="composer-foot"><span id="chat-chip" role="status">准备连接</span><span id="compose-help">Enter 发送 · Shift + Enter 换行</span></div><p class="model-error" id="model-error" role="status"></p><p class="sr-only" id="chat-announcement" role="status" aria-live="polite"></p>
+        </div>
+      </main>
+    </div>
+    <dialog class="sheet" id="settings-sheet" aria-labelledby="settings-heading">
+      <header class="sheet__head"><div><span class="eyebrow">MAKE IT YOURS</span><h2 id="settings-heading">设置与连接</h2></div><button class="icon-btn" type="button" data-close="settings-sheet" aria-label="关闭设置">×</button></header>
+      <div class="sheet__body">
+        <section class="appearance-row"><div><h3>外观</h3><p>沿用 Cinder 家族的纸与墨</p></div><button class="btn" id="theme-toggle" type="button">跟随系统</button></section>
         <section class="card card--repos">
           <div class="card__head">
             <h2 class="card__title">仓库</h2>
@@ -49,6 +104,7 @@
             <input
               class="field field--grow"
               id="root-input"
+              aria-label="仓库扫描目录"
               type="text"
               placeholder="/Users/you/work"
               spellcheck="false"
@@ -61,33 +117,6 @@
           </div>
           <ul class="repos" id="repos"></ul>
           <p class="meta meta--error" id="repo-error"></p>
-        </section>
-
-        <section class="card card--chat">
-          <div class="card__head">
-            <h2 class="card__title">对话</h2>
-            <span class="chip" id="chat-chip">未就绪</span>
-          </div>
-          <p class="card__hint">
-            模型请求一律经 Rust 后端代理，前端不直连任何端口，也不持有 API Key。
-          </p>
-          <div class="chat__log" id="chat-log">
-            <p class="chat__empty" id="chat-empty">
-              选一个 provider 和模型，然后问点什么。
-            </p>
-          </div>
-          <form class="chat__form" id="chat-form">
-            <select class="field" id="chat-provider" aria-label="Provider"></select>
-            <select class="field" id="chat-model" aria-label="模型"></select>
-            <textarea
-              class="field field--grow"
-              id="chat-input"
-              rows="2"
-              placeholder="问点什么…"
-            ></textarea>
-            <button class="btn btn--primary" id="chat-send" type="submit">发送</button>
-          </form>
-          <p class="meta meta--error" id="chat-error"></p>
         </section>
 
         <section class="card">
@@ -103,6 +132,7 @@
           <ul class="providers" id="providers"></ul>
           <div class="provider__actions">
             <button class="btn" id="provider-add" type="button">添加 provider</button>
+            <button class="btn" id="provider-retry" type="button">刷新列表</button>
           </div>
           <p class="meta meta--error" id="provider-error"></p>
         </section>
@@ -171,7 +201,7 @@
           </p>
           <p class="meta" id="memory-path"></p>
           <p class="meta meta--error" id="memory-error"></p>
-          <ul class="tools" id="memory-tools"></ul>
+          <details class="tools-details"><summary>服务端工具清单</summary><ul class="tools" id="memory-tools"></ul></details>
           <button class="btn" id="memory-retry" type="button" hidden>
             重试连接
           </button>
@@ -202,17 +232,22 @@
             <li><span class="boundary__name">记忆面板</span><span class="boundary__note">已批准知识与跨会话结论</span></li>
           </ul>
         </section>
-      </main>
-
-      <footer class="milestones">
-        <span class="milestone milestone--done">M1 接入 Cinder MCP</span>
-        <span class="milestone milestone--done">M1.5 自己认仓库</span>
-        <span class="milestone milestone--next">M2 与模型聊当前仓库</span>
-        <span class="milestone">M3 安全执行命令</span>
-        <span class="milestone">M4 跨会话记忆</span>
-        <span class="milestone">M5 一键安装</span>
-        <span class="milestone">M6 独立分发</span>
-      </footer>
-    </div>
+      </div>
+    </dialog>
+    <dialog class="sheet topic-sheet" id="topics-sheet" aria-labelledby="topics-heading">
+      <header class="sheet__head"><div><span class="eyebrow">CONVERSATIONS</span><h2 id="topics-heading">对话主题</h2></div><button class="icon-btn" type="button" data-close="topics-sheet" aria-label="关闭对话历史">×</button></header>
+      <div class="sheet__body">
+        <button class="btn btn--primary" id="topic-new-in-sheet" type="button">＋ 新建对话</button><p class="card__hint" id="topics-note">共享主题由 Cinder 同步；临时对话只保留在当前窗口。</p>
+        <ul class="topic-list" id="topic-list" aria-label="对话主题列表"></ul>
+        <form class="rename-form" id="topic-rename-form"><label for="topic-rename">当前主题名称</label><div class="form__row"><input class="field" id="topic-rename" maxlength="120" required /><button class="btn" id="topic-rename-save" type="submit">重命名</button></div><p class="meta meta--error" id="topic-error" role="alert"></p></form>
+      </div>
+    </dialog>
+    <main class="companion" id="companion-surface" aria-label="Warden 提灯伙伴">
+      <button class="companion__metric" id="companion-metric" type="button" title="打开工作指标">工作一览 · —</button>
+      <div class="lantern" id="companion-drag" title="拖动提灯伙伴" role="img" aria-label="Warden 提灯机器人，可用鼠标拖动身体移动窗口">
+        <svg viewBox="0 0 140 126" aria-hidden="true"><ellipse class="lantern__shadow" cx="70" cy="119" rx="39" ry="4" /><path class="lantern__handle" d="M54 27V17a16 16 0 0 1 32 0v10" /><path class="lantern__arm" d="M33 66 21 78m86-12 12 12" /><path class="lantern__feet" d="M51 105v9h-9m47-9v9h9" /><rect class="lantern__body" x="33" y="28" width="74" height="79" rx="26" /><path class="lantern__cap" d="M42 31q28-13 56 0" /><rect class="lantern__face" x="43" y="44" width="54" height="34" rx="14" /><g class="lantern__eyes"><path d="M58 57v6m24-6v6" /><path class="lantern__smile" d="M66 68q4 3 8 0" /></g><path class="lantern__light" d="M61 87h18m-14 5h10" /><circle class="lantern__signal" cx="70" cy="22" r="3" /></svg>
+      </div>
+      <div class="companion__actions"><button id="companion-open" type="button">打开对话 <span aria-hidden="true">↗</span></button><button id="companion-stats" type="button" aria-label="查看工作指标" title="查看指标"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11m7 8V5m7 14v-6" /></svg></button></div><p id="companion-status" class="companion__status" role="status"></p>
+    </main>
   </body>
 </html>
