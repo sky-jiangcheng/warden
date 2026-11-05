@@ -14,7 +14,7 @@
 | 角色 | 归属 | 负责 | 不负责 |
 |---|---|---|---|
 | copilot | Agent（本仓库） | **本机仓库发现与用户关注清单**、本地模型入口、命令执行、记忆面板 | 检索排序、项目知识存储、**审批** |
-| 记忆 | [Cinder](https://github.com/sky-jiangcheng/repotory) | 项目上下文、会话交接、已批准的知识页 | 决定 copilot 长什么样 |
+| 记忆 | [Cinder](https://github.com/sky-jiangcheng/cinder) | 项目上下文、会话交接、已批准的知识页 | 决定 copilot 长什么样 |
 | 协议 | MCP | Agent 与记忆层之间唯一的通道 | —— |
 
 三条边界是硬的：

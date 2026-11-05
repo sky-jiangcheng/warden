@@ -1,6 +1,6 @@
 # Warden
 
-**Warden** — a local copilot that runs on your own machine (**not** GitHub Copilot): open a repository, talk to a local model about that project, and let [Cinder](https://github.com/sky-jiangcheng/repotory) remember what matters.
+**Warden** — a local copilot that runs on your own machine (**not** GitHub Copilot): open a repository, talk to a local model about that project, and let [Cinder](https://github.com/sky-jiangcheng/cinder) remember what matters.
 
 **Two products, one job each** — Cinder Desktop is the **workbench** (browse, edit, **approve** and govern this memory); Warden is the **assistant** (read, chat, run commands over MCP). One shared local memory, one protocol, and **approval stays in Cinder Desktop**.
 
@@ -22,7 +22,7 @@ The three roles stay separate:
 | | Owner | What it owns |
 |---|---|---|
 | copilot | Agent (this repo) | Repository discovery, model entry, command execution, memory panels |
-| memory | [Cinder](https://github.com/sky-jiangcheng/repotory) | Project knowledge, session handoffs, approved knowledge pages |
+| memory | [Cinder](https://github.com/sky-jiangcheng/cinder) | Project knowledge, session handoffs, approved knowledge pages |
 | protocol | MCP | The Agent reads memory through `repotory_*` tools only — never the database |
 
 ## How it relates to the Cinder Desktop app

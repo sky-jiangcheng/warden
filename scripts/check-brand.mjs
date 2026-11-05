@@ -164,7 +164,6 @@ const FROZEN = [
     '它拉起的 MCP server 二进制名（用户 PATH 上那个）',
   ],
   ['src-tauri/tests/mcp_stdio.rs', '"repotory_context"', 'MCP 工具名前缀契约（主仓冻结的 repotory_ 前缀）'],
-  ['AGENTS.md', 'https://github.com/sky-jiangcheng/repotory', '上游主仓的 GitHub slug'],
 ]
 for (const [file, literal, where] of FROZEN) {
   if (!existsSync(join(root, file))) {
@@ -174,6 +173,19 @@ for (const [file, literal, where] of FROZEN) {
   if (!read(file).includes(literal)) {
     issues.push(`${file}: 冻结的标识层不见了 —— ${where}（期望字面量 ${literal}）`)
   }
+}
+
+// The upstream repository slug is NOT a frozen interface: it was renamed on
+// 2026-11-05 together with the mother brand (ADR-0049 addendum), and GitHub
+// redirects the old address. What has to hold is that it FOLLOWS the brand —
+// so the expectation is derived from brand.json instead of being hard-coded
+// here. Hard-coding it would only assert the value it already had, which is
+// the kind of gate that can only go green.
+const upstreamRepo = `https://github.com/sky-jiangcheng/${brand.mother.toLowerCase()}`
+if (!read('AGENTS.md').includes(upstreamRepo)) {
+  issues.push(
+    `AGENTS.md: 上游主仓的地址应当是 ${upstreamRepo}（随母品牌 ${brand.mother} 走）`
+  )
 }
 
 // ------------------------------------------------- ③ 当前面不留旧品牌词 ----

@@ -7,7 +7,7 @@
 **它们显示的产品名是旧名**：首屏写着「Repotory Agent」，菜单提示写着「点菜单栏
 的 R 唤回窗口」。品牌在同一天被重排成 **Warden**（本仓）/ **Cinder Desktop**
 （主仓），见上游
-[ADR-0049](https://github.com/sky-jiangcheng/repotory/blob/master/docs/adr/0049-brand-restructure-manus-style.md)。
+[ADR-0049](https://github.com/sky-jiangcheng/cinder/blob/master/docs/adr/0049-brand-restructure-manus-style.md)。
 
 截图没有重拍：重拍要跑起 Tauri 窗口、接上真的 MCP server 与模型 provider，
 不是改文案能顺手做的事。

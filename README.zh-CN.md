@@ -1,6 +1,6 @@
 # Warden
 
-**Warden**——一个跑在你自己机器上的本地 copilot（**不是** GitHub Copilot）：打开一个仓库，用本地模型聊这个项目，让 [Cinder](https://github.com/sky-jiangcheng/repotory) 负责"记得什么"。
+**Warden**——一个跑在你自己机器上的本地 copilot（**不是** GitHub Copilot）：打开一个仓库，用本地模型聊这个项目，让 [Cinder](https://github.com/sky-jiangcheng/cinder) 负责"记得什么"。
 
 **两个产品各担一件事**——Cinder Desktop 是**工作台**（浏览、编辑、**审批**、治理这份记忆）；Warden 是**助手**（读、聊、在 MCP 上执行命令）。共享同一份本地记忆、同一套协议，**审批永远在 Cinder Desktop 那边**。
 
@@ -20,7 +20,7 @@ DeepSeek、硅基流动、vLLM、LM Studio，本机的 Ollama 也一样）；界
 | | 归属 | 负责什么 |
 |---|---|---|
 | copilot | Agent（本仓库） | 仓库发现 + 模型入口 + 命令执行 + 记忆面板 |
-| 记忆 | [Cinder](https://github.com/sky-jiangcheng/repotory) | 项目知识、会话交接、已批准的知识页 |
+| 记忆 | [Cinder](https://github.com/sky-jiangcheng/cinder) | 项目知识、会话交接、已批准的知识页 |
 | 协议 | MCP | Agent 只通过 `repotory_*` 工具读记忆，不直连数据库 |
 
 ## 它与 Cinder Desktop 的关系

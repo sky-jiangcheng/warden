@@ -14,7 +14,7 @@
 | Role | Owner | Owns | Does not own |
 |---|---|---|---|
 | copilot | Agent (this repo) | **Finding the repositories on this machine and the user's watchlist**, model entry, command execution, memory panels | Retrieval ranking, project knowledge storage, **approval** |
-| memory | [Cinder](https://github.com/sky-jiangcheng/repotory) | Project context, session handoffs, approved knowledge pages | Deciding what the copilot looks like |
+| memory | [Cinder](https://github.com/sky-jiangcheng/cinder) | Project context, session handoffs, approved knowledge pages | Deciding what the copilot looks like |
 | protocol | MCP | The only channel between the Agent and the memory layer | —— |
 
 The three boundaries are hard:

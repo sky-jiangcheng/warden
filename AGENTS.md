@@ -1,6 +1,6 @@
 # AGENTS — 开发入口（面向 AI agent / 新成员）
 
-Warden：一个跑在本机的 **copilot**（**不是** GitHub Copilot），独立产品。copilot 是入口，[Cinder](https://github.com/sky-jiangcheng/repotory) 是记忆层，MCP 是两者之间的开放协议。
+Warden：一个跑在本机的 **copilot**（**不是** GitHub Copilot），独立产品。copilot 是入口，[Cinder](https://github.com/sky-jiangcheng/cinder) 是记忆层，MCP 是两者之间的开放协议。
 
 **它与 Cinder Desktop 是两个产品**：桌面端是**工作台**（浏览、编辑、**审批**、治理），
 copilot 是**助手**（读、聊、执行）。**审批权留在人手里，而且不靠约定维持**——
@@ -11,7 +11,7 @@ Cinder 的 MCP 工具面在知识页上只有纯读工具，copilot 走 MCP 就�
 1. **[docs/product.md](docs/product.md)** — 定位、第一版边界、Phase 0 决议、待确认项
 2. **[docs/roadmap.md](docs/roadmap.md)** — Phase 0–6 与里程碑
 3. **[README.zh-CN.md](README.zh-CN.md)** — 项目是什么、怎么跑
-4. **[Cinder 主仓的 ADR 索引](https://github.com/sky-jiangcheng/repotory/tree/master/docs/adr)** — 上游 ADR（检索/记忆/闸门规则的真相）；关键几篇：ADR-0049（品牌重排与「显示层全换、标识层冻结」）、ADR-0047（本仓的定位来源）、ADR-0015（审批闸门）、ADR-0035（MCP 主通道）、ADR-0009（薄客户端纪律）
+4. **[Cinder 主仓的 ADR 索引](https://github.com/sky-jiangcheng/cinder/tree/master/docs/adr)** — 上游 ADR（检索/记忆/闸门规则的真相）；关键几篇：ADR-0049（品牌重排与「显示层全换、标识层冻结」）、ADR-0047（本仓的定位来源）、ADR-0015（审批闸门）、ADR-0035（MCP 主通道）、ADR-0009（薄客户端纪律）
 
 ## 常用命令
 
@@ -71,7 +71,8 @@ scripts/             仓库守卫脚本
 - **双语手册必须同批改**：`docs/**` 与 `docs/en/**` 是镜像，只改一边 = 双语漂移。守卫是 `npm run check:docs`（`scripts/check-docs-mirror.mjs`），有意只出中文的文档要在脚本的 `ZH_ONLY` 白名单登记并附理由。
 - **品牌分两层：显示层全换、标识层冻结**（ADR-0049）。
   显示层是「用户看得见的名字」——本仓叫 **Warden**，桌面工作台叫 **Cinder Desktop**，母品牌叫 **Cinder**；真相源是本仓根目录的 `brand.json`（上游那份在主仓的 `build/brand.json`，**两处要同批改**，CI 各跑各的仓，谁也看不到对方）。
-  标识层是「别人的机器认的东西」——`com.jiangcheng.repotoryagent`（Tauri 应用 id）、`repotory-agent`（crate / 二进制 / npm 包名）、`repotory-mcp`（它拉起的那个 MCP server）、`repotory_*`（工具名前缀）、上游主仓的 GitHub slug `sky-jiangcheng/repotory`：**一个字都不许改**，改了是换接口，不是改名。
+  标识层是「别人的机器认的东西」——`com.jiangcheng.repotoryagent`（Tauri 应用 id）、`repotory-agent`（crate / 二进制 / npm 包名）、`repotory-mcp`（它拉起的那个 MCP server）、`repotory_*`（工具名前缀）：**一个字都不许改**，改了是换接口，不是改名。
+  **上游主仓的 GitHub slug 不在这张清单里**：它已于 2026-11-05 由 `sky-jiangcheng/repotory` 改成 `sky-jiangcheng/cinder`（ADR-0049 补注）。仓地址由 GitHub 自动重定向，老 clone 照常 fetch；但 **GitHub Pages 不随仓名重定向**（旧路径实测 404），所以文档站 URL 必须与改名同批改掉。
   守卫是 `npm run check:brand`（`scripts/check-brand.mjs`）：产品名必须等于 `brand.json`、冻结清单逐条仍在原处、当前面不留旧品牌词、标题改名后指向它的锚点也要跟着改。
   **要改品牌词：先改 `brand.json`，再改各处**，别反过来。
 - **提交规范**：conventional commits，`feat(scope): …` / `fix(scope): …` / `docs(scope): …` / `chore(scope): …`；一次提交只做一件事。
