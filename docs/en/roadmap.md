@@ -44,7 +44,7 @@ Make the copilot consume Repotory's memory reliably.
   spawn the `repotory-mcp` child process over stdio):
   - auto-discover the local Repotory MCP;
   - check the connection at startup;
-  - degrade to plain chat when it fails;
+  - degrade to plain chat when it fails (**the first screen has to say "no `repotory-mcp`, no memory" — no pretending**);
 - Minimal proof:
   - open a repository;
   - the Agent calls `repotory_context`;
@@ -184,9 +184,10 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 - A `repotory-agent init` one-shot initializer;
 - A README that says it plainly: the copilot is the entry point, Repotory is the memory, MCP is the
   open protocol;
-- **The version coupling written down**: which copilot version pairs with which Repotory version
-  (without a capability handshake that is an implicit constraint — see
-  [product.md, open question 4](product.md#4-version-coupling-with-repotory)).
+- **The version coupling written down**: which Agent version pairs with which **memory-layer contract
+  version** (the contract version is the main repo's `internal/version/core.go` `CoreVersion`; it
+  answers "did the tool surface change" — without a capability handshake that coupling is implicit —
+  see [product.md, open question 4](product.md#4-version-coupling-with-repotory)).
 
 ## Milestones
 

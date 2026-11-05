@@ -40,7 +40,8 @@ DeepSeek、硅基流动、vLLM、LM Studio，本机的 Ollama 也一样）；界
 （`repotory_wiki_search` / `repotory_wiki_read`），写侧的闸门是「把内容发布进检索是人的行为」。
 Agent 走 MCP，就自动站在闸门外。
 
-**Agent 不直连数据库**：它需要 `repotory-mcp` 二进制存在。**没装 Repotory 就没有记忆**——
+**Agent 不直连数据库**：它需要 `repotory-mcp` 二进制存在。**没有 `repotory-mcp` 就没有记忆**——
+而那个二进制**本身就是独立分发的 release 产物**（每个平台一份），**桌面 App 不是必需品**；
 这一点在首屏就说清楚，不假装。
 
 ## 现在能跑什么

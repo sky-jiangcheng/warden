@@ -44,7 +44,8 @@ the write side is "publishing content into retrieval is a human act". The Agent 
 stands outside that gate automatically.
 
 **The Agent never touches the database**: it needs the `repotory-mcp` binary to exist.
-**Without Repotory installed there is no memory** — the first screen says so plainly rather than
+**No `repotory-mcp` binary, no memory** — and that binary **ships as a standalone release asset** (one
+per platform), so the **desktop app is not required**; the first screen says so plainly rather than
 pretending.
 
 ## What runs today

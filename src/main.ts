@@ -149,7 +149,7 @@ function renderMemory(status: ShellStatus) {
 
   if (!status.memory.available) {
     setChip(chip, "未安装", "warn");
-    path.textContent = "未找到 repotory-mcp —— 安装 Repotory 后即可接入记忆层";
+    path.textContent = "未找到 repotory-mcp —— 装上它即可接入记忆层（桌面 App 非必需）";
     return;
   }
 

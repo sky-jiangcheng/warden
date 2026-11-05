@@ -42,7 +42,7 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 - Agent 侧实现 MCP Client（**照抄两个 IDE 插件的路子**：拉起 `repotory-mcp` 子进程走 stdio）：
   - 自动发现本地 Repotory MCP；
   - 启动时检查连接状态；
-  - 失败时降级为普通聊天（**首屏要说清「没装 Repotory 就没有记忆」，不能假装**）；
+  - 失败时降级为普通聊天（**首屏要说清「没有 `repotory-mcp` 就没有记忆」，不能假装**）；
 - 最小验证：
   - 打开某个仓库；
   - Shell 调用 `repotory_context`；
@@ -172,7 +172,7 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 - App Store 版本默认不带模型，引导用户安装 Ollama；
 - 提供 `repotory-agent init` 一键初始化；
 - README 里写清楚：copilot 是入口，Repotory 是记忆层，MCP 是开放协议；
-- **写清版本耦合**：哪个 copilot 版本配哪个 Repotory 版本（不做能力协商的话这是隐式约束，见 [product.md 待确认 4](product.md#4-与-repotory-的版本耦合)）。
+- **写清版本耦合**：哪个 Agent 版本配哪个**记忆层契约版本**（契约版本是主仓 `internal/version/core.go` 的 `CoreVersion`，它答的是「工具面变了没」；不做能力协商的话这个耦合是隐式的，见 [product.md 待确认 4](product.md#4-与-repotory-的版本耦合)）。
 
 ## 里程碑
 

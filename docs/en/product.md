@@ -45,8 +45,9 @@ the write side is "publishing content into retrieval is a human act" (ADR-0015 d
 wanted to.**
 
 **The Agent needs the `repotory-mcp` binary to exist before it has any memory.**
-**Without Repotory installed there is no memory** — the first screen has to say so plainly rather than
-pretending.
+**No `repotory-mcp` binary, no memory** — and that binary **ships as a standalone release asset**
+(one per platform), so the **desktop app is not required**; the first screen has to say so plainly
+rather than pretending.
 
 ## The first-version boundary
 
@@ -124,6 +125,14 @@ self-check test in `memory_layer.rs` that watches for tool names being written b
 > tools, matching the names listed above. **At runtime the server's answer always wins** — when
 > Repotory adds a tool, the copilot sees it without a line of code changing here.
 
+**Beyond the tool surface, this contract has a version number too**: ADR-0048 in the main repo gives
+the memory layer its own **contract version** (`internal/version/core.go`'s `CoreVersion`), and that is
+what the MCP `initialize` response reports as `serverInfo.version`. **It answers "did the tool surface
+change", not "is the build new"** — the main repo pins that number next to the tool list and holds it
+with a CI gate (changing the tool surface forces a version bump), so the implicit "which version pairs
+with which" constraint **has become a number you can read** on that side. **This repo keeps no copy of
+it** (same rule as the tool list) — it reads the server's value when it connects.
+
 ## Open questions (the maintainer decides)
 
 ### 1. ~~`repotory_pending` and `repotory_snapshot` do not exist in Repotory~~ (clarified)
@@ -187,19 +196,28 @@ The original question: the MCP tool set the Agent consumes evolves with Repotory
 **Settled (2026-11-05): self-evident at runtime, warn in plain words, never hard-refuse.**
 
 ① **The server's version was already in hand** — Repotory's MCP server reports its `serverInfo` in the
-`initialize` response (main repo, `cmd/mcp/main.go:37` — `server.NewMCPServer("repotory-mcp", version.Version)`),
+`initialize` response (main repo, `cmd/mcp/main.go` — `server.NewMCPServer("repotory-mcp", version.CoreVersion)`),
 and **this repo threw the whole response away** (`mcp_client.rs:250-259` only `?`s the result, it never
 binds it). Catching it is one change, **not a new protocol**.
-② **The first screen proves it**: it shows "Repotory vX.Y.Z · N tools" — the version and the tool count
+② **The first screen proves it**: it shows "**memory layer vX.Y.Z · N tools**" — the version and the tool count
 both come from the server, and **this repo keeps no copy** (the same rule as the tool list).
+**That X.Y.Z is the contract version** (the main repo's new `internal/version/core.go` `CoreVersion`,
+ADR-0048): **it answers "did the tool surface change", not "is the build new"** — the release version
+is on `/health` and in the startup log, but it has **no answer** to "what may I rely on" (the interface
+changes daily, the tool surface moves every few months, and a 2.30.0 cannot say whether the tool
+surface changed). **So the first screen says "memory layer vX.Y.Z", not "Repotory vX.Y.Z".**
 ③ **Warn only when out of bounds, never block**: below the supported floor the app says one plain
-sentence ("this Repotory is too old — upgrade it to use memory") and **does not hard-refuse** — a
+sentence ("this memory layer is too old — upgrade it to use memory") and **does not hard-refuse** — a
 hard refusal turns an implicit coupling into an explicit one that still stops people, while the dynamic
 tool list already covers the "a tool was added" half.
 ④ **No real capability handshake** (the client declares the tools it needs and probes for the missing
 ones): that solves "a tool was removed or renamed", which is rare, at a cost far above the benefit —
 **that half waits for the day it actually happens**.
-⑤ **The floor is derived from "the tool list changed"**, not from a magic number copied by hand.
+⑤ **The floor is derived from the contract version's major number**, not from a magic number copied by
+hand — the main repo pins the contract version **next to the tool list** (`wantCoreVersion` in
+`cmd/mcp/main_test.go`) and its CI gate guarantees "changing the tool surface forces a version bump",
+so the number this repo reads **marks the floor itself**: backwards compatible within one major,
+re-negotiable only across a major.
 
 **Already decided**: the tool list is **fetched dynamically** (see above), so a newly added tool is not
 invisible just because a list was not updated — **a capability handshake solves "a tool was removed or
