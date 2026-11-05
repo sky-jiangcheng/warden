@@ -47,7 +47,7 @@ if (!existsSync(join(root, brandPath))) {
   process.exit(1)
 }
 const brand = JSON.parse(read(brandPath))
-for (const key of ['mother', 'desktop', 'agent']) {
+for (const key of ['mother', 'desktop', 'agent', 'idePlugin']) {
   if (!brand[key] || typeof brand[key] !== 'string') {
     issues.push(`${brandPath}: 读不到 "${key}"`)
   }
@@ -130,6 +130,18 @@ if (brand.mother && brand.desktop && !brand.desktop.startsWith(`${brand.mother} 
   issues.push(
     `brand.json: 桌面名「${brand.desktop}」不是母品牌「${brand.mother}」加后缀——` +
       '一个品牌族里的两个面要读得出同源'
+  )
+}
+
+// The IDE plugins' marketplace name lives upstream, in the main
+// repository. This repository carries the word so the two copies of the
+// source of truth cannot disagree about the shape of it — and so the
+// rule is the same on both sides: the qualifier is what keeps the name
+// inside the family.
+if (brand.mother && brand.idePlugin && !brand.idePlugin.startsWith(`${brand.mother} `)) {
+  issues.push(
+    `brand.json: 插件名「${brand.idePlugin}」不是母品牌「${brand.mother}」加后缀——` +
+      'Marketplace 上它是独立条目，名字得让人看得出它属于这个品牌族'
   )
 }
 

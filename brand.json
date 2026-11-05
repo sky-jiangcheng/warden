@@ -1,6 +1,7 @@
 {
-  "note": "The brand words, in one place. The upstream copy lives in the Cinder main repository at build/brand.json; this one exists because this repository's CI runs without the other one checked out. Change one, change the other — the two are not allowed to drift. ADR-0049.",
+  "note": "The brand words, in one place. The upstream copy lives in the Cinder main repository at build/brand.json; this one exists because this repository's CI runs without the other one checked out. Change one, change the other — the two are not allowed to drift. `idePlugin` is the IDE plugins' marketplace name (VS Code wants it globally unique). ADR-0049.",
   "mother": "Cinder",
   "desktop": "Cinder Desktop",
-  "agent": "Warden"
+  "agent": "Warden",
+  "idePlugin": "Cinder Memory"
 }
