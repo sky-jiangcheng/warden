@@ -232,6 +232,23 @@ impl LlmClient {
     /// one. When it is set, it goes into the `Authorization` header, which
     /// is what every OpenAI-compatible provider expects.
     pub fn new(provider: &Provider, api_key: Option<String>) -> Result<Self, LlmError> {
+        let url = reqwest::Url::parse(provider.normalized_base_url())
+            .map_err(|e| LlmError::Protocol(format!("invalid provider URL: {e}")))?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+            return Err(LlmError::Protocol(
+                "provider URL must use http or https with a host".into(),
+            ));
+        }
+        for (name, value) in &provider.headers {
+            reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| LlmError::Protocol("invalid provider header name".into()))?;
+            reqwest::header::HeaderValue::from_str(value)
+                .map_err(|_| LlmError::Protocol("invalid provider header value".into()))?;
+        }
+        if let Some(key) = &api_key {
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))
+                .map_err(|_| LlmError::Protocol("invalid provider API key header".into()))?;
+        }
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(CHAT_TIMEOUT_SECS))
             .proxy(proxy_for(provider))
@@ -375,8 +392,9 @@ impl LlmClient {
         // `bytes_stream` needs the `stream` feature; it is what makes the
         // answer arrive piece by piece instead of all at once at the end.
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
         let mut answer = String::new();
+        let mut finished = false;
 
         loop {
             let chunk = tokio::time::timeout(
@@ -388,14 +406,30 @@ impl LlmClient {
 
             let Some(chunk) = chunk else { break };
             let chunk = chunk.map_err(|err| LlmError::Transport(err.to_string()))?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            buffer.extend_from_slice(&chunk);
 
             // SSE frames are separated by a blank line, but many providers
             // send one `data:` line per frame with only a newline. Both are
             // handled: complete lines are consumed as they arrive.
-            while let Some(at) = buffer.find('\n') {
-                let line = buffer[..at].trim_end_matches('\r').to_string();
+            while let Some(at) = buffer.iter().position(|byte| *byte == b'\n') {
+                // Decode only complete lines, not arbitrary TCP chunks that
+                // can divide a multibyte UTF-8 character.
+                let line = std::str::from_utf8(&buffer[..at])
+                    .map_err(|e| LlmError::Protocol(format!("invalid stream UTF-8: {e}")))?
+                    .trim_end_matches('\r')
+                    .to_string();
                 buffer.drain(..=at);
+                if let Some(data) = line.strip_prefix("data:").map(str::trim)
+                    && data != "[DONE]"
+                    && !data.is_empty()
+                {
+                    let value: serde_json::Value = serde_json::from_str(data)
+                        .map_err(|e| LlmError::Protocol(format!("invalid stream JSON: {e}")))?;
+                    if value.get("error").is_some() {
+                        return Err(LlmError::Protocol(error_message(data)));
+                    }
+                    finished |= value["choices"][0]["finish_reason"].is_string();
+                }
                 if let Some(delta) = parse_stream_line(&line) {
                     if delta.is_empty() {
                         // `[DONE]` — the stream ended.
@@ -407,10 +441,15 @@ impl LlmClient {
             }
         }
 
-        // The stream ended without `[DONE]`. Some providers close the
-        // connection instead of sending the sentinel; the answer we have is
-        // still real, so it is returned rather than discarded.
-        Ok(answer)
+        // A disconnected stream is not a completed answer to persist in the
+        // shared history. Accept providers that send finish_reason but no DONE.
+        if finished && buffer.iter().all(u8::is_ascii_whitespace) {
+            Ok(answer)
+        } else {
+            Err(LlmError::Protocol(
+                "the answer stream ended before completion".into(),
+            ))
+        }
     }
 }
 

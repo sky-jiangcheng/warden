@@ -9,6 +9,7 @@
 // against a fake server. The other modules stay private: nothing outside
 // this crate has a reason to reach into them.
 mod binaries;
+pub mod conversations;
 pub mod llm;
 pub mod mcp_client;
 pub mod memory_layer;
@@ -184,6 +185,22 @@ const RESCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300)
 /// The notification action that brings the window back.
 const ACTION_NEW_REPOS: &str = "repos-new";
 
+/// Avoid re-announcing unchanged discoveries every five minutes. This is
+/// session-local presentation state; favourites/dismissals stay in RepoStore.
+#[derive(Default)]
+struct AnnouncementState(std::sync::Mutex<std::collections::HashSet<String>>);
+
+impl AnnouncementState {
+    fn unseen(&self, repos: &[RepoEntry]) -> Vec<RepoEntry> {
+        let mut seen = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        repos
+            .iter()
+            .filter(|repo| seen.insert(repo.path.clone()))
+            .cloned()
+            .collect()
+    }
+}
+
 /// Announces repositories the user has not dealt with yet.
 ///
 /// Two channels, one per situation. When the window is in front, the
@@ -191,6 +208,7 @@ const ACTION_NEW_REPOS: &str = "repos-new";
 /// already reading is noise. When the copilot is in the background, a
 /// system notification is the only thing that can reach the user at all.
 fn announce_new_repos<R: tauri::Runtime>(app: &tauri::AppHandle<R>, new_repos: &[RepoEntry]) {
+    let new_repos = app.state::<AnnouncementState>().unseen(new_repos);
     if new_repos.is_empty() {
         return;
     }
@@ -249,10 +267,17 @@ fn spawn_background_scan<R: tauri::Runtime>(
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(RESCAN_INTERVAL).await;
-            let store = RepoStore::new(store_path.clone());
-            let (list, _) = store.load();
-            let scan = repos::scan_into(&list.roots, &list, None);
-            announce_new_repos(&app, &scan.new_repos);
+            let path = store_path.clone();
+            match tauri::async_runtime::spawn_blocking(move || {
+                let store = RepoStore::new(path);
+                let (list, _) = store.load();
+                repos::scan_into(&list.roots, &list, None)
+            })
+            .await
+            {
+                Ok(scan) => announce_new_repos(&app, &scan.new_repos),
+                Err(error) => eprintln!("[repos] background scan failed: {error}"),
+            }
         }
     });
 }
@@ -548,80 +573,95 @@ async fn provider_test_connection(
 /// value would make the frontend wait for the whole answer, and the point
 /// of streaming is that the text appears while it is written.
 #[tauri::command]
-async fn chat_send(
-    store: tauri::State<'_, ProviderStore>,
+async fn chat_send<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     channel: Channel<ChatChunk>,
     message: String,
     model: Option<String>,
     provider_id: Option<String>,
+    thread_id: Option<String>,
+    message_id: String,
 ) -> Result<(), String> {
-    let (config, _) = store.load();
-    // The chat form can point at any provider, not only the active one — the
-    // user picks the model in the same place they pick the provider.
-    let provider = match provider_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        Some(id) => config
-            .find(id)
-            .cloned()
-            .ok_or_else(|| format!("no provider named \"{id}\""))?,
-        None => config
-            .active()
-            .ok_or_else(|| "no provider is configured yet".to_string())?
-            .clone(),
-    };
-
-    let key = load_api_key(&provider.id)?;
-    let client = LlmClient::new(&provider, key).map_err(|err| err.to_string())?;
-
-    let model = match model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
-        Some(model) => model.to_string(),
-        None => provider
-            .default_model
-            .clone()
-            .ok_or_else(|| "this provider has no default model — pick one first".to_string())?,
-    };
-
-    let messages = vec![ChatMessage::user(message)];
-    let mut answer = String::new();
-
-    let outcome = client
-        .chat_stream(&model, &messages, |delta| {
-            answer.push_str(delta);
-            let chunk = ChatChunk {
-                delta: delta.to_string(),
-                text: answer.clone(),
-                done: false,
-                error: None,
-            };
-            // A send failure means the window is gone; there is nobody left
-            // to tell, and the request itself is already on its way.
+    conversations::send(
+        &app.state::<mcp_client::McpSession>(),
+        &app.state::<conversations::GenerationState>(),
+        &app.state::<ProviderStore>(),
+        conversations::ChatRequest {
+            message,
+            model,
+            provider_id,
+            thread_id,
+            message_id,
+        },
+        |chunk| {
             let _ = channel.send(chunk);
-        })
-        .await;
+        },
+    )
+    .await
+}
 
-    match outcome {
-        Ok(_) => {
-            let _ = channel.send(ChatChunk {
-                delta: String::new(),
-                text: answer,
-                done: true,
-                error: None,
-            });
-            Ok(())
-        }
-        Err(err) => {
-            let _ = channel.send(ChatChunk {
-                delta: String::new(),
-                text: answer,
-                done: true,
-                error: Some(describe_llm_error(&err)),
-            });
-            Err(describe_llm_error(&err))
-        }
-    }
+#[tauri::command]
+async fn conversation_list<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    conversations::list(&app.state::<mcp_client::McpSession>(), path).await
+}
+
+#[tauri::command]
+async fn conversation_create<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+    title: String,
+    path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    conversations::create(&app.state::<mcp_client::McpSession>(), id, title, path).await
+}
+
+#[tauri::command]
+async fn conversation_read<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    thread_id: String,
+) -> Result<serde_json::Value, String> {
+    conversations::read(&app.state::<mcp_client::McpSession>(), thread_id).await
+}
+
+#[tauri::command]
+async fn conversation_rename<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    thread_id: String,
+    title: String,
+) -> Result<serde_json::Value, String> {
+    conversations::rename(&app.state::<mcp_client::McpSession>(), thread_id, title).await
+}
+
+#[tauri::command]
+async fn workspace_metrics<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    conversations::metrics(&app.state::<mcp_client::McpSession>(), path).await
+}
+
+#[tauri::command]
+fn companion_show_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    tray::show_surface(&app, "main", false)
+}
+
+#[tauri::command]
+fn companion_hide_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    tray::hide_surface(&app, "main")
+}
+
+#[tauri::command]
+fn companion_hide<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    tray::hide_surface(&app, "companion")
+}
+
+#[tauri::command]
+fn window_drag<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) -> Result<(), String> {
+    tray::check_surface(window.label())?;
+    window.start_dragging().map_err(|e| e.to_string())
 }
 
 /// The builder every entry point uses.
@@ -653,6 +693,20 @@ fn builder<R: tauri::Runtime>() -> tauri::Builder<R> {
             eprintln!("[page] {} {:?}", payload.url(), payload.event());
         })
         .manage(mcp_client::McpSession::default())
+        .manage(conversations::GenerationState::default())
+        .manage(AnnouncementState::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && tray::check_surface(window.label()).is_ok()
+            {
+                // Keep both webviews and their in-flight chat tasks alive.
+                api.prevent_close();
+                if let Err(error) = tray::hide_surface(window.app_handle(), window.label()) {
+                    eprintln!("[window] {error}");
+                    let _ = window.emit("window:error", error);
+                }
+            }
+        })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -704,6 +758,15 @@ pub fn run() {
             provider_fetch_models,
             provider_test_connection,
             chat_send,
+            conversation_list,
+            conversation_create,
+            conversation_read,
+            conversation_rename,
+            workspace_metrics,
+            companion_show_chat,
+            companion_hide_chat,
+            companion_hide,
+            window_drag,
             repo_scan,
             repo_roots_add,
             repo_roots_remove,
@@ -717,6 +780,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchanged_scan_results_are_announced_only_once() {
+        let state = AnnouncementState::default();
+        let repo = RepoEntry {
+            path: "/repo/one".into(),
+            name: "one".into(),
+            favorite: false,
+            missing: false,
+        };
+        assert_eq!(state.unseen(std::slice::from_ref(&repo)).len(), 1);
+        assert!(state.unseen(&[repo]).is_empty());
+        let next = RepoEntry {
+            path: "/repo/two".into(),
+            name: "two".into(),
+            favorite: false,
+            missing: false,
+        };
+        assert_eq!(state.unseen(&[next]).len(), 1);
+    }
 
     /// The frontend reads camelCase keys; a rename on the Rust side would
     /// otherwise only show up as an empty first screen at runtime.

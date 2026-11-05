@@ -12,13 +12,10 @@
 //
 // What the tray does here is deliberately small:
 //   · left click  → show and focus the window (this is the whole point)
-//   · right click → a menu with "Show" and "Quit"
+//   · right click → Show Chat / Show Companion / Quit
 //
-// Closing the window ends the app, the same as the desktop app. The tray is
-// for waking up an app that is already running — a window that hides itself
-// on close would make the tray the only way back in, and the copilot's
-// window is its whole UI. Hiding it would trade one unreachable window for
-// an unreachable process.
+// Closing either surface hides it, preserving background chat. Only Quit
+// exits. If the tray failed, another visible surface must remain reachable.
 
 use tauri::{
     AppHandle, Manager, Runtime,
@@ -32,16 +29,17 @@ const TRAY_ID: &str = "main";
 /// Menu item ids. They are matched by string in the event handler, so they
 /// are declared as constants rather than spelled out at the call sites.
 const MENU_SHOW: &str = "show";
+const MENU_COMPANION: &str = "show-companion";
 const MENU_QUIT: &str = "quit";
 
 /// The macOS tray icon: a template image.
 ///
 /// macOS menu bar icons are template images — a single colour on a
 /// transparent field, which the system recolours for light and dark menu
-/// bars. The file is the letterform of Cinder's brand mark cut to one
-/// colour: the same glyph domain the VS Code activity bar and the JetBrains
-/// stripe icon use. A coloured app icon would look wrong in a menu bar and
-/// would not adapt.
+/// bars. The file is Warden's lantern cut to one colour — the same glyph
+/// domain the VS Code activity bar and the JetBrains stripe icon use, but
+/// from `build/icon-warden.svg`, not Cinder's letterform. A coloured app
+/// icon would look wrong in a menu bar and would not adapt.
 ///
 /// `icon_as_template` is macOS-only (the `tray-icon` crate ignores it
 /// elsewhere), so the non-macOS platforms get the coloured app icon instead
@@ -101,9 +99,11 @@ fn install_on_main_thread<R: Runtime>(
     handle: &AppHandle<R>,
     icon: tauri::image::Image<'static>,
 ) -> tauri::Result<()> {
-    let show = MenuItem::with_id(handle, MENU_SHOW, "Show Warden", true, None::<&str>)?;
+    let show = MenuItem::with_id(handle, MENU_SHOW, "Show Chat", true, None::<&str>)?;
+    let companion =
+        MenuItem::with_id(handle, MENU_COMPANION, "Show Companion", true, None::<&str>)?;
     let quit = MenuItem::with_id(handle, MENU_QUIT, "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(handle, &[&show, &quit])?;
+    let menu = Menu::with_items(handle, &[&show, &companion, &quit])?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
@@ -113,6 +113,11 @@ fn install_on_main_thread<R: Runtime>(
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_SHOW => show_window(app),
+            MENU_COMPANION => {
+                if let Err(error) = show_surface(app, "companion", false) {
+                    eprintln!("[window] {error}");
+                }
+            }
             MENU_QUIT => app.exit(0),
             _ => {}
         })
@@ -159,19 +164,131 @@ pub fn is_installed<R: Runtime>(app: &AppHandle<R>) -> bool {
 /// nothing". `unminimize` first, then `set_focus`, so the keystroke lands
 /// where the user is looking.
 pub fn show_window<R: Runtime>(app: &AppHandle<R>) {
-    let Some(window) = app.get_webview_window("main") else {
-        // No window to bring back. The tray still works as a menu (Quit is
-        // still reachable), so this is a degraded state, not a broken one.
-        return;
-    };
-    let _ = window.unminimize();
-    let _ = window.show();
-    let _ = window.set_focus();
+    // Focusing is reserved for an explicit tray/notification click, never a scan.
+    if let Err(error) = show_surface(app, "main", true) {
+        eprintln!("[window] {error}");
+    }
+}
+
+pub fn check_surface(label: &str) -> Result<(), String> {
+    if matches!(label, "main" | "companion") {
+        Ok(())
+    } else {
+        Err("only Warden's main and companion windows may be controlled".into())
+    }
+}
+
+pub fn show_surface<R: Runtime>(
+    app: &AppHandle<R>,
+    label: &str,
+    focus: bool,
+) -> Result<(), String> {
+    check_surface(label)?;
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("Warden {label} window is unavailable"))?;
+    window.unminimize().map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    if focus {
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn hide_surface<R: Runtime>(app: &AppHandle<R>, label: &str) -> Result<(), String> {
+    check_surface(label)?;
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("Warden {label} window is unavailable"))?;
+    if !is_installed(app) {
+        let other_label = if label == "main" { "companion" } else { "main" };
+        // A failed tray must not leave an invisible, unreachable process.
+        // Showing the fallback never focuses it. Failure leaves this window up.
+        show_surface(app, other_label, false)
+            .map_err(|e| format!("cannot hide {label}: no wake-up entry is available ({e})"))?;
+        let other = app
+            .get_webview_window(other_label)
+            .ok_or("fallback window disappeared")?;
+        if !other.is_visible().unwrap_or(false) || other.is_minimized().unwrap_or(true) {
+            return Err(format!(
+                "cannot hide {label}: the fallback window is not visible"
+            ));
+        }
+    }
+    window
+        .hide()
+        .map_err(|e| format!("could not hide {label}: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surfaces_survive_hiding_and_require_a_wake_up_entry() {
+        let app = tauri::test::mock_app();
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        assert!(
+            hide_surface(app.handle(), "main")
+                .unwrap_err()
+                .contains("no wake-up entry")
+        );
+        assert!(app.get_webview_window("main").is_some());
+        let companion =
+            tauri::WebviewWindowBuilder::new(&app, "companion", tauri::WebviewUrl::default())
+                .build()
+                .unwrap();
+        hide_surface(app.handle(), "main").unwrap();
+        hide_surface(app.handle(), "companion").unwrap();
+        assert!(app.get_webview_window("main").is_some());
+        assert!(app.get_webview_window("companion").is_some());
+        show_surface(app.handle(), "main", false).unwrap();
+        assert!(show_surface(app.handle(), "untrusted", false).is_err());
+        crate::window_drag(main).unwrap();
+        crate::window_drag(companion).unwrap();
+        let other =
+            tauri::WebviewWindowBuilder::new(&app, "untrusted", tauri::WebviewUrl::default())
+                .build()
+                .unwrap();
+        assert!(crate::window_drag(other).is_err());
+        // MockRuntime doesn't implement visibility changes; this tests the
+        // hide path and retained handles, not actual OS rendering.
+    }
+
+    #[test]
+    fn window_config_and_capabilities_are_restricted_to_two_local_surfaces() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let windows = config["app"]["windows"].as_array().unwrap();
+        assert_eq!(windows.len(), 2);
+        let main = &windows[0];
+        assert_eq!(
+            (main["width"].as_u64(), main["height"].as_u64()),
+            (Some(480), Some(760))
+        );
+        assert_eq!(
+            (main["minWidth"].as_u64(), main["minHeight"].as_u64()),
+            (Some(380), Some(520))
+        );
+        let pet = &windows[1];
+        assert_eq!(pet["label"], "companion");
+        assert_eq!(pet["url"], "index.html?surface=companion");
+        assert_eq!(pet["width"], 168);
+        assert_eq!(pet["height"], 196);
+        for flag in ["alwaysOnTop", "transparent", "skipTaskbar"] {
+            assert_eq!(pet[flag], true);
+        }
+        for flag in ["decorations", "resizable", "focus"] {
+            assert_eq!(pet[flag], false);
+        }
+        let caps: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        assert_eq!(caps["windows"], serde_json::json!(["main", "companion"]));
+        assert!(caps.get("remote").is_none());
+        assert_eq!(caps["permissions"], serde_json::json!(["core:default"]));
+    }
 
     /// The tray's whole reason to exist is the wake-up path. If the icon id
     /// drifts away from the one the config or the lookup uses, the tray

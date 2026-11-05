@@ -89,6 +89,14 @@ pub struct McpSession {
 }
 
 impl McpSession {
+    /// Inject an already handshaken fixture without changing process PATH.
+    #[cfg(feature = "test-fixtures")]
+    pub fn from_connected(client: McpClient, tools: Vec<ToolInfo>) -> Self {
+        Self {
+            connected: tokio::sync::Mutex::new(Some((Arc::new(client), tools))),
+        }
+    }
+
     /// The live session, starting the server if it is not running yet.
     ///
     /// A failure is not cached: if the server was not installed a moment ago
@@ -107,13 +115,33 @@ impl McpSession {
     }
 
     /// Calls one tool on the live session.
+    ///
+    /// A `Closed` answer means the pipe is gone — the server process exited
+    /// while the window stayed open. The cached session must not survive it:
+    /// the pollers ask again in 2.5 seconds, and handing them the dead client
+    /// would report "Cinder unavailable" until the app restarts, even though
+    /// the binary could simply be started again.
     pub async fn call_tool(
         &self,
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<String, McpError> {
         let (client, _) = self.ensure().await?;
-        client.call_tool(name, arguments).await
+        let answer = client.call_tool(name, arguments).await;
+        self.evict_if_closed(&answer).await;
+        answer
+    }
+
+    /// Drops a session whose answer says the server is gone, so the next
+    /// `ensure` starts it again.
+    ///
+    /// Only `Closed` qualifies. A `Protocol` error is the server *answering*
+    /// (a tool refused the call), and a `Timeout` is a slow answer — neither
+    /// justifies killing a live connection and paying a fresh database open.
+    pub(crate) async fn evict_if_closed<T>(&self, answer: &Result<T, McpError>) {
+        if matches!(answer, Err(McpError::Closed(_))) {
+            *self.connected.lock().await = None;
+        }
     }
 }
 

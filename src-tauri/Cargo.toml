@@ -33,7 +33,7 @@ tauri-build = { version = "2", features = [] }
 # `image-png` is needed because the tray icon is embedded with
 # `tauri::image::Image::from_bytes`, which decodes through the `image`
 # crate: PNG and ICO only, no SVG.
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-opener = "2"
 
 # The copilot announces a newly found repository through the operating

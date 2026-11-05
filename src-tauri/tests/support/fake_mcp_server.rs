@@ -25,7 +25,124 @@
 // One consequence to keep in mind: `cargo test` RUNS this target, so the
 // server must not read stdin unless it was asked to. The environment
 // variable is that ask; without it the binary exits at once.
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
+
+#[derive(Default)]
+struct Thread {
+    metadata: Value,
+    messages: Vec<Value>,
+}
+
+fn serve_chat() {
+    let mut fail_save = std::env::var("REPOTORY_AGENT_FAKE_CHAT_SAVE_FAIL").is_ok();
+    let bad_json = std::env::var("REPOTORY_AGENT_FAKE_CHAT_BAD_JSON").is_ok();
+    let mut threads = BTreeMap::<String, Thread>::new();
+    let mut stdout = std::io::stdout();
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        let Ok(request) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some(id) = request.get("id") else {
+            continue;
+        };
+        let result = match request["method"].as_str().unwrap_or("") {
+            "initialize" => Ok(
+                json!({"protocolVersion":"2024-11-05", "capabilities":{"tools":{}}, "serverInfo":{"name":"fake-mcp", "version":"0.0.0"}}),
+            ),
+            "tools/list" => Ok(
+                json!({"tools":[{"name":"repotory_chat","description":"shared chat"},{"name":"repotory_metrics","description":"workspace metrics"}]}),
+            ),
+            "tools/call" => {
+                let name = request["params"]["name"].as_str().unwrap_or("");
+                let args = &request["params"]["arguments"];
+                if bad_json {
+                    Ok(text("not JSON"))
+                } else if name == "repotory_chat" {
+                    chat_call(&mut threads, args, &mut fail_save)
+                        .map(|value| text(&value.to_string()))
+                } else if name == "repotory_metrics" {
+                    Ok(text(&json!({"repositoryCount":2,"totalLines":null,"commitsToday":3,"additionsToday":40,"deletionsToday":5,"notesCount":6,"pendingReviewCount":1,"refreshedAt":null}).to_string()))
+                } else {
+                    Err("unknown tool".into())
+                }
+            }
+            _ => continue,
+        };
+        let reply = match result {
+            Ok(value) => json!({"jsonrpc":"2.0", "id":id, "result":value}),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32000,"message":error}})
+            }
+        };
+        if writeln!(stdout, "{reply}")
+            .and_then(|_| stdout.flush())
+            .is_err()
+        {
+            break;
+        }
+    }
+}
+
+fn text(content: &str) -> Value {
+    json!({"content":[{"type":"text","text":content}]})
+}
+
+fn chat_call(
+    threads: &mut BTreeMap<String, Thread>,
+    args: &Value,
+    fail_save: &mut bool,
+) -> Result<Value, String> {
+    let op = args["operation"].as_str().unwrap_or("");
+    let id = args["thread_id"].as_str().unwrap_or("");
+    match op {
+        "list" => Ok(
+            json!({"threads":threads.values().filter(|t| args["path"].is_null() || t.metadata["path"] == args["path"]).map(|t| t.metadata.clone()).collect::<Vec<_>>()}),
+        ),
+        "create" => {
+            let id = args["id"].as_str().ok_or("missing id")?;
+            let thread = threads.entry(id.into()).or_insert_with(|| Thread {
+                metadata: json!({"id":id,"title":args["title"],"path":args["path"],"createdAt":"2026-11-05T00:00:00Z","updatedAt":"2026-11-05T00:00:00Z"}), messages: vec![] });
+            Ok(json!({"thread":thread.metadata}))
+        }
+        "read" => {
+            let thread = threads.get(id).ok_or("thread not found")?;
+            Ok(
+                json!({"thread":thread.metadata,"messages":thread.messages.iter().skip(thread.messages.len().saturating_sub(500)).collect::<Vec<_>>()}),
+            )
+        }
+        "rename" => {
+            let thread = threads.get_mut(id).ok_or("thread not found")?;
+            thread.metadata["title"] = args["title"].clone();
+            Ok(json!({"thread":thread.metadata}))
+        }
+        "append" => {
+            if args["role"] == "assistant" && *fail_save {
+                *fail_save = false;
+                return Err("fixture assistant save unavailable".into());
+            }
+            let thread = threads.get_mut(id).ok_or("thread not found")?;
+            if let Some(message) = thread.messages.iter().find(|m| m["id"] == args["id"]) {
+                if message["role"] != args["role"]
+                    || message["content"] != args["content"]
+                    || message["source"] != args["source"]
+                    || message["replyTo"] != args["reply_to"]
+                {
+                    return Err("immutable message id conflict".into());
+                }
+                return Ok(json!({"message":message}));
+            }
+            let message = json!({"id":args["id"],"role":args["role"],"content":args["content"],"source":args["source"],"replyTo":args["reply_to"],"createdAt":format!("2026-11-05T00:00:{:02}Z", thread.messages.len())});
+            thread.messages.push(message.clone());
+            Ok(json!({"message":message}))
+        }
+        _ => Err("unknown operation".into()),
+    }
+}
 
 /// The environment variable that turns this binary into the MCP server.
 ///
@@ -49,6 +166,17 @@ const TOOL_ERROR: &str = "the fake server refused the request";
 const TOOLS: &str = r#"[{"name":"repotory_context","description":"load a project"},{"name":"repotory_scan","description":"scan repositories"}]"#;
 
 fn main() {
+    if [
+        "REPOTORY_AGENT_FAKE_CHAT",
+        "REPOTORY_AGENT_FAKE_CHAT_SAVE_FAIL",
+        "REPOTORY_AGENT_FAKE_CHAT_BAD_JSON",
+    ]
+    .iter()
+    .any(|key| std::env::var(key).is_ok())
+    {
+        serve_chat();
+        return;
+    }
     if std::env::var(SERVER_MODE).is_err() {
         // `cargo test` runs this target. There is no server to be here.
         return;

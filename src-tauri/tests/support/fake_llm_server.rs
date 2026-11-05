@@ -36,7 +36,7 @@ fn main() {
             Err(_) => continue,
         };
         served += 1;
-        handle(stream);
+        handle(stream, served);
         if served > 32 {
             break;
         }
@@ -44,7 +44,7 @@ fn main() {
 }
 
 /// Answers one request.
-fn handle(mut stream: TcpStream) {
+fn handle(mut stream: TcpStream, served: usize) {
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).is_err() {
@@ -68,10 +68,9 @@ fn handle(mut stream: TcpStream) {
             content_length = value.trim().parse().unwrap_or(0);
         }
     }
-    if content_length > 0 {
-        let mut body = vec![0u8; content_length];
-        let _ = std::io::Read::read_exact(&mut reader, &mut body);
-    }
+    let mut request_body = vec![0u8; content_length];
+    let _ = std::io::Read::read_exact(&mut reader, &mut request_body);
+    let request: serde_json::Value = serde_json::from_slice(&request_body).unwrap_or_default();
 
     if path == "/v1/models" {
         let body = format!(
@@ -82,6 +81,47 @@ fn handle(mut stream: TcpStream) {
     }
 
     if path == "/v1/chat/completions" {
+        match request["model"].as_str().unwrap_or("") {
+            "fail" => {
+                respond(
+                    &mut stream,
+                    "503 Unavailable",
+                    "application/json",
+                    br#"{"error":{"message":"fixture provider unavailable"}}"#,
+                );
+                return;
+            }
+            "history" => {
+                let answer =
+                    serde_json::json!({"requestNumber":served,"messages":request["messages"]})
+                        .to_string();
+                let body = format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    serde_json::json!({"choices":[{"delta":{"content":answer}}]})
+                );
+                respond(&mut stream, "200 OK", "text/event-stream", body.as_bytes());
+                return;
+            }
+            "truncated" => {
+                respond(
+                    &mut stream,
+                    "200 OK",
+                    "text/event-stream",
+                    b"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+                );
+                return;
+            }
+            "sse-error" => {
+                respond(
+                    &mut stream,
+                    "200 OK",
+                    "text/event-stream",
+                    b"data: {\"error\":{\"message\":\"fixture stream failed\"}}\n\n",
+                );
+                return;
+            }
+            _ => {}
+        }
         // The SSE stream. Each chunk is one `data:` line, and the stream
         // ends with the `[DONE]` sentinel — the exact shape the client has
         // to decode.

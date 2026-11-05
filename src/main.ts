@@ -1,23 +1,14 @@
-// Warden — first screen.
-//
-// The window asks the Rust side for one status payload and renders it. The
-// frontend owns no runtime knowledge: which model providers exist, and
-// whether the Cinder MCP server is installed, are both facts the backend
-// owns.
-//
-// The two lists this screen draws are both fetched, never written down here:
-//
-//   * the memory layer's tool list comes over MCP's `tools/list`;
-//   * a provider's model list comes over the OpenAI-compatible `/models`.
-//
-// A copy would drift, and a drifted copy reads like a contract.
-//
-// The API key never reaches this file. It is typed into a password field,
-// handed straight to the Rust side, and stored in the operating system's
-// credential store — this window only ever learns WHETHER a key exists.
-import { invoke } from "@tauri-apps/api/core";
-import { Channel } from "@tauri-apps/api/core";
+// Warden — independent startup lanes and the existing settings controls.
+// Conversation state lives in chat.ts; the small desktop surface lives in
+// companion.ts. Runtime/provider/tool knowledge still comes only from Rust.
+// Stored API keys never return to the UI: a newly typed secret is passed
+// directly to the backend's operating-system credential store.
 import { listen } from "@tauri-apps/api/event";
+import { browserNote, desktop, errorText, initSheets, invoke, pick } from "./ui";
+import { initChat } from "./chat";
+import { initCompanion } from "./companion";
+
+let chat: ReturnType<typeof initChat> | undefined;
 
 type Provider = {
   id: string;
@@ -93,30 +84,76 @@ type ConnectionTest = {
   latencyMs: number;
 };
 
-/// One streamed piece of an answer.
-type ChatChunk = {
-  delta: string;
-  text: string;
-  done: boolean;
-  error: string | null;
-};
-
-/// The one element with this selector, or an error.
-///
-/// The error is the point: a missing element means the screen and the code
-/// disagree about what exists, and that is a bug worth hearing about rather
-/// than a null to guard against. For an element that is legitimately
-/// optional, use `querySelector` directly.
-function pick<T extends Element>(selector: string): T {
-  const found = document.querySelector<T>(selector);
-  if (!found) throw new Error(`missing element: ${selector}`);
-  return found;
-}
-
 function setChip(el: HTMLElement, text: string, variant: "ok" | "warn" | "quiet") {
   el.textContent = text;
   el.classList.remove("chip--ok", "chip--warn", "chip--quiet");
   el.classList.add(`chip--${variant}`);
+}
+
+/// The three-state theme preference (ADR-0050 §⑥): follow the OS, or pin
+/// light / dark. The stylesheet keys off data-theme on <html>, so "system" is
+/// resolved here rather than in CSS — one place decides, and the pre-paint
+/// script in index.html mirrors the same resolution to avoid a flash.
+type ThemePref = "system" | "light" | "dark";
+const THEME_KEY = "warden-theme";
+const THEME_LABEL: Record<ThemePref, string> = {
+  system: "跟随系统",
+  light: "浅色",
+  dark: "深色",
+};
+
+function readThemePref(): ThemePref {
+  try {
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored === "light" || stored === "dark" || stored === "system") return stored;
+  } catch {
+    /* private mode: fall through to the default */
+  }
+  return "system";
+}
+
+function applyThemePref(pref: ThemePref): void {
+  const dark =
+    pref === "dark" ||
+    (pref === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+}
+
+/// Wire the three-state control: clicking cycles system → light → dark, and
+/// a system preference keeps tracking the OS until it is pinned.
+function initThemeToggle(): void {
+  const button = pick<HTMLButtonElement>("#theme-toggle");
+  let pref = readThemePref();
+
+  const sync = (): void => {
+    button.textContent = THEME_LABEL[pref];
+    button.setAttribute("aria-label", `颜色外观：${THEME_LABEL[pref]}，点击切换`);
+    applyThemePref(pref);
+  };
+
+  button.addEventListener("click", () => {
+    pref = pref === "system" ? "light" : pref === "light" ? "dark" : "system";
+    try {
+      localStorage.setItem(THEME_KEY, pref);
+    } catch {
+      /* private mode: the choice simply does not outlive the session */
+    }
+    sync();
+  });
+
+  // While following the OS, an OS-level switch has to move the app too; a
+  // pinned preference deliberately ignores it.
+  window
+    .matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", () => {
+      if (pref === "system") applyThemePref(pref);
+    });
+
+  window.addEventListener("storage", (event) => {
+    if (event.key === THEME_KEY) { pref = readThemePref(); sync(); }
+  });
+  sync();
 }
 
 /// The state the editor keeps while it is open.
@@ -124,9 +161,6 @@ function setChip(el: HTMLElement, text: string, variant: "ok" | "warn" | "quiet"
 /// A new provider has no id yet — the Rust side derives one from the name
 /// when it is saved.
 let editingProviderId: string | null = null;
-
-/// The provider list as the backend last reported it.
-let currentProviders: Provider[] = [];
 
 /// Render the memory layer's state.
 ///
@@ -150,6 +184,7 @@ function renderMemory(status: ShellStatus) {
   if (!status.memory.available) {
     setChip(chip, "未安装", "warn");
     path.textContent = "未找到 repotory-mcp —— 装上它即可接入记忆层（桌面 App 非必需）";
+    retry.hidden = false;
     return;
   }
 
@@ -196,6 +231,7 @@ let currentRepo: RepoEntry | null = null;
 
 /// Render the scan roots and the repository list.
 function renderRepos(scan: RepoScan) {
+  chat?.setRepos(scan.repos);
   const chip = pick<HTMLElement>("#repo-chip");
   const list = pick<HTMLElement>("#repos");
   const roots = pick<HTMLElement>("#roots");
@@ -434,7 +470,7 @@ async function watchForNewRepos() {
 /// The list is rebuilt from scratch on every render: a save re-invokes the
 /// list command, and appending to a stale list would double every row.
 function renderProviders(list: ProviderList) {
-  currentProviders = list.providers;
+  chat?.setProviders(list.providers);
 
   const chip = pick<HTMLElement>("#provider-chip");
   const container = pick<HTMLElement>("#providers");
@@ -524,7 +560,6 @@ function renderProviders(list: ProviderList) {
     container.appendChild(item);
   }
 
-  renderModelPickers();
 }
 
 /// A small text button.
@@ -535,60 +570,6 @@ function makeButton(label: string, onClick: () => void): HTMLButtonElement {
   button.textContent = label;
   button.addEventListener("click", onClick);
   return button;
-}
-
-/// Fill the provider and model pickers in the chat form.
-function renderModelPickers() {
-  const providerSelect = pick<HTMLSelectElement>("#chat-provider");
-  const modelSelect = pick<HTMLSelectElement>("#chat-model");
-
-  const previousProvider = providerSelect.value;
-  const previousModel = modelSelect.value;
-
-  providerSelect.replaceChildren();
-  modelSelect.replaceChildren();
-
-  for (const provider of currentProviders) {
-    const option = document.createElement("option");
-    option.value = provider.id;
-    option.textContent = provider.name;
-    providerSelect.appendChild(option);
-  }
-
-  const active = currentProviders.find((p) => p.active) ?? currentProviders[0];
-  if (!active) {
-    providerSelect.disabled = true;
-    modelSelect.disabled = true;
-    setChip(pick<HTMLElement>("#chat-chip"), "没有 provider", "warn");
-    return;
-  }
-  providerSelect.disabled = false;
-  modelSelect.disabled = false;
-
-  // Keep the user's selection when it is still there; otherwise fall back to
-  // the active provider.
-  if (currentProviders.some((p) => p.id === previousProvider)) {
-    providerSelect.value = previousProvider;
-  } else {
-    providerSelect.value = active.id;
-  }
-
-  const chosen = currentProviders.find((p) => p.id === providerSelect.value) ?? active;
-  if (chosen.defaultModel) {
-    const option = document.createElement("option");
-    option.value = chosen.defaultModel;
-    option.textContent = chosen.defaultModel;
-    modelSelect.appendChild(option);
-    if (previousModel === chosen.defaultModel) {
-      modelSelect.value = previousModel;
-    }
-  }
-
-  setChip(
-    pick<HTMLElement>("#chat-chip"),
-    chosen.defaultModel ? chosen.name : "未选模型",
-    chosen.defaultModel ? "ok" : "warn",
-  );
 }
 
 /// Open the editor for a provider, or for a new one.
@@ -610,6 +591,7 @@ function openEditor(provider?: Provider) {
   pick<HTMLElement>("#editor-detail").textContent = provider?.hasApiKey
     ? "已存有 API Key —— 留空则保持不变"
     : "";
+  pick<HTMLInputElement>("#field-name").focus();
 }
 
 /// The values the editor currently holds.
@@ -621,20 +603,6 @@ function editorValues() {
     apiKey: pick<HTMLInputElement>("#field-api-key").value,
     defaultModel: pick<HTMLInputElement>("#field-model").value.trim(),
   };
-}
-
-/// Append a line to the chat log.
-function appendChat(role: "user" | "assistant", text: string): HTMLElement {
-  const log = pick<HTMLElement>("#chat-log");
-  // The placeholder is optional: it is gone after the first message.
-  log.querySelector("#chat-empty")?.remove();
-
-  const bubble = document.createElement("div");
-  bubble.className = `chat__msg chat__msg--${role}`;
-  bubble.textContent = text;
-  log.appendChild(bubble);
-  log.scrollTop = log.scrollHeight;
-  return bubble;
 }
 
 /// Render the tray (the wake-up entry) state.
@@ -650,100 +618,87 @@ function renderTray(status: ShellStatus) {
 
   if (status.tray.installed) {
     setChip(chip, "已就位", "ok");
-    note.textContent = "点菜单栏的 C 唤回窗口，右键打开菜单。";
+    note.textContent = "点菜单栏的提灯图标唤回窗口，右键打开菜单。";
   } else {
     setChip(chip, "不可用", "warn");
     note.textContent =
-      "托盘图标没能装上——这个窗口关掉就找不回来了。日志里有 [tray] 开头的错误。";
+      "托盘未就位。仍可通过提灯伙伴打开对话；日志中可查看 [tray] 错误。";
   }
 }
 
-/// Send a message to the model and stream the answer back.
-async function sendMessage(text: string) {
-  const error = pick<HTMLElement>("#chat-error");
-  error.textContent = "";
-
-  const providerId = pick<HTMLSelectElement>("#chat-provider").value;
-  const model = pick<HTMLSelectElement>("#chat-model").value;
-  const send = pick<HTMLButtonElement>("#chat-send");
-
-  appendChat("user", text);
-  const bubble = appendChat("assistant", "");
-
-  send.disabled = true;
-  const channel = new Channel<ChatChunk>();
-  channel.onmessage = (chunk: ChatChunk) => {
-    if (chunk.error) {
-      error.textContent = chunk.error;
-      bubble.textContent = chunk.text || "（没有内容）";
-      return;
-    }
-    bubble.textContent = chunk.text;
-    const log = pick<HTMLElement>("#chat-log");
-    log.scrollTop = log.scrollHeight;
-  };
-
-  try {
-    await invoke("chat_send", {
-      channel,
-      message: text,
-      model: model || null,
-      providerId,
-    });
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    error.textContent = detail;
-    if (!bubble.textContent) bubble.textContent = "（没有内容）";
-  } finally {
-    send.disabled = false;
+function main() {
+  initThemeToggle();
+  if (new URLSearchParams(location.search).get("surface") === "companion") {
+    initCompanion();
+    return;
   }
-}
+  initSheets();
+  chat = initChat();
+  // The "new repository" bubble stays a top-level surface. Moving it into the
+  // repository sheet (a closed <dialog>) meant the question never appeared
+  // while the user was in the conversation — which is exactly where it belongs.
+  for (const error of document.querySelectorAll<HTMLElement>(".meta--error")) error.setAttribute("role", "alert");
 
-async function main() {
+  let refreshing = false;
   const refresh = async () => {
-    const status = await invoke<ShellStatus>("shell_status");
-    renderMemory(status);
-    renderProviders(status.providers);
-    renderTray(status);
+    if (refreshing) return;
+    refreshing = true;
+    const retry = pick<HTMLButtonElement>("#memory-retry");
+    retry.disabled = true;
+    try {
+      const status = await invoke<ShellStatus>("shell_status");
+      renderMemory(status);
+      renderTray(status);
+      chat?.retrySync();
+    } catch (error) {
+      setChip(pick<HTMLElement>("#memory-chip"), "未连接", "warn");
+      pick<HTMLElement>("#memory-error").textContent = errorText(error);
+    } finally {
+      refreshing = false;
+      retry.hidden = false;
+      retry.disabled = !desktop;
+    }
   };
-
-  // The memory layer is optional, and connecting to it is not instant: the
-  // handshake can take ten seconds, or hang on a server that never
-  // answers. Awaiting it here would hold the whole first screen hostage —
-  // the repository list would not appear until the memory layer had
-  // finished failing. So the two run side by side instead.
-  void refresh().catch((error: unknown) => {
-    // The frontend also runs in a plain browser (npm run dev without
-    // Tauri), where there is no backend to ask. Say that instead of
-    // showing an empty screen that reads like a broken install.
-    const detail = error instanceof Error ? error.message : String(error);
-    setChip(pick<HTMLElement>("#memory-chip"), "后端不可达", "warn");
-    pick<HTMLElement>("#memory-path").textContent = detail;
-  });
-
-  // The repository screen and the announcement channel.
-  //
-  // The listener is registered before the first scan, so a repository
-  // found while the window is opening is not missed.
-  void watchForNewRepos();
-  void loadRepos();
+  let loadingProviders = false;
+  const loadProviders = async () => {
+    if (loadingProviders) return;
+    loadingProviders = true;
+    try { renderProviders(await invoke<ProviderList>("provider_list")); }
+    catch (error) {
+      setChip(pick<HTMLElement>("#provider-chip"), "未连接", "warn");
+      pick<HTMLElement>("#provider-error").textContent = errorText(error);
+    } finally { loadingProviders = false; }
+  };
+  pick<HTMLButtonElement>("#provider-retry").addEventListener("click", () => { void loadProviders(); });
+  // Independent lanes: a slow optional MCP handshake cannot delay models,
+  // repository discovery, or the already-painted conversation surface.
+  if (desktop) {
+    void refresh();
+    void loadProviders();
+    void watchForNewRepos();
+    void loadRepos();
+  } else {
+    for (const id of ["#memory-chip", "#provider-chip", "#repo-chip", "#tray-chip"]) setChip(pick<HTMLElement>(id), "未连接", "quiet");
+    pick<HTMLElement>("#memory-path").textContent = browserNote;
+    pick<HTMLElement>("#tray-path").textContent = "浏览器中没有桌面托盘与常驻窗口。";
+    for (const id of ["#root-add", "#repo-scan", "#provider-save", "#provider-fetch-models", "#provider-test", "#provider-retry", "#memory-retry"]) pick<HTMLButtonElement>(id).disabled = true;
+  }
 
   pick<HTMLFormElement>("#root-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const input = pick<HTMLInputElement>("#root-input");
+    const button = pick<HTMLButtonElement>("#root-add");
     const path = input.value.trim();
-    if (!path) return;
-    input.value = "";
-
+    if (!path || button.disabled) return;
+    button.disabled = true;
     void invoke<RepoScan>("repo_roots_add", { path }).then(
       (scan: RepoScan) => {
+        if (input.value.trim() === path) input.value = "";
         renderRepos(scan);
         queueNewRepos(scan.newRepos);
       },
-      (err: unknown) => {
-        pick<HTMLElement>("#repo-error").textContent = String(err);
-      },
-    );
+      (err: unknown) => { pick<HTMLElement>("#repo-error").textContent = errorText(err); },
+    ).finally(() => { button.disabled = false; });
   });
 
   pick<HTMLButtonElement>("#repo-scan").addEventListener("click", () => {
@@ -784,6 +739,8 @@ async function main() {
 
   pick<HTMLButtonElement>("#provider-cancel").addEventListener("click", () => {
     pick<HTMLElement>("#provider-editor").hidden = true;
+    pick<HTMLInputElement>("#field-api-key").value = "";
+    pick<HTMLButtonElement>("#provider-add").focus();
   });
 
   pick<HTMLFormElement>("#provider-form").addEventListener("submit", (event) => {
@@ -808,7 +765,9 @@ async function main() {
     }).then(
       (list: ProviderList) => {
         pick<HTMLElement>("#provider-editor").hidden = true;
+        pick<HTMLInputElement>("#field-api-key").value = "";
         renderProviders(list);
+        pick<HTMLButtonElement>("#provider-add").focus();
       },
       (err: unknown) => {
         editorError.textContent = err instanceof Error ? err.message : String(err);
@@ -878,20 +837,6 @@ async function main() {
     );
   });
 
-  // --- the chat ---------------------------------------------------------
-
-  pick<HTMLSelectElement>("#chat-provider").addEventListener("change", () => {
-    renderModelPickers();
-  });
-
-  pick<HTMLFormElement>("#chat-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const input = pick<HTMLTextAreaElement>("#chat-input");
-    const text = input.value.trim();
-    if (!text) return;
-    input.value = "";
-    void sendMessage(text);
-  });
 }
 
 main();
