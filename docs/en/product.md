@@ -86,13 +86,19 @@ Every MCP tool the Agent consumes comes from Repotory's existing `repotory_*` to
 - `repotory_ask` — evidence-backed answers with sources (ADR-0033)
 - `repotory_agent_score` / `repotory_integrity` — introspection
 
-The tool names' single source of truth is the Repotory main repository.
-**This repository keeps no copy of that list** — Phase 1 switches to fetching it dynamically via MCP's `tools/list` at startup.
-(Phase 0's `src-tauri/src/memory_layer.rs` has a hardcoded copy, **and it has already drifted**: it is
-missing several of `notes_read` / `notes_update` / `notes_organize` / `projects_stats` / `wiki_search` /
-`wiki_read` / `ask` / `agent_score` / `integrity`, while that copy's own comment says "it is **not** the
-contract". **It must be replaced by a dynamic fetch before Phase 1** — a list that drifts is worse than
-no list, because it makes people think it is real.)
+The tool names' single source of truth is the Repotory main repository, and **this repository keeps no
+runtime copy of that list**. Phase 1 deleted that copy: the tool list is fetched dynamically via MCP's
+`tools/list` at connection time (`src-tauri/src/mcp_client.rs`), and what the first screen shows is what
+the server just reported.
+**Phase 0's copy listed 7 names while the server registers 18** — and the missing ones included
+`repotory_wiki_search` / `repotory_wiki_read` (the only way to read approved knowledge) and
+`repotory_ask` (evidence-backed answers).
+**A list that drifts is worse than no list, because it makes people think it is real** — there is now a
+self-check test in `memory_layer.rs` that watches for tool names being written back into the source.
+
+> The list above is **for readers, not a runtime contract**: on this machine the server reports **18**
+> tools, matching the names listed above. **At runtime the server's answer always wins** — when
+> Repotory adds a tool, the copilot sees it without a line of code changing here.
 
 ## Open questions (the maintainer decides)
 
@@ -124,14 +130,26 @@ mechanism required.
 **Approving always happens in the Repotory desktop app (the workbench)** — that is where a human is
 present. The copilot's memory panels are **read-only**.
 
-### 3. How automatic is "auto-discovering" the MCP client?
+### 3. ~~How automatic is "auto-discovering" the MCP client?~~ (settled: it launches by itself)
 
-Phase 1 of the roadmap says "auto-discover the local Repotory MCP". The options are: find the `repotory-mcp` binary on PATH, a fixed path, or a user-configured one. The first screen probes PATH plus the common install directories (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.local/bin`) and only reports **presence** — it never launches anything.
+The original question: Phase 1 of the roadmap says "auto-discover the local Repotory MCP". The options are: find the `repotory-mcp` binary on PATH, a fixed path, or a user-configured one.
 
-**Open**: whether the Agent launches the MCP process at startup, and how a failed connection degrades (the roadmap says "fall back to plain chat").
+**How it works now**: it probes PATH plus the common install directories (`/usr/local/bin`,
+`/opt/homebrew/bin`, `~/.local/bin`) and, on a hit, **launches the child process over stdio by
+itself** — **exactly like the two IDE plugins** (VS Code / JetBrains both spawn `repotory-mcp`
+themselves, and that path already works). It then does one handshake (`initialize` →
+`notifications/initialized`), fetches the tool list with `tools/list`, and **stays resident** (the
+server keeps the same SQLite database open, so re-opening it per call means re-opening the database
+per call).
 
-**Reference**: both IDE plugins (VS Code / JetBrains) **spawn the `repotory-mcp` child process over
-stdio themselves** — that path already works, so it can be copied.
+**Why launching by itself is right**: without a server there is no memory, and then the copilot has no
+reason to exist; while "probe but never launch" makes the first screen say "installed" — **it is
+promising something it never verified**. The first screen now tells three states apart: not installed /
+installed but not answering / connected with the server's tool list.
+
+**The half that is still open**: "fall back to plain chat when the connection fails" waits for Phase 2.
+Today a failed connection makes the first screen say "not answering" and offer a retry — **it does not
+pretend the memory is still there**.
 
 ### 4. Version coupling with Repotory
 

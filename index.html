@@ -29,6 +29,11 @@
             工具清单在连接时由服务端给出，本仓不抄一份。
           </p>
           <p class="meta" id="memory-path"></p>
+          <p class="meta meta--error" id="memory-error"></p>
+          <ul class="tools" id="memory-tools"></ul>
+          <button class="btn" id="memory-retry" type="button" hidden>
+            重试连接
+          </button>
         </section>
 
         <section class="card">
@@ -70,8 +75,8 @@
       </main>
 
       <footer class="milestones">
-        <span class="milestone milestone--next">M1 接入 Repotory MCP</span>
-        <span class="milestone">M2 与本地模型聊当前仓库</span>
+        <span class="milestone milestone--done">M1 接入 Repotory MCP</span>
+        <span class="milestone milestone--next">M2 与本地模型聊当前仓库</span>
         <span class="milestone">M3 安全执行命令</span>
         <span class="milestone">M4 跨会话记忆</span>
         <span class="milestone">M5 一键安装</span>

@@ -2,7 +2,7 @@
 
 一个跑在你自己机器上的 **copilot**：打开一个仓库，用本地模型聊这个项目，让 [Repotory](https://github.com/sky-jiangcheng/repotory) 负责"记得什么"。
 
-> **当前阶段：Phase 0 — 仓库与定位。** 应用可构建、可运行；聊天链路在 Phase 2 落地。
+> **当前阶段：Phase 1 — MCP 记忆层打通，数据链路已通。** 应用可构建、可运行、能连上记忆层；聊天链路在 Phase 2 落地。
 
 ## 这是什么
 
@@ -41,10 +41,29 @@ Agent 走 MCP，就自动站在闸门外。
 ## 现在能跑什么
 
 - 探测本机的模型运行时（Ollama 优先，llama.cpp / MLX 预留为插件式后端）
-- 探测记忆层（Repotory MCP）是否就位
+- **真的连上记忆层**：自动拉起 `repotory-mcp` 子进程走 stdio，做一次 MCP 握手，
+  然后用 `tools/list` 拿服务端报的**真实工具清单**并在首屏列出来
+  （本机实测 18 个工具——**本仓不抄一份清单**，服务端给什么就显示什么）
 - 展示第一版产品边界与里程碑
 
 聊天、命令执行、记忆面板都还没有 —— 见[路线](docs/roadmap.md)。
+
+## 记忆层怎么接的
+
+MCP stdio 就是**按行分隔的 JSON-RPC**。客户端的流程是三步：
+
+```
+initialize（带 id 的 request）
+  → notifications/initialized（notification，没有 id）
+  → tools/list / tools/call
+```
+
+`src-tauri/src/mcp_client.rs` 用 Rust 写的——**Tauri 的 webview 起不了子进程**，
+而 IDE 插件能在 TypeScript 里做，是因为 VS Code / JetBrains 的宿主自带 Node / JVM runtime。
+copilot 的等价宿主是 Rust 侧。
+
+连接是**长驻**的：server 一直开着同一个 SQLite 库，每次调用重开等于每次重开库。
+首屏分三态，不含糊：**未安装** / **装了但连不上**（给一个重试按钮） / **已连接 + N 个工具**。
 
 ## 技术栈
 

@@ -17,23 +17,22 @@ The memory layer is open over MCP; the copilot itself only does "local model ent
 edit, approve, govern), the copilot is the **assistant** (read, chat, execute). They share the memory
 layer and the protocol — not the interface, and not the lifecycle.
 
-## Phase 0: repository and positioning (1 week) — current phase
+## Phase 0: repository and positioning (1 week) — done
 
 Split the copilot out of Repotory explicitly, making it **its own product**, while keeping it tightly
 bound.
 
-- Create the `repotory-agent-shell` repository;
+- Create the `repotory-agent` repository (formerly `repotory-agent-shell`, renamed on 2026-11-04);
 - Position it: an **independent copilot** that talks to Repotory MCP by default;
 - Lock the stack: Tauri v2 + Rust backend + TS frontend;
 - Ollama first as the model entry, llama.cpp / MLX later;
 - Default model Qwen3 8B Q4, proven on an M4 Pro first;
 - Define the first-version boundary: chat, read project, run commands, memory panels, human confirmation.
 
-**Progress so far**: the repository and skeleton are in place, the positioning/boundary/decisions live in [product.md](product.md), and the first screen shows the detected memory layer, model runtimes, and the **wake-up entry (the tray)**.
+**Progress so far**: done. The repository and skeleton are in place, the positioning/boundary/decisions live in [product.md](product.md), and the first screen shows the detected memory layer, model runtimes, and the **wake-up entry (the tray)**.
 The CI gates (docs mirror, frontend build, `cargo fmt` / `clippy` / `test`), the brand icon, and the tray (ADR-0047 decision 5) are all in place.
-**Still to do**: the MCP client for Phase 1 (fetching the tool list dynamically and spawning the `repotory-mcp` subprocess).
 
-## Phase 1: wire up the MCP memory layer (1–2 weeks)
+## Phase 1: wire up the MCP memory layer (1–2 weeks) — the data path is done
 
 Make the copilot consume Repotory's memory reliably.
 
@@ -52,6 +51,20 @@ Make the copilot consume Repotory's memory reliably.
   - the answer is written back with `repotory_handoff`.
 
 No UI polish in this phase — the data path comes first.
+
+**Progress so far**: **the data path is done**.
+
+- **A Rust MCP stdio client** (`src-tauri/src/mcp_client.rs`): `initialize` → `notifications/initialized` → `tools/list` / `tools/call`,
+  one handshake and then **it stays resident** (the server keeps the same SQLite database open, so re-opening it per call means re-opening the database per call);
+- **The tool list is fetched dynamically**: what the first screen shows is what the server just reported (**18 tools** on this machine),
+  and this repository **keeps no copy of it** — there is a self-check test in `memory_layer.rs` that watches for exactly that;
+- **Three states on the first screen**: not installed / installed but not answering / connected with N tools — none of them is mistaken for another;
+- **End-to-end tests**: a real pipe and a fake MCP server, covering the handshake, the tool list, the call round trip, the server's error, and **that the process really is killed**.
+
+**The one loop that is still open**: "put the context into the model request → write the answer back with `repotory_handoff`" needs a chat interface,
+which is Phase 2's work — **with no model request there is nothing to put anything into**.
+Likewise "degrade to plain chat" waits for Phase 2: today a failed connection makes the first screen say "not answering" and offer a retry,
+instead of pretending the memory is still there.
 
 ## Phase 2: the smallest usable chat shell (1–2 weeks)
 
@@ -119,14 +132,14 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 
 ## Milestones
 
-| Milestone | Done when |
-|---|---|
-| M1 | It can call Repotory MCP |
-| M2 | It can talk to a local model about the current repository |
-| M3 | It can safely run Git / Shell commands |
-| M4 | It can see and manage cross-session memory |
-| M5 | It installs and initializes in one step |
-| M6 | It ships as a standalone product |
+| Milestone | Done when | State |
+|---|---|---|
+| M1 | It can call Repotory MCP | done (Phase 1) |
+| M2 | It can talk to a local model about the current repository | next (Phase 2) |
+| M3 | It can safely run Git / Shell commands | not started |
+| M4 | It can see and manage cross-session memory | not started |
+| M5 | It installs and initializes in one step | not started |
+| M6 | It ships as a standalone product | not started |
 
 ## The trade-off
 

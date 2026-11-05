@@ -2,7 +2,7 @@
 
 A **copilot** that runs on your own machine: open a repository, talk to a local model about that project, and let [Repotory](https://github.com/sky-jiangcheng/repotory) remember what matters.
 
-> **Status: Phase 0 — repository and positioning.** The app builds and runs; the chat loop lands in Phase 2.
+> **Status: Phase 1 — the MCP memory layer is wired up and the data path works.** The app builds and runs, it reaches the memory layer; the chat loop lands in Phase 2.
 
 ## What this is
 
@@ -45,10 +45,32 @@ pretending.
 ## What runs today
 
 - Detects the local model runtimes (Ollama first; llama.cpp / MLX reserved as pluggable backends)
-- Detects whether the memory layer (Repotory MCP) is installed
+- **Actually reaches the memory layer**: it launches the `repotory-mcp` child process over stdio by
+  itself, does one MCP handshake, then fetches the **real tool list** with `tools/list` and shows it on
+  the first screen (**18 tools** on this machine — **this repository keeps no copy of the list**; it
+  shows whatever the server reports)
 - Shows the first-version product boundary and the milestones
 
 Chat, command execution and the memory panels do not exist yet — see the [roadmap](docs/roadmap.md).
+
+## How the memory layer is reached
+
+MCP over stdio is **newline-delimited JSON-RPC**. The client's handshake is three steps:
+
+```
+initialize (a request with an id)
+  → notifications/initialized (a notification, no id)
+  → tools/list / tools/call
+```
+
+The client is written in Rust (`src-tauri/src/mcp_client.rs`) — **a Tauri webview cannot spawn a child
+process**, and the IDE plugins can do it in TypeScript only because the VS Code / JetBrains hosts carry
+a Node / JVM runtime. The copilot's equivalent host is the Rust side.
+
+The connection is **resident**: the server keeps the same SQLite database open, so re-opening it per
+call means re-opening the database per call. The first screen tells three states apart and never blurs
+them: **not installed** / **installed but not answering** (with a retry button) / **connected with N
+tools**.
 
 ## Stack
 

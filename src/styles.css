@@ -180,6 +180,77 @@ body {
   word-break: break-all;
 }
 
+.meta--error {
+  margin-top: 6px;
+  color: var(--warning);
+}
+
+/* ----------------------------------------------------------------- tools */
+
+/* The server's tool list, as it arrived over the wire. The list scrolls:
+   a server can advertise a lot, and the card must not push the rest of the
+   screen off the window. */
+.tools {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  max-height: 230px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tool {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+}
+
+.tool + .tool {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tool__name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.tool__desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  /* The server's descriptions are paragraphs, and 18 of them turn the card
+     into a wall of prose. Three lines plus the native tooltip carries the
+     full text without costing the reader a scroll per tool. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ btn */
+
+.btn {
+  margin-top: 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* ---------------------------------------------------------------- chips */
 
 .chip {
@@ -298,6 +369,14 @@ body {
 .milestone--next {
   color: var(--accent);
   background: var(--accent-soft);
+  border-style: solid;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.milestone--done {
+  color: var(--success);
+  background: var(--success-soft);
   border-style: solid;
   border-color: transparent;
   font-weight: 600;

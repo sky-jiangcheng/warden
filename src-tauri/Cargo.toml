@@ -5,6 +5,12 @@ description = "A local copilot that reads the Repotory memory layer"
 authors = ["sky-jiangcheng"]
 edition = "2024"
 
+# The crate has two binaries: the app itself and the fake MCP server the
+# end-to-end test drives. `cargo run` refuses to guess between them, so the
+# app is named as the default — without this, `tauri dev` fails with "could
+# not determine which binary to run".
+default-run = "repotory-agent"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -32,6 +38,22 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# The MCP client drives a child process over stdio. `tokio::time::timeout`
+# bounds every request (a wedged server must not leave a caller pending
+# forever) and `tokio::sync::oneshot` carries each answer from the reader
+# thread to the awaiting task. Tauri already depends on tokio with `rt` and
+# `sync`, so this adds no new crate to the tree — only the `time` feature and
+# `macros` for `#[tokio::test]`.
+tokio = { version = "1", features = ["time", "macros"] }
+
+[features]
+# The test fixtures — the fake MCP server the end-to-end test drives.
+#
+# It is a feature rather than an unconditional build because it is a binary:
+# an unconditional one would be compiled by every `cargo build`, including
+# the release bundle's.
+test-fixtures = []
+
 [dev-dependencies]
 # `tauri::test::mock_app` gives the tests a real `App` without a window
 # server, which is what makes "the tray is installed" a checkable fact
@@ -46,3 +68,28 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# The fake MCP server the end-to-end test drives.
+#
+# It is a binary rather than a test because Cargo's `CARGO_BIN_EXE_<name>`
+# — the only reliable way for an integration test to find a freshly built
+# executable — is set for `[[bin]]` targets and NOT for `[[test]]` ones.
+#
+# `required-features` keeps it out of the ordinary build: without the
+# feature, `cargo build` and the release bundle never compile it, so a test
+# fixture has no business in a shipped app. The CI runs the tests with the
+# feature on.
+#
+# The server prints nothing but protocol: the Rust test harness writes
+# `running 1 test` to stdout before the first test runs, and the stdio
+# transport is newline-delimited JSON-RPC — that line would land in the
+# middle of the protocol stream. The client tolerates it (a line that is
+# not JSON is noise, and there is a test for exactly that), but a fake
+# server that prints only protocol is a better thing to test against: a
+# defect in the client cannot hide behind the harness's noise.
+[[bin]]
+name = "fake-mcp-server"
+path = "tests/support/fake_mcp_server.rs"
+required-features = ["test-fixtures"]
+test = false
+bench = false

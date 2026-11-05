@@ -87,10 +87,18 @@ jobs:
   #   cargo clippy       — lint. Kept separate from the test job so a lint
   #                         finding reads as "clippy" instead of hiding inside a
   #                         red test run.
-  #   cargo test         — the suite. One test currently guards the memory
-  #                         layer against re-introducing the hardcoded MCP tool
-  #                         list, and its negative assertions were verified to
-  #                         turn red when that list comes back.
+  #   cargo test         — the suite. It includes the end-to-end tests that
+  #                         drive the fake MCP server over a real pipe, and
+  #                         the guard that keeps the memory layer from
+  #                         re-introducing a hardcoded tool list — whose
+  #                         negative assertions were verified to turn red
+  #                         when that list comes back.
+  #
+  # `test-fixtures` is a Cargo feature, not a flag: the fake MCP server is a
+  # binary, so without the feature Cargo never compiles it and the
+  # end-to-end tests cannot find it. The feature keeps it out of ordinary
+  # builds and out of the release bundle — a test fixture has no business in
+  # a shipped app.
   rust:
     name: Rust fmt, clippy and test
     runs-on: ubuntu-latest
@@ -156,8 +164,12 @@ jobs:
         working-directory: src-tauri
         # `-D warnings` turns a lint into a build failure. Without it clippy
         # prints advice that everyone learns to scroll past.
-        run: cargo clippy --all-targets -- -D warnings
+        #
+        # The feature is on so the fake MCP server — a binary Cargo skips
+        # without it — is linted too. A fixture that is never linted is a
+        # fixture whose warnings nobody sees.
+        run: cargo clippy --all-targets --features test-fixtures -- -D warnings
 
       - name: Run tests
         working-directory: src-tauri
-        run: cargo test --all-targets
+        run: cargo test --all-targets --features test-fixtures

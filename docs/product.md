@@ -85,12 +85,18 @@ Agent 要消费的 MCP 工具，都来自 Repotory 现存的 `repotory_*` 工具
 - `repotory_ask` —— 带出处的证据问答（ADR-0033）
 - `repotory_agent_score` / `repotory_integrity` —— 自省
 
-工具名的唯一真相在 Repotory 主仓库。
-**本仓库不保留那份清单的副本**——Phase 1 改成启动时用 MCP 的 `tools/list` 动态拉取。
-（Phase 0 的 `src-tauri/src/memory_layer.rs` 里有一份硬编码副本，**它已经漂了**：
-少列了 `notes_read` / `notes_update` / `notes_organize` / `projects_stats` / `wiki_search` / `wiki_read` / `ask` / `agent_score` / `integrity` 中的多个，
-而这份副本的注释自己写着"不是契约来源"。**Phase 1 之前必须换成动态拉取**——
-一份会漂的清单比没有清单更坏，因为它让人以为那是真的。）
+工具名的唯一真相在 Repotory 主仓库，**本仓库不保留那份清单的运行时副本**。
+Phase 1 起那份副本已经删掉：工具清单在连接时用 MCP 的 `tools/list` 动态拉取
+（`src-tauri/src/mcp_client.rs`），首屏显示的就是服务端刚报上来的那份。
+**Phase 0 那份副本只列了 7 个名字，而服务端注册了 18 个**——
+少列的里头包含 `repotory_wiki_search` / `repotory_wiki_read`（读已批准知识的唯一入口）
+和 `repotory_ask`（带出处的证据问答）。
+**一份会漂的清单比没有清单更坏，因为它让人以为那是真的**——
+现在 `memory_layer.rs` 里有一条自检测试盯着别把工具名写回源码。
+
+> 上面这份列表是**给人看的说明，不是运行时契约**：本机实测服务端报上来 **18 个**工具，
+> 与上面列出的名字一致。**运行时永远以服务端报上来的为准**——
+> Repotory 加了工具，copilot 这边不用改代码就能看见。
 
 ## 待确认（需要维护者拍板）
 
@@ -118,14 +124,23 @@ MCP 面上没有"列出待批准页"的工具——**因为「谁能看到未批
 **审批永远在 Repotory 桌面端（工作台）做**——那里有人在场。
 copilot 的记忆面板是**只读**的。
 
-### 3. MCP 客户端的"自动发现"到底自动到什么程度
+### 3. ~~MCP 客户端的"自动发现"到底自动到什么程度~~（已定：自动拉起）
 
-路线 Phase 1 写的是"自动发现本地 Repotory MCP"。可选做法：PATH 里找 `repotory-mcp` 二进制、固定路径、还是让用户在设置里指一个。首屏目前按 PATH + 常见目录探测（`/usr/local/bin`、`/opt/homebrew/bin`、`~/.local/bin`），只做**存在性**判断，不自动拉起。
+原问题：Phase 1 写的是"自动发现本地 Repotory MCP"。可选做法：PATH 里找 `repotory-mcp` 二进制、固定路径、还是让用户在设置里指一个。
 
-**待定**：启动时是否自动拉起 MCP 进程，以及拉起后的连接失败如何降级（路线写的是"降级为普通聊天"）。
+**现在这样**：按 PATH + 常见目录探测（`/usr/local/bin`、`/opt/homebrew/bin`、`~/.local/bin`），
+找到就**自动拉起**子进程走 stdio——**和两个 IDE 插件一样**
+（VS Code / JetBrains 都是自己拉起 `repotory-mcp`，那条路已经跑通了）。
+拉起后做一次握手（`initialize` → `notifications/initialized`），
+然后用 `tools/list` 拿工具清单，**长驻**会话（server 一直开着同一个 SQLite 库，
+每次调用重开等于每次重开库）。
 
-**参考**：两个 IDE 插件（VS Code / JetBrains）**都是自己拉起 `repotory-mcp` 子进程走 stdio**——
-那条路已经跑通了，可以照抄。
+**为什么自动拉起是对的**：不拉起就没有记忆，copilot 的存在意义就没了；
+而"只探测不拉起"会让首屏显示"已安装"——**那是在承诺一个没有验证过的东西**。
+现在首屏分三态：未安装 / 装了但连不上 / 已连接 + 服务端给的工具清单。
+
+**还开着的一半**：「连不上时降级为普通聊天」要等 Phase 2——
+现在失败时首屏直说「连不上」并给一个重试按钮，**不假装记忆还在**。
 
 ### 4. 与 Repotory 的版本耦合
 
