@@ -1,17 +1,17 @@
 # AGENTS — 开发入口（面向 AI agent / 新成员）
 
-Repotory Agent：一个跑在本机的 **copilot**（**不是** GitHub Copilot），独立产品。copilot 是入口，[Repotory](https://github.com/sky-jiangcheng/repotory) 是记忆层，MCP 是两者之间的开放协议。
+Warden：一个跑在本机的 **copilot**（**不是** GitHub Copilot），独立产品。copilot 是入口，[Cinder](https://github.com/sky-jiangcheng/repotory) 是记忆层，MCP 是两者之间的开放协议。
 
-**它与 Repotory 桌面端是两个产品**：桌面端是**工作台**（浏览、编辑、**审批**、治理），
+**它与 Cinder Desktop 是两个产品**：桌面端是**工作台**（浏览、编辑、**审批**、治理），
 copilot 是**助手**（读、聊、执行）。**审批权留在人手里，而且不靠约定维持**——
-Repotory 的 MCP 工具面在知识页上只有纯读工具，copilot 走 MCP 就自动站在 ADR-0015 的闸门外。
+Cinder 的 MCP 工具面在知识页上只有纯读工具，copilot 走 MCP 就自动站在 ADR-0015 的闸门外。
 
 ## 按需查文档（按此顺序，避免全文探索）
 
 1. **[docs/product.md](docs/product.md)** — 定位、第一版边界、Phase 0 决议、待确认项
 2. **[docs/roadmap.md](docs/roadmap.md)** — Phase 0–6 与里程碑
 3. **[README.zh-CN.md](README.zh-CN.md)** — 项目是什么、怎么跑
-4. **[Repotory 主仓的 ADR 索引](https://github.com/sky-jiangcheng/repotory/tree/master/docs/adr)** — 上游 ADR（检索/记忆/闸门规则的真相）；关键几篇：ADR-0047（本仓的定位来源）、ADR-0015（审批闸门）、ADR-0035（MCP 主通道）、ADR-0009（薄客户端纪律）
+4. **[Cinder 主仓的 ADR 索引](https://github.com/sky-jiangcheng/repotory/tree/master/docs/adr)** — 上游 ADR（检索/记忆/闸门规则的真相）；关键几篇：ADR-0049（品牌重排与「显示层全换、标识层冻结」）、ADR-0047（本仓的定位来源）、ADR-0015（审批闸门）、ADR-0035（MCP 主通道）、ADR-0009（薄客户端纪律）
 
 ## 常用命令
 
@@ -20,6 +20,7 @@ npm install
 npm run tauri dev        # 开发（Vite + Tauri 窗口）
 npm run build            # 前端类型检查 + 构建（CI 门之一）
 npm run check:docs       # 双语文档镜像守卫（CI 门之一）
+npm run check:brand      # 品牌守门（CI 门之一）
 cd src-tauri && cargo check     # Rust 后端类型检查
 cd src-tauri && cargo fmt --all # 格式化（CI 门之一，提交前跑）
 cd src-tauri && cargo clippy --all-targets --features test-fixtures -- -D warnings   # lint（CI 门之一）
@@ -44,7 +45,7 @@ src-tauri/           后端（Rust）
   src/providers.rs   provider 配置：持久化 + 钥匙串里的 API Key
   src/llm.rs         OpenAI 兼容客户端：拉模型 / 聊天 / SSE 流式
   src/provider_commands.rs  provider 命令背后的逻辑
-  src/memory_layer.rs    记忆层（Repotory MCP）状态：连接 + 服务端给的工具清单
+  src/memory_layer.rs    记忆层（Cinder MCP）状态：连接 + 服务端给的工具清单
   src/repos.rs        仓库发现与收藏清单：扫盘 + watchlist 持久化
   tests/             端到端测试（真管道 + fake MCP server / fake LLM server / 真仓库目录）
 docs/                中文文档源
@@ -54,9 +55,9 @@ scripts/             仓库守卫脚本
 
 ## 约定
 
-- **范围冻结**：Agent 不复制 Repotory 的检索逻辑、不直连它的数据库、不做完整 IDE、不做审批。这四条是产品边界，不是实现偏好——改边界要改 `docs/product.md`，不是改代码。
-- **不越审批闸门**：知识页的 approve / reject 永远在 Repotory 桌面端做。copilot 走 MCP，工具面里本来就没有这两个工具——**不要为了「让面板更完整」去加绕过它的路径**。
-- **模型请求一律走 Rust 后端**，前端不直连任何端口（Ollama、OpenRouter、Repotory 服务都不例外）。
+- **范围冻结**：Agent 不复制 Cinder 的检索逻辑、不直连它的数据库、不做完整 IDE、不做审批。这四条是产品边界，不是实现偏好——改边界要改 `docs/product.md`，不是改代码。
+- **不越审批闸门**：知识页的 approve / reject 永远在 Cinder Desktop 做。copilot 走 MCP，工具面里本来就没有这两个工具——**不要为了「让面板更完整」去加绕过它的路径**。
+- **模型请求一律走 Rust 后端**，前端不直连任何端口（Ollama、OpenRouter、Cinder 服务都不例外）。
 - **模型 provider 是「一个 base URL」，不是一份厂商清单。**
   任何符合 OpenAI 兼容标准的 provider 都能接（OpenRouter / OpenAI / DeepSeek / 硅基流动 /
   vLLM / LM Studio / Ollama 的 `/v1` 面），所以**代码里只有一个客户端**。
@@ -68,14 +69,19 @@ scripts/             仓库守卫脚本
 - **模型清单由服务端给出，本仓不保留副本**——跟 MCP 工具清单同一条规矩。
   拉到的清单不进配置文件（会漂），要用就现拉。
 - **双语手册必须同批改**：`docs/**` 与 `docs/en/**` 是镜像，只改一边 = 双语漂移。守卫是 `npm run check:docs`（`scripts/check-docs-mirror.mjs`），有意只出中文的文档要在脚本的 `ZH_ONLY` 白名单登记并附理由。
+- **品牌分两层：显示层全换、标识层冻结**（ADR-0049）。
+  显示层是「用户看得见的名字」——本仓叫 **Warden**，桌面工作台叫 **Cinder Desktop**，母品牌叫 **Cinder**；真相源是本仓根目录的 `brand.json`（上游那份在主仓的 `build/brand.json`，**两处要同批改**，CI 各跑各的仓，谁也看不到对方）。
+  标识层是「别人的机器认的东西」——`com.jiangcheng.repotoryagent`（Tauri 应用 id）、`repotory-agent`（crate / 二进制 / npm 包名）、`repotory-mcp`（它拉起的那个 MCP server）、`repotory_*`（工具名前缀）、上游主仓的 GitHub slug `sky-jiangcheng/repotory`：**一个字都不许改**，改了是换接口，不是改名。
+  守卫是 `npm run check:brand`（`scripts/check-brand.mjs`）：产品名必须等于 `brand.json`、冻结清单逐条仍在原处、当前面不留旧品牌词、标题改名后指向它的锚点也要跟着改。
+  **要改品牌词：先改 `brand.json`，再改各处**，别反过来。
 - **提交规范**：conventional commits，`feat(scope): …` / `fix(scope): …` / `docs(scope): …` / `chore(scope): …`；一次提交只做一件事。
-- **MCP 工具名的真相在 Repotory 主仓库**，但**本仓库不再抄一份**：
+- **MCP 工具名的真相在 Cinder 主仓库**，但**本仓库不再抄一份**：
   工具清单在连接时用 MCP 的 `tools/list` 动态拉取（`src/mcp_client.rs`），
   首屏显示的就是服务端刚报上来的那份。
   `src/memory_layer.rs` 里有一条自检测试，专门盯着别把工具名写回源码——
   它只扫字符串字面量，注释里可以提名（那是解释历史，不是契约）。
   **别再往任何前端文件里抄工具名**：那份副本已经漂过一次（少列 11 个）。
-- **仓库是 copilot 自己认的**：扫盘在 `src/repos.rs`，**不借 Repotory 的手**——
+- **仓库是 copilot 自己认的**：扫盘在 `src/repos.rs`，**不借 Cinder 的手**——
   主仓那个扫描器是为它的知识库服务的，规则可以借用（`.git` 是目录才算），**代码不能复用**
   （那是它的库，copilot 不直连）。
   **收藏清单存 copilot 自己的 `repos.json`**（app config 目录），
@@ -93,7 +99,7 @@ scripts/             仓库守卫脚本
 - **`.gitignore` 已忽略 `src-tauri/target/`**，别把编译产物提上去；`node_modules`、`dist` 同理。
 - **MCP 走 stdio 时是「按行分隔的 JSON-RPC」，不是 LSP 那种 Content-Length 分帧。**
   请求一行 JSON、响应一行 JSON。服务端日志走 stderr（stdout 必须保持干净）。
-  真相在 Repotory 主仓的 `mcp-go` 依赖里（`server/stdio.go`），不是猜的。
+  真相在 Cinder 主仓的 `mcp-go` 依赖里（`server/stdio.go`），不是猜的。
 - **握手是三步，顺序不能错**：`initialize`（带 id 的 request）→ `notifications/initialized`
   （**notification，没有 id，不能用 request 发**，否则永远等不到回答）→ `tools/list` / `tools/call`。
 - **Tauri 的 async command 不能带 `State<'_, T>` 参数**：那个 future 满足不了 `'static` bound，
@@ -129,9 +135,16 @@ scripts/             仓库守卫脚本
 - **流式输出用 `tauri::ipc::Channel`**（前端 `Channel` 类在 `@tauri-apps/api/core` 里），
   不要用返回值——返回值要让前端等整个回答，流式就没了。
 - **后端注册表里 `planned` 的后端不能被前端当成可用**：UI 必须区分「可用 / 未安装 / 规划中」三态，否则会向用户承诺一个不存在的运行时。
-- **图标已换成 Repotory 品牌标识**（OS 应用域 = squircle，与主仓 `build/appicon.png` 像素级一致）。
-  品牌图标三域规则（母图 → 品牌域 / OS 应用域 / 字形域）在 Repotory 主仓库，
-  **换图标要走那边的生成器**，别在本仓库手改 PNG。
+- **图标已换成 Cinder 品牌标识**（OS 应用域 = squircle，与主仓 `build/appicon.png` 同一份母图）。
+  品牌图标三域规则（母图 → 品牌域 / OS 应用域 / 字形域）在 Cinder 主仓库，
+  **换图标要走那边的生成器，别在本仓库手改 PNG**：
+  ```bash
+  # 在主仓根目录跑，一条命令覆盖本仓的整套 Tauri 图标 + 托盘图
+  node scripts/generate-icons.mjs --agent-repo ../repotory-agent
+  ```
+  本仓的图标**全部是生成物**（`src-tauri/icons/`：Tauri 的 PNG 阶梯 + Square* 商店阶梯 +
+  `icon.ico` / `icon.icns` + `tray-22.png`）。改动母图后必须重跑这条命令，
+  否则 app 会带着旧字母上线。
 - **CI 有三道门**（`.github/workflows/ci.yml`）：docs mirror / 前端 build / Rust fmt+clippy+test。
   **本地提交前把三条都跑一遍**——`cargo fmt` 尤其，它会改文件。
 - **Rust 版本钉在 `rust-toolchain.toml`**（1.98.0），CI 与本地共用这一份真值。
@@ -174,5 +187,5 @@ scripts/             仓库守卫脚本
   **命令保持私有，逻辑放 `pub` 的普通函数**（`repos.rs` 里的 `add_root_and_scan` 之类），
   端到端测试驱动那些函数——测试的就是命令要走的那条路。
 - **仓库的判定：`.git` 是目录才算**，worktree / submodule 的 `.git` 是**文件**，不算。
-  这条规则跟 Repotory 主仓的 scanner 一致（`internal/scanner/scanner.go`），
+  这条规则跟 Cinder 主仓的 scanner 一致（`internal/scanner/scanner.go`），
   **两边不能对同一目录给出不同答案**。

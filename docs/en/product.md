@@ -5,30 +5,30 @@
 
 ## One line
 
-**Repotory Agent is an independent product: a local copilot that runs on your own machine (**not** GitHub Copilot) — not another Agent platform, and not one more screen inside the Repotory desktop app.** It turns "talk to a model about the project in front of you" into a window, and leaves "what to remember" to Repotory.
+**Warden is an independent product: a local copilot that runs on your own machine (**not** GitHub Copilot) — not another Agent platform, and not one more screen inside the Cinder Desktop app.** It turns "talk to a model about the project in front of you" into a window, and leaves "what to remember" to Cinder.
 
-**It and Repotory are two products, one job each**: Repotory is the **workbench** (browse, edit, **approve**, govern), Repotory Agent is the **assistant** (read, chat, execute). They share one local memory and one protocol, and **approval stays in Repotory**.
+**It and Cinder Desktop are two products, one job each**: Cinder Desktop is the **workbench** (browse, edit, **approve**, govern), Warden is the **assistant** (read, chat, execute). They share one local memory and one protocol, and **approval stays in Cinder Desktop**.
 
 ## Three roles, three hard boundaries
 
 | Role | Owner | Owns | Does not own |
 |---|---|---|---|
 | copilot | Agent (this repo) | **Finding the repositories on this machine and the user's watchlist**, model entry, command execution, memory panels | Retrieval ranking, project knowledge storage, **approval** |
-| memory | [Repotory](https://github.com/sky-jiangcheng/repotory) | Project context, session handoffs, approved knowledge pages | Deciding what the copilot looks like |
+| memory | [Cinder](https://github.com/sky-jiangcheng/repotory) | Project context, session handoffs, approved knowledge pages | Deciding what the copilot looks like |
 | protocol | MCP | The only channel between the Agent and the memory layer | —— |
 
 The three boundaries are hard:
 
-1. **The Agent does not re-implement Repotory's retrieval.** Context comes from `repotory_context`; it does not rank FTS itself, does not compute embeddings itself, and keeps no vector store of its own.
-2. **The Agent does not touch Repotory's database.** MCP tools only. The database is Repotory's private implementation, and the Agent has no business knowing it exists.
-3. **The Agent is not a full IDE.** Routing belongs to Repotory (`repotory_notes_read` / `repotory_notes_update` and friends); the Agent only consumes it.
-4. **The Agent finds the repositories itself, without borrowing Repotory's hands.** Walking the disk is the copilot's own job: it looks for git repositories under the roots the user gave it, lists them, and remembers which ones the user cares about. **The repository list does not go into Repotory's database** — that database is a knowledge base, not the register of "what the user is working on".
+1. **The Agent does not re-implement Cinder's retrieval.** Context comes from `repotory_context`; it does not rank FTS itself, does not compute embeddings itself, and keeps no vector store of its own.
+2. **The Agent does not touch Cinder's database.** MCP tools only. The database is Cinder's private implementation, and the Agent has no business knowing it exists.
+3. **The Agent is not a full IDE.** Routing belongs to Cinder (`repotory_notes_read` / `repotory_notes_update` and friends); the Agent only consumes it.
+4. **The Agent finds the repositories itself, without borrowing Cinder's hands.** Walking the disk is the copilot's own job: it looks for git repositories under the roots the user gave it, lists them, and remembers which ones the user cares about. **The repository list does not go into Cinder's database** — that database is a knowledge base, not the register of "what the user is working on".
 
-## How it relates to the Repotory desktop app: two products, one job each
+## How it relates to the Cinder Desktop app: two products, one job each
 
 **Not master and servant, not two interfaces of one product.**
 
-| | Repotory desktop | Agent (the copilot) |
+| | Cinder Desktop | Agent (the copilot) |
 |---|---|---|
 | Positioning | the **workbench** | the **assistant** |
 | What it does | browse, edit, **approve**, govern | read, chat, execute |
@@ -38,7 +38,7 @@ The three boundaries are hard:
 | Where the repositories come from | its own scan roots (`scan_roots`) | **its own scan roots + its own watchlist** |
 | Interface | the three-column shell + the small bot float | its own window + a tray |
 
-**Approval stays with the human, and not by convention.** Repotory's MCP surface registers only two
+**Approval stays with the human, and not by convention.** Cinder's MCP surface registers only two
 **pure-read** knowledge page tools (`repotory_wiki_search` / `repotory_wiki_read`), because the gate on
 the write side is "publishing content into retrieval is a human act" (ADR-0015 decision 3).
 **The Agent goes over MCP, so it stands outside that gate automatically — it cannot cross it even if it
@@ -57,7 +57,7 @@ Five capabilities, fixed by Phase 0, plus one more ("find the repositories") add
 |---|---|---|
 | **Find repositories** | **Walk the disk, list the repositories, and let the user say which ones matter** | **A new repository surfaces as a bubble; a followed one lands in the list** |
 | Chat | Talk to the model about the current project, streamed | Pick a repository + ask a question → get an answer |
-| Read project | Attach the repository path, the recent git diff, context retrieved from Repotory | Every attachment is selectable and previewable |
+| Read project | Attach the repository path, the recent git diff, context retrieved from Cinder | Every attachment is selectable and previewable |
 | Run commands | Whitelisted tool execution; writes need human confirmation | The full command is shown, dangerous ones are blocked by default, every run is logged |
 | Memory panels | Current context / approved knowledge / cross-session conclusions | All three panels show real data |
 | Human confirmation | Dangerous actions never run unattended | The user sees the full command and its blast radius before confirming |
@@ -70,13 +70,13 @@ under "Open questions" below.
 
 | Decision | Content | Cost |
 |---|---|---|
-| Stack | Tauri v2, Rust backend, TypeScript frontend | Not the same stack as the Repotory desktop app (Wails/Go). The two share data and protocol, nothing else |
+| Stack | Tauri v2, Rust backend, TypeScript frontend | Not the same stack as the Cinder Desktop app (Wails/Go). The two share data and protocol, nothing else |
 | **Why Tauri** | **it ships a tray** (menu-bar icon, click to wake) — Wails v2 has no tray (the `TrayMenu` in `pkg/menu` is a dead type, and the external `systray` needs cgo). **The tray is in place** (`src-tauri/src/tray.rs`): left click wakes the window, right click opens the Show / Quit menu | **Tauri uses the system WebView, not Swift/AppKit native controls** — it is "an independent process + a real tray + a real distribution channel", **not "a native UI framework"** |
 | Model entry | **Any provider that conforms to the OpenAI-compatible API**, no vendor hard-coded | One client covers them all; local and hosted take the same road |
 | Default provider | the local Ollama (`http://127.0.0.1:11434/v1`) — no account, no key | Another model means configuring another provider |
 | Default model | `qwen3:8b` (Qwen3 8B Q4), proven on an M4 Pro first | Switching models means the user pulls it in Ollama |
-| Memory channel | MCP, never a private store | The Agent depends on Repotory's MCP binary being present |
-| Finding repositories | **the copilot walks the disk itself**; the user gives roots and decides what to follow | **the watchlist and Repotory's database are two separate stores** — sharing them means changing the main repository, which is not a copilot's job |
+| Memory channel | MCP, never a private store | The Agent depends on Cinder's MCP binary being present |
+| Finding repositories | **the copilot walks the disk itself**; the user gives roots and decides what to follow | **the watchlist and Cinder's database are two separate stores** — sharing them means changing the main repository, which is not a copilot's job |
 
 **The model entry is open in Phase 2**: a provider is "a base URL". OpenRouter, OpenAI, DeepSeek,
 SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all speak the same protocol, so **there is
@@ -100,7 +100,7 @@ interface — is left to the user.
 
 ## The memory-layer contract
 
-Every MCP tool the Agent consumes comes from Repotory's existing `repotory_*` tool set (the Repotory repository is the source of truth):
+Every MCP tool the Agent consumes comes from Cinder's existing `repotory_*` tool set (the Cinder repository is the source of truth):
 
 - `repotory_context` — project context; Phase 1's main data source
 - `repotory_handoff` — writes the session handoff; Phase 1's exit
@@ -111,7 +111,7 @@ Every MCP tool the Agent consumes comes from Repotory's existing `repotory_*` to
 - `repotory_ask` — evidence-backed answers with sources (ADR-0033)
 - `repotory_agent_score` / `repotory_integrity` — introspection
 
-The tool names' single source of truth is the Repotory main repository, and **this repository keeps no
+The tool names' single source of truth is the Cinder main repository, and **this repository keeps no
 runtime copy of that list**. Phase 1 deleted that copy: the tool list is fetched dynamically via MCP's
 `tools/list` at connection time (`src-tauri/src/mcp_client.rs`), and what the first screen shows is what
 the server just reported.
@@ -123,7 +123,7 @@ self-check test in `memory_layer.rs` that watches for tool names being written b
 
 > The list above is **for readers, not a runtime contract**: on this machine the server reports **18**
 > tools, matching the names listed above. **At runtime the server's answer always wins** — when
-> Repotory adds a tool, the copilot sees it without a line of code changing here.
+> Cinder adds a tool, the copilot sees it without a line of code changing here.
 
 **Beyond the tool surface, this contract has a version number too**: ADR-0048 in the main repo gives
 the memory layer its own **contract version** (`internal/version/core.go`'s `CoreVersion`), and that is
@@ -135,12 +135,12 @@ it** (same rule as the tool list) — it reads the server's value when it connec
 
 ## Open questions (the maintainer decides)
 
-### 1. ~~`repotory_pending` and `repotory_snapshot` do not exist in Repotory~~ (clarified)
+### 1. ~~`repotory_pending` and `repotory_snapshot` do not exist in Cinder~~ (clarified)
 
-Two of the four tools the original roadmap listed for Phase 1 are not there: `repotory_context` and `repotory_handoff` are real, but `repotory_pending` and `repotory_snapshot` have no counterpart in Repotory's MCP tool set.
+Two of the four tools the original roadmap listed for Phase 1 are not there: `repotory_context` and `repotory_handoff` are real, but `repotory_pending` and `repotory_snapshot` have no counterpart in Cinder's MCP tool set.
 
-- "Pending knowledge" in Repotory is really the wiki page status `pending / approved / rejected` (`internal/db/wiki.go`);
-- A snapshot is Repotory's local backup mechanism (ADR-0025 L1) — an internal capability, not an MCP tool.
+- "Pending knowledge" in Cinder is really the wiki page status `pending / approved / rejected` (`internal/db/wiki.go`);
+- A snapshot is Cinder's local backup mechanism (ADR-0025 L1) — an internal capability, not an MCP tool.
 
 **Conclusion**: **the "pending knowledge" panel = a read-only view over `repotory_wiki_search`.**
 There is no "list the pages awaiting approval" tool on the MCP surface — **because "who gets to see
@@ -160,12 +160,12 @@ gate on the write side). **Going over MCP puts you outside that gate automatical
 mechanism required.
 
 **Conclusion: option C, and it is not a compromise — it is the division of labour.**
-**Approving always happens in the Repotory desktop app (the workbench)** — that is where a human is
+**Approving always happens in the Cinder Desktop app (the workbench)** — that is where a human is
 present. The copilot's memory panels are **read-only**.
 
 ### 3. ~~How automatic is "auto-discovering" the MCP client?~~ (settled: it launches by itself)
 
-The original question: Phase 1 of the roadmap says "auto-discover the local Repotory MCP". The options are: find the `repotory-mcp` binary on PATH, a fixed path, or a user-configured one.
+The original question: Phase 1 of the roadmap says "auto-discover the local Cinder MCP". The options are: find the `repotory-mcp` binary on PATH, a fixed path, or a user-configured one.
 
 **How it works now**: it probes PATH plus the common install directories (`/usr/local/bin`,
 `/opt/homebrew/bin`, `~/.local/bin`) and, on a hit, **launches the child process over stdio by
@@ -189,13 +189,13 @@ the memory layer is one card among several. What this decision really constrains
 **after context injection lands** — not "can we chat", but "does this turn have a basis, and did we
 say so".
 
-### 4. ~~Version coupling with Repotory~~ (settled: self-evident at runtime, warn in plain words)
+### 4. ~~Version coupling with Cinder~~ (settled: self-evident at runtime, warn in plain words)
 
-The original question: the MCP tool set the Agent consumes evolves with Repotory (`repotory_*` tools are added and removed). Does the Agent need a capability handshake ("which tools do you have?") instead of assuming a list, or is a semantic-version constraint on Repotory enough?
+The original question: the MCP tool set the Agent consumes evolves with Cinder (`repotory_*` tools are added and removed). Does the Agent need a capability handshake ("which tools do you have?") instead of assuming a list, or is a semantic-version constraint on Cinder enough?
 
 **Settled (2026-11-05): self-evident at runtime, warn in plain words, never hard-refuse.**
 
-① **The server's version was already in hand** — Repotory's MCP server reports its `serverInfo` in the
+① **The server's version was already in hand** — Cinder's MCP server reports its `serverInfo` in the
 `initialize` response (main repo, `cmd/mcp/main.go` — `server.NewMCPServer("repotory-mcp", version.CoreVersion)`),
 and **this repo threw the whole response away** (`mcp_client.rs:250-259` only `?`s the result, it never
 binds it). Catching it is one change, **not a new protocol**.
@@ -205,7 +205,7 @@ both come from the server, and **this repo keeps no copy** (the same rule as the
 ADR-0048): **it answers "did the tool surface change", not "is the build new"** — the release version
 is on `/health` and in the startup log, but it has **no answer** to "what may I rely on" (the interface
 changes daily, the tool surface moves every few months, and a 2.30.0 cannot say whether the tool
-surface changed). **So the first screen says "memory layer vX.Y.Z", not "Repotory vX.Y.Z".**
+surface changed). **So the first screen says "memory layer vX.Y.Z", not "Cinder vX.Y.Z".**
 ③ **Warn only when out of bounds, never block**: below the supported floor the app says one plain
 sentence ("this memory layer is too old — upgrade it to use memory") and **does not hard-refuse** — a
 hard refusal turns an implicit coupling into an explicit one that still stops people, while the dynamic

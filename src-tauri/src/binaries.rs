@@ -1,7 +1,7 @@
 // Finding an executable on this machine.
 //
 // This module answers one question: is there a binary with this name, and
-// where is it. It is used to locate Repotory's MCP server, which is a
+// where is it. It is used to locate Cinder's MCP server, which is a
 // program the user installs separately.
 //
 // It deliberately does NOT probe anything over the network. "The binary is

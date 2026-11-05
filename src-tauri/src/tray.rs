@@ -38,7 +38,7 @@ const MENU_QUIT: &str = "quit";
 ///
 /// macOS menu bar icons are template images — a single colour on a
 /// transparent field, which the system recolours for light and dark menu
-/// bars. The file is the letterform of Repotory's brand mark cut to one
+/// bars. The file is the letterform of Cinder's brand mark cut to one
 /// colour: the same glyph domain the VS Code activity bar and the JetBrains
 /// stripe icon use. A coloured app icon would look wrong in a menu bar and
 /// would not adapt.
@@ -101,14 +101,14 @@ fn install_on_main_thread<R: Runtime>(
     handle: &AppHandle<R>,
     icon: tauri::image::Image<'static>,
 ) -> tauri::Result<()> {
-    let show = MenuItem::with_id(handle, MENU_SHOW, "Show Repotory Agent", true, None::<&str>)?;
+    let show = MenuItem::with_id(handle, MENU_SHOW, "Show Warden", true, None::<&str>)?;
     let quit = MenuItem::with_id(handle, MENU_QUIT, "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(handle, &[&show, &quit])?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .icon_as_template(cfg!(target_os = "macos"))
-        .tooltip("Repotory Agent")
+        .tooltip("Warden")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {

@@ -1,6 +1,6 @@
-// Repotory Agent — a local copilot that reads the Repotory memory layer.
+// Warden — a local copilot that reads the Cinder memory layer.
 //
-// The copilot is the window; Repotory is the memory. Everything this window
+// The copilot is the window; Cinder is the memory. Everything this window
 // knows comes from the seams in this crate (the model providers, the
 // memory-layer connection and the wake-up path), and every future capability
 // — chat, reading a project, running a command, the memory panels — sits on
@@ -118,7 +118,7 @@ async fn mcp_call_tool<R: tauri::Runtime>(
 // roots the user configured, shows what it found, and remembers what the
 // user decided about each one.
 //
-// None of this goes through Repotory. A copilot that needs another
+// None of this goes through Cinder. A copilot that needs another
 // product's database to know what is on this disk is not independent of
 // it, and the whole point of this product is that it stands on its own.
 
@@ -711,7 +711,7 @@ pub fn run() {
             repo_dismiss,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running the Repotory Agent");
+        .expect("error while running the Warden");
 }
 
 #[cfg(test)]
@@ -722,7 +722,7 @@ mod tests {
     /// otherwise only show up as an empty first screen at runtime.
     ///
     /// The payload carries NO hardcoded tool list. It used to, and the
-    /// hardcoded copy had already drifted from Repotory's real MCP surface
+    /// hardcoded copy had already drifted from Cinder's real MCP surface
     /// (7 names listed, 18 registered). The tool names belong to the server:
     /// they are fetched over MCP's `tools/list` — see `memory_layer.rs` for
     /// the full reasoning — so the payload must not carry any unless a server

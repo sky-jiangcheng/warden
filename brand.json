@@ -1,0 +1,6 @@
+{
+  "note": "The brand words, in one place. The upstream copy lives in the Cinder main repository at build/brand.json; this one exists because this repository's CI runs without the other one checked out. Change one, change the other — the two are not allowed to drift. ADR-0049.",
+  "mother": "Cinder",
+  "desktop": "Cinder Desktop",
+  "agent": "Warden"
+}

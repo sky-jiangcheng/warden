@@ -5,31 +5,31 @@
 
 ## 一句话定位
 
-**Repotory Agent 是一个独立产品：一个跑在本机的 copilot（**不是** GitHub Copilot），不是又一个 Agent 平台，也不是 Repotory 桌面端的一个界面。** 它把"跟本地模型聊当前项目"这件事做成一个窗口，把"记得什么"交给 Repotory。
+**Warden 是一个独立产品：一个跑在本机的 copilot（**不是** GitHub Copilot），不是又一个 Agent 平台，也不是 Cinder Desktop 的一个界面。** 它把"跟本地模型聊当前项目"这件事做成一个窗口，把"记得什么"交给 Cinder。
 
-**它与 Repotory 是两个产品，各担一件事**：Repotory 是**工作台**（浏览、编辑、**审批**、治理），Repotory Agent 是**助手**（读、聊、执行）。两者共享同一份本地记忆、同一套协议，**审批永远在 Repotory 那边**。
+**它与 Cinder Desktop 是两个产品，各担一件事**：Cinder Desktop 是**工作台**（浏览、编辑、**审批**、治理），Warden 是**助手**（读、聊、执行）。两者共享同一份本地记忆、同一套协议，**审批永远在 Cinder Desktop 那边**。
 
 ## 三个角色，三条边界
 
 | 角色 | 归属 | 负责 | 不负责 |
 |---|---|---|---|
 | copilot | Agent（本仓库） | **本机仓库发现与用户关注清单**、本地模型入口、命令执行、记忆面板 | 检索排序、项目知识存储、**审批** |
-| 记忆 | [Repotory](https://github.com/sky-jiangcheng/repotory) | 项目上下文、会话交接、已批准的知识页 | 决定 copilot 长什么样 |
+| 记忆 | [Cinder](https://github.com/sky-jiangcheng/repotory) | 项目上下文、会话交接、已批准的知识页 | 决定 copilot 长什么样 |
 | 协议 | MCP | Agent 与记忆层之间唯一的通道 | —— |
 
 三条边界是硬的：
 
-1. **Agent 不复制 Repotory 的检索逻辑。** 上下文从 `repotory_context` 来，不自己排 FTS、不自己算 embedding、不自建向量库。
-2. **Agent 不直连 Repotory 的数据库。** 只走 MCP 工具。数据库是 Repotory 的私有实现，Agent 没有理由知道它的存在。
-3. **Agent 不做完整 IDE。** 路由是 Repotory 的（`repotory_notes_read` / `repotory_notes_update` 等），Agent 只消费。
-4. **Agent 自己认仓库，不借 Repotory 的手。** 扫盘是 copilot 自己的事：它按用户给的根目录找 git 仓库，
-   自己列出来、自己记住用户关注了哪些。**仓库清单不进 Repotory 的库**——那台库是知识库，不是「用户正在做什么」的登记处。
+1. **Agent 不复制 Cinder 的检索逻辑。** 上下文从 `repotory_context` 来，不自己排 FTS、不自己算 embedding、不自建向量库。
+2. **Agent 不直连 Cinder 的数据库。** 只走 MCP 工具。数据库是 Cinder 的私有实现，Agent 没有理由知道它的存在。
+3. **Agent 不做完整 IDE。** 路由是 Cinder 的（`repotory_notes_read` / `repotory_notes_update` 等），Agent 只消费。
+4. **Agent 自己认仓库，不借 Cinder 的手。** 扫盘是 copilot 自己的事：它按用户给的根目录找 git 仓库，
+   自己列出来、自己记住用户关注了哪些。**仓库清单不进 Cinder 的库**——那台库是知识库，不是「用户正在做什么」的登记处。
 
-## 与 Repotory 桌面端的关系：两个产品，各担一件事
+## 与 Cinder Desktop 的关系：两个产品，各担一件事
 
 **不是主从，不是同一产品的两个前端。**
 
-| | Repotory 桌面端 | Agent（copilot） |
+| | Cinder Desktop | Agent（copilot） |
 |---|---|---|
 | 定位 | **工作台** | **助手** |
 | 干什么 | 浏览、编辑、**审批**、治理 | 读、聊、执行 |
@@ -39,7 +39,7 @@
 | 仓库从哪来 | 它自己的扫描根（`scan_roots`） | **它自己的扫描根 + 自己的收藏清单** |
 | 界面 | 三栏外壳 + 小机器人浮层 | 自己的窗口 + 托盘 |
 
-**审批权留在人手里，而且不是靠约定维持的。** Repotory 的 MCP 工具面在知识页上只注册了两个**纯读**工具（`repotory_wiki_search` / `repotory_wiki_read`），
+**审批权留在人手里，而且不是靠约定维持的。** Cinder 的 MCP 工具面在知识页上只注册了两个**纯读**工具（`repotory_wiki_search` / `repotory_wiki_read`），
 写侧的闸门是"把内容发布进检索是人的行为"（ADR-0015 决策③）。
 **Agent 走 MCP，就自动站在闸门外——它想越都越不过去。**
 
@@ -55,7 +55,7 @@ Phase 0 定下的五项，做到就算第一版；Phase 2.5 又加了一项「�
 |---|---|---|
 | **认仓库** | **自己扫盘列出本机仓库，用户判断哪些要关注** | **新仓库冒泡提醒，收藏后进入列表** |
 | 聊天 | 与本地模型就当前项目对话，流式输出 | 选一个仓库 + 一段提问 → 有回答 |
-| 读项目 | 附加仓库路径、最近 git diff、Repotory 检索到的上下文 | 附加项可勾选、可预览 |
+| 读项目 | 附加仓库路径、最近 git diff、Cinder 检索到的上下文 | 附加项可勾选、可预览 |
 | 执行命令 | 白名单工具执行，写操作需人工确认 | 命令完整显示、危险项默认禁止、执行有日志 |
 | 记忆面板 | 当前上下文 / 已批准知识 / 跨会话结论三块 | 三块都能看到真实数据 |
 | 人工确认 | 危险动作不自动执行 | 确认前能看到完整命令与影响面 |
@@ -67,13 +67,13 @@ Phase 0 定下的五项，做到就算第一版；Phase 2.5 又加了一项「�
 
 | 决议 | 内容 | 代价 |
 |---|---|---|
-| 技术栈 | Tauri v2 + Rust 后端 + TypeScript 前端 | 与 Repotory 桌面端（Wails/Go）不是同一套栈，两边共享的只有数据与协议 |
+| 技术栈 | Tauri v2 + Rust 后端 + TypeScript 前端 | 与 Cinder Desktop（Wails/Go）不是同一套栈，两边共享的只有数据与协议 |
 | **选 Tauri 的理由** | **它自带托盘**（菜单栏图标 + 点击唤起）——Wails v2 没有托盘（`pkg/menu` 的 `TrayMenu` 是死类型，外部 `systray` 要 cgo）。**托盘已落地**（`src-tauri/src/tray.rs`）：左键唤回窗口，右键是 Show / Quit 菜单 | **Tauri 用系统 WebView，不是 Swift/AppKit 原生控件**——它是"独立进程 + 真托盘 + 真分发渠道"，**不是"原生 UI 框架"** |
 | 模型入口 | **任何符合 OpenAI 兼容标准的 provider**，不硬编码厂商 | 一套客户端通吃，本地与云端同一条路 |
 | 默认 provider | 本机 Ollama（`http://127.0.0.1:11434/v1`）——不需要账号也不需要 Key | 想要别的模型得自己配一个 provider |
 | 默认模型 | `qwen3:8b`（Qwen3 8B Q4），M4 Pro 上先跑通 | 换模型要用户自己在 Ollama 里 pull |
-| 记忆通道 | MCP，不自建 | Agent 依赖 Repotory 的 MCP 二进制存在 |
-| 仓库发现 | **copilot 自己扫盘**，用户配根目录、自己决定关注谁 | **收藏清单与 Repotory 主库各存各的**——想共享得改主仓，那不是一个 copilot 该做的事 |
+| 记忆通道 | MCP，不自建 | Agent 依赖 Cinder 的 MCP 二进制存在 |
+| 仓库发现 | **copilot 自己扫盘**，用户配根目录、自己决定关注谁 | **收藏清单与 Cinder 主库各存各的**——想共享得改主仓，那不是一个 copilot 该做的事 |
 
 **模型入口在 Phase 2 已经放开**：provider 就是「一个 base URL」，
 OpenRouter / OpenAI / DeepSeek / 硅基流动 / vLLM / LM Studio / Ollama 的 `/v1` 面
@@ -97,7 +97,7 @@ provider 配置文件里只存「有没有 Key」。
 
 ## 记忆层契约
 
-Agent 要消费的 MCP 工具，都来自 Repotory 现存的 `repotory_*` 工具集（以 Repotory 主仓库为准）：
+Agent 要消费的 MCP 工具，都来自 Cinder 现存的 `repotory_*` 工具集（以 Cinder 主仓库为准）：
 
 - `repotory_context` —— 项目上下文，Phase 1 的主数据源
 - `repotory_handoff` —— 写会话交接，Phase 1 的出口
@@ -108,7 +108,7 @@ Agent 要消费的 MCP 工具，都来自 Repotory 现存的 `repotory_*` 工具
 - `repotory_ask` —— 带出处的证据问答（ADR-0033）
 - `repotory_agent_score` / `repotory_integrity` —— 自省
 
-工具名的唯一真相在 Repotory 主仓库，**本仓库不保留那份清单的运行时副本**。
+工具名的唯一真相在 Cinder 主仓库，**本仓库不保留那份清单的运行时副本**。
 Phase 1 起那份副本已经删掉：工具清单在连接时用 MCP 的 `tools/list` 动态拉取
 （`src-tauri/src/mcp_client.rs`），首屏显示的就是服务端刚报上来的那份。
 **Phase 0 那份副本只列了 7 个名字，而服务端注册了 18 个**——
@@ -119,7 +119,7 @@ Phase 1 起那份副本已经删掉：工具清单在连接时用 MCP 的 `tools
 
 > 上面这份列表是**给人看的说明，不是运行时契约**：本机实测服务端报上来 **18 个**工具，
 > 与上面列出的名字一致。**运行时永远以服务端报上来的为准**——
-> Repotory 加了工具，copilot 这边不用改代码就能看见。
+> Cinder 加了工具，copilot 这边不用改代码就能看见。
 
 **工具面之外，这层契约还有一个版本号**：主仓在 ADR-0048 里给记忆层单开了一个
 **契约版本**（`internal/version/core.go` 的 `CoreVersion`），MCP `initialize` 响应的
@@ -130,12 +130,12 @@ Phase 1 起那份副本已经删掉：工具清单在连接时用 MCP 的 `tools
 
 ## 待确认（需要维护者拍板）
 
-### 1. ~~`repotory_pending` 与 `repotory_snapshot` 在 Repotory 里不存在~~（已澄清）
+### 1. ~~`repotory_pending` 与 `repotory_snapshot` 在 Cinder 里不存在~~（已澄清）
 
-原路线 Phase 1 列的四个工具中，`repotory_context`、`repotory_handoff` 确实存在，但 `repotory_pending` 与 `repotory_snapshot` 在 Repotory 的 MCP 工具集里**没有对应物**：
+原路线 Phase 1 列的四个工具中，`repotory_context`、`repotory_handoff` 确实存在，但 `repotory_pending` 与 `repotory_snapshot` 在 Cinder 的 MCP 工具集里**没有对应物**：
 
-- "待确认知识"在 Repotory 里的真实形态是 wiki 页状态 `pending / approved / rejected`（`internal/db/wiki.go`）；
-- 快照（snapshot）是 Repotory 的本地备份机制（ADR-0025 L1），是内部能力，不是 MCP 工具。
+- "待确认知识"在 Cinder 里的真实形态是 wiki 页状态 `pending / approved / rejected`（`internal/db/wiki.go`）；
+- 快照（snapshot）是 Cinder 的本地备份机制（ADR-0025 L1），是内部能力，不是 MCP 工具。
 
 **结论**：**待确认知识面板 = `repotory_wiki_search` 的只读视图。**
 MCP 面上没有"列出待批准页"的工具——**因为「谁能看到未批准的内容」本身就是闸门的一部分**。
@@ -151,12 +151,12 @@ MCP 面上没有"列出待批准页"的工具——**因为「谁能看到未批
 **走 MCP 就自动站在闸门外**，不需要额外的机制。
 
 **结论：选项 C，且它不是妥协，是分工。**
-**审批永远在 Repotory 桌面端（工作台）做**——那里有人在场。
+**审批永远在 Cinder Desktop（工作台）做**——那里有人在场。
 copilot 的记忆面板是**只读**的。
 
 ### 3. ~~MCP 客户端的"自动发现"到底自动到什么程度~~（已定：自动拉起）
 
-原问题：Phase 1 写的是"自动发现本地 Repotory MCP"。可选做法：PATH 里找 `repotory-mcp` 二进制、固定路径、还是让用户在设置里指一个。
+原问题：Phase 1 写的是"自动发现本地 Cinder MCP"。可选做法：PATH 里找 `repotory-mcp` 二进制、固定路径、还是让用户在设置里指一个。
 
 **现在这样**：按 PATH + 常见目录探测（`/usr/local/bin`、`/opt/homebrew/bin`、`~/.local/bin`），
 找到就**自动拉起**子进程走 stdio——**和两个 IDE 插件一样**
@@ -171,14 +171,14 @@ copilot 的记忆面板是**只读**的。
 
 **已定（2026-11-05）**：**聊天继续 + 显式横幅说明**——记忆层连不上时聊天照常可用，但界面必须明说「这次没有记忆」，**上下文装配失败绝不静默**（静默降级等于让模型在没有依据的情况下回答，而用户看不出它这次没有依据）。**今天已经是这个形状**：聊天与记忆层是两条独立的路（`chat_send` 不依赖 MCP 状态），记忆层只是一张独立卡片；这条决定真正约束的是**将来接上上下文注入之后**的行为——不是"能不能聊"，而是"这次有没有依据，而且说没说过"。
 
-### 4. ~~与 Repotory 的版本耦合~~（已定：运行时自证 + 人话警告）
+### 4. ~~与 Cinder 的版本耦合~~（已定：运行时自证 + 人话警告）
 
-原问题：Agent 消费的 MCP 工具集会随 Repotory 演进（`repotory_*` 可能增删）。是否需要一次能力协商
-（Agent 问一句"你有哪些工具"，而不是假定清单），还是靠 Repotory 的语义化版本约束。
+原问题：Agent 消费的 MCP 工具集会随 Cinder 演进（`repotory_*` 可能增删）。是否需要一次能力协商
+（Agent 问一句"你有哪些工具"，而不是假定清单），还是靠 Cinder 的语义化版本约束。
 
 **已定（2026-11-05）：运行时自证 + 人话警告，不做硬拒绝。**
 
-① **服务端版本本来就在手边**——Repotory 的 MCP server 在 `initialize` 响应里报 `serverInfo`
+① **服务端版本本来就在手边**——Cinder 的 MCP server 在 `initialize` 响应里报 `serverInfo`
 （主仓 `cmd/mcp/main.go` 的 `server.NewMCPServer("repotory-mcp", version.CoreVersion)`），
 而本仓的客户端**把整个响应丢掉了**（`mcp_client.rs:250-259` 拿到结果只 `?`，不接变量）。
 接住它是一次改动，**不是新协议**。
@@ -187,7 +187,7 @@ copilot 的记忆面板是**只读**的。
 `internal/version/core.go` 的 `CoreVersion`）：**它答的是「工具面变了没」，不是「构建新不新」**——
 发布版本号在 `/health` 与启动日志里，但**对「我能依赖什么」这个问题没有答案**
 （界面改动天天有，工具面几个月才动一次，一个 2.30.0 读不出工具面变没变）。
-**所以首屏写「记忆层 vX.Y.Z」而不是「Repotory vX.Y.Z」。**
+**所以首屏写「记忆层 vX.Y.Z」而不是「Cinder vX.Y.Z」。**
 ③ **越界才提示，不拦人**：低于支持下界时给一句人话（「这版记忆层太旧，升级后再用记忆」），
 **不硬拒绝**——硬拒绝会把版本耦合从"隐式"变成"显式但会拦人"，
 而工具清单动态拉取已经覆盖了"新增工具"这一半。

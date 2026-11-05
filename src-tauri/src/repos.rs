@@ -1,10 +1,10 @@
 // The repositories the copilot watches.
 //
 // This module is what makes the copilot a copilot of the *machine* rather
-// than a front end for Repotory's database. The copilot finds the git
+// than a front end for Cinder's database. The copilot finds the git
 // repositories on this computer by itself, shows them as a list, and lets
-// the user say which ones matter. Repotory's own scanner exists, but it
-// exists to fill Repotory's knowledge base from the desktop app's scan
+// the user say which ones matter. Cinder's own scanner exists, but it
+// exists to fill Cinder's knowledge base from the desktop app's scan
 // roots; borrowing it would make the copilot depend on that database, and
 // this product is meant to stand on its own.
 //
@@ -20,7 +20,7 @@
 //
 //   1. A repository is a directory that contains a `.git` **directory**. A
 //      worktree or submodule has a `.git` *file*, and is not counted. This
-//      is the same rule Repotory's scanner uses, deliberately: the two
+//      is the same rule Cinder's scanner uses, deliberately: the two
 //      lists must not disagree about what a repository is.
 //
 //   2. A repository is "new" only while the user has not dealt with it.
@@ -410,7 +410,7 @@ fn collect(dir: &Path, depth: usize, out: &mut BTreeSet<PathBuf>, truncated: &mu
 /// Whether a directory is a git repository.
 ///
 /// The `.git` **directory** is the test. A worktree or submodule has a
-/// `.git` file instead, and is not counted — the same rule Repotory's
+/// `.git` file instead, and is not counted — the same rule Cinder's
 /// scanner uses.
 fn is_repo(dir: &Path) -> bool {
     std::fs::metadata(dir.join(".git"))
@@ -478,7 +478,7 @@ mod tests {
     }
 
     /// A worktree's `.git` is a file, not a directory. Counting those would
-    /// make this list disagree with Repotory's.
+    /// make this list disagree with Cinder's.
     #[test]
     fn a_git_file_is_not_a_repository() {
         let root = temp_dir("git-file");

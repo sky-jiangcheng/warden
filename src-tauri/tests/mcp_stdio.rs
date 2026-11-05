@@ -12,8 +12,8 @@
 // What is deliberately NOT tested here: the real `repotory-mcp`. That binary
 // belongs to the main repository and is not a dependency of this one, so a
 // test that required it would fail on every machine that does not happen to
-// have Repotory installed. The client's contract with the real server is
-// checked against the real server during development, not in CI.
+// have the Cinder desktop app installed. The client's contract with the real
+// server is checked against the real server during development, not in CI.
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -105,7 +105,7 @@ async fn a_server_error_reaches_the_caller_as_an_error() {
 
 /// The client kills the server when it goes away.
 ///
-/// This matters more than it looks: the server holds the Repotory SQLite
+/// This matters more than it looks: the server holds the Cinder SQLite
 /// database open, and an orphaned one keeps it locked for the desktop app.
 /// The check is on the process, not on the object — the object going away
 /// says nothing about the child.

@@ -1,30 +1,30 @@
 # Roadmap
 
 > Source: the "总体路线" discussion draft of 2026-10-28. This page turns it into the executable version that lives in the repository.
-> Positioning and boundary are in [product.md](product.md), which also records where the roadmap and Repotory's current state disagree.
+> Positioning and boundary are in [product.md](product.md), which also records where the roadmap and Cinder's current state disagree.
 
 ## The shape
 
 ```
-Repotory MCP memory layer     ↑ copilot (Agent, Tauri)             ↑ local models (Ollama / llama.cpp / MLX)
+Cinder MCP memory layer     ↑ copilot (Agent, Tauri)             ↑ local models (Ollama / llama.cpp / MLX)
                              ↑ tool layer (Git / Shell / file index / database CLI)
                              ↑ mainstream clients (Claude Code / Cursor / VS Code / JetBrains)
 ```
 
 The memory layer is open over MCP; the copilot itself only does "local model entry + command execution + memory panels".
-Here **"copilot" means this product** (Repotory Agent) — **not** GitHub Copilot.
+Here **"copilot" means this product** (Warden) — **not** GitHub Copilot.
 
-**It and the Repotory desktop app are two products**: the desktop app is the **workbench** (browse,
+**It and the Cinder Desktop app are two products**: the desktop app is the **workbench** (browse,
 edit, approve, govern), the copilot is the **assistant** (read, chat, execute). They share the memory
 layer and the protocol — not the interface, and not the lifecycle.
 
 ## Phase 0: repository and positioning (1 week) — done
 
-Split the copilot out of Repotory explicitly, making it **its own product**, while keeping it tightly
+Split the copilot out of Cinder explicitly, making it **its own product**, while keeping it tightly
 bound.
 
 - Create the `repotory-agent` repository (formerly `repotory-agent-shell`, renamed on 2026-11-04);
-- Position it: an **independent copilot** that talks to Repotory MCP by default;
+- Position it: an **independent copilot** that talks to Cinder MCP by default;
 - Lock the stack: Tauri v2 + Rust backend + TS frontend;
 - Ollama first as the model entry, llama.cpp / MLX later;
 - Default model Qwen3 8B Q4, proven on an M4 Pro first;
@@ -35,14 +35,14 @@ The CI gates (docs mirror, frontend build, `cargo fmt` / `clippy` / `test`), the
 
 ## Phase 1: wire up the MCP memory layer (1–2 weeks) — the data path is done
 
-Make the copilot consume Repotory's memory reliably.
+Make the copilot consume Cinder's memory reliably.
 
-- Confirm these MCP tools are stable: `repotory_context`, `repotory_handoff`, `repotory_notes_search`, `repotory_projects_list`, `repotory_scan` (the original roadmap's `repotory_pending` and `repotory_snapshot` do not exist in Repotory — see [product.md, open question 1](product.md#1-repotory_pending-and-repotory_snapshot-do-not-exist-in-repotory));
+- Confirm these MCP tools are stable: `repotory_context`, `repotory_handoff`, `repotory_notes_search`, `repotory_projects_list`, `repotory_scan` (the original roadmap's `repotory_pending` and `repotory_snapshot` do not exist in Cinder — see [product.md, open question 1](product.md#1-repotory_pending-and-repotory_snapshot-do-not-exist-in-cinder));
 - **Fetch the tool list dynamically**: use MCP's `tools/list` in place of the hardcoded copy (it has
   already drifted — see [product.md, the memory-layer contract](product.md#the-memory-layer-contract));
 - Implement the MCP client on the Agent side (**copy the path the two IDE plugins already walk**:
   spawn the `repotory-mcp` child process over stdio):
-  - auto-discover the local Repotory MCP;
+  - auto-discover the local Cinder MCP;
   - check the connection at startup;
   - degrade to plain chat when it fails (**the first screen has to say "no `repotory-mcp`, no memory" — no pretending**);
 - Minimal proof:
@@ -77,7 +77,7 @@ cannot be reached the chat still works, but the interface has to say "this turn 
 - **Model providers are configurable**: anything that conforms to the OpenAI-compatible API works;
 - Attach the current repository path;
 - Attach the recent git diff;
-- Attach context retrieved from Repotory;
+- Attach context retrieved from Cinder;
 - Every model request goes through Rust; no port is exposed to the frontend.
 
 Goal: open the copilot, pick a repository, talk to a model about the project.
@@ -101,7 +101,7 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
 - **The proxy rule**: loopback is reached directly, everything else goes through `HTTPS_PROXY` /
   `HTTP_PROXY` (and `NO_PROXY` is honoured).
 
-**Still not done**: attaching the repository path / git diff / Repotory context, and writing the answer
+**Still not done**: attaching the repository path / git diff / Cinder context, and writing the answer
 back with `repotory_handoff`. The notion of "the current repository" landed in Phase 2.5, so these two
 are **wiring, not a blocked prerequisite** any more.
 The layered policy for what may be written is **settled** (see "Open questions" item 5 in
@@ -110,11 +110,11 @@ The layered policy for what may be written is **settled** (see "Open questions" 
 
 ## Phase 2.5: finding the repositories itself (1 week) — done
 
-The copilot goes from "one front end of Repotory" to "an independent robot on this machine".
+The copilot goes from "one front end of Cinder" to "an independent robot on this machine".
 
 - **It walks the disk itself**: git repositories under the roots the user configured
   (a `.git` *directory* counts; a worktree's `.git` *file* does not), **without going
-  through Repotory's scanner and without reading its database**;
+  through Cinder's scanner and without reading its database**;
 - **A list, and the user decides**: the repositories are listed, and the user says which
   ones are theirs;
 - **Follow or dismiss**: two answers. "Follow" means "this is my work"; "dismiss" means
@@ -128,7 +128,7 @@ The copilot goes from "one front end of Repotory" to "an independent robot on th
   with the window closed. That is what makes it a robot rather than a report.
 
 **The watchlist is the copilot's own** (`repos.json` in the app config directory) and
-**does not go into Repotory's database**: the writer of `projects.is_starred` there is the
+**does not go into Cinder's database**: the writer of `projects.is_starred` there is the
 desktop app (desktop-only), and there is no MCP twin for it — **sharing it would mean
 changing the main repository, which is not a copilot's job**.
 
@@ -163,7 +163,7 @@ Three panels:
 - **Cross-session memory**: last session's conclusions, handoff summary, tasks that can continue.
 
 This is the phase that separates the copilot from a plain chat tool. **The panels are read-only** —
-approving always happens in the Repotory desktop app.
+approving always happens in the Cinder Desktop app.
 
 ## Phase 5: local model management (1–2 weeks)
 
@@ -182,18 +182,18 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 - Optional Homebrew cask;
 - The App Store build ships no model and points at Ollama;
 - A `repotory-agent init` one-shot initializer;
-- A README that says it plainly: the copilot is the entry point, Repotory is the memory, MCP is the
+- A README that says it plainly: the copilot is the entry point, Cinder is the memory, MCP is the
   open protocol;
 - **The version coupling written down**: which Agent version pairs with which **memory-layer contract
   version** (the contract version is the main repo's `internal/version/core.go` `CoreVersion`; it
   answers "did the tool surface change" — without a capability handshake that coupling is implicit —
-  see [product.md, open question 4](product.md#4-version-coupling-with-repotory)).
+  see [product.md, open question 4](product.md#4-version-coupling-with-cinder)).
 
 ## Milestones
 
 | Milestone | Done when | State |
 |---|---|---|
-| M1 | It can call Repotory MCP | done (Phase 1) |
+| M1 | It can call Cinder MCP | done (Phase 1) |
 | M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
 | M2 | It can talk to a model about the current repository | in progress (Phase 2: the chat loop works, the repository context is not wired) |
 | M3 | It can safely run Git / Shell commands | not started |

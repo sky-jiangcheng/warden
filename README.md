@@ -1,18 +1,18 @@
-# Repotory Agent
+# Warden
 
-**Repotory Agent** — a local copilot that runs on your own machine (**not** GitHub Copilot): open a repository, talk to a local model about that project, and let [Repotory](https://github.com/sky-jiangcheng/repotory) remember what matters.
+**Warden** — a local copilot that runs on your own machine (**not** GitHub Copilot): open a repository, talk to a local model about that project, and let [Cinder](https://github.com/sky-jiangcheng/repotory) remember what matters.
 
-**Two products, one job each** — Repotory is the **workbench** (browse, edit, **approve** and govern this memory); Repotory Agent is the **assistant** (read, chat, run commands over MCP). One shared local memory, one protocol, and **approval stays in Repotory**.
+**Two products, one job each** — Cinder Desktop is the **workbench** (browse, edit, **approve** and govern this memory); Warden is the **assistant** (read, chat, run commands over MCP). One shared local memory, one protocol, and **approval stays in Cinder Desktop**.
 
 > **Status: Phase 2 — model providers are configurable and the chat loop works.** The app builds and runs, it reaches the memory layer, and it talks to any model behind an OpenAI-compatible API.
 
 ## What this is
 
-An **independent product**, not one more screen inside the Repotory desktop app.
+An **independent product**, not one more screen inside the Cinder Desktop app.
 
 It does four things: **finds the repositories on this machine by itself**, **talks to a model
 about the project you have open**, **runs commands within a whitelist**, and **pulls memory
-back from Repotory**. Which model you use is **your**
+back from Cinder**. Which model you use is **your**
 choice — **any provider that conforms to the OpenAI-compatible API works** (OpenRouter, OpenAI,
 DeepSeek, SiliconFlow, vLLM, LM Studio, and the local Ollama too) — and so is the shape of the
 interface.
@@ -22,14 +22,14 @@ The three roles stay separate:
 | | Owner | What it owns |
 |---|---|---|
 | copilot | Agent (this repo) | Repository discovery, model entry, command execution, memory panels |
-| memory | [Repotory](https://github.com/sky-jiangcheng/repotory) | Project knowledge, session handoffs, approved knowledge pages |
+| memory | [Cinder](https://github.com/sky-jiangcheng/repotory) | Project knowledge, session handoffs, approved knowledge pages |
 | protocol | MCP | The Agent reads memory through `repotory_*` tools only — never the database |
 
-## How it relates to the Repotory desktop app
+## How it relates to the Cinder Desktop app
 
 **Two products, one job each** — not master and servant, not two interfaces of one product.
 
-| | Repotory desktop | Agent (the copilot) |
+| | Cinder Desktop | Agent (the copilot) |
 |---|---|---|
 | Positioning | the **workbench** | the **assistant** |
 | What it does | browse, edit, **approve**, govern | read, chat, execute |
@@ -38,7 +38,7 @@ The three roles stay separate:
 | Closing it | the workbench is gone | the copilot keeps running |
 | Where the repositories come from | its own scan roots | **its own scan roots + its own watchlist** |
 
-**Approval stays with the human, and not by convention**: Repotory's MCP surface registers only the
+**Approval stays with the human, and not by convention**: Cinder's MCP surface registers only the
 pure-read knowledge page tools (`repotory_wiki_search` / `repotory_wiki_read`), because the gate on
 the write side is "publishing content into retrieval is a human act". The Agent goes over MCP, so it
 stands outside that gate automatically.
@@ -68,12 +68,12 @@ Command execution and the memory panels do not exist yet — see the [roadmap](d
 
 ## How the repositories are found
 
-**The copilot walks the disk itself, without going through Repotory.** Give it a few
+**The copilot walks the disk itself, without going through Cinder.** Give it a few
 directories to look in and it finds the git repositories under them, lists them, and
 **lets you say which ones are yours**.
 
 - **What counts as a repository**: a `.git` **directory**. A worktree's or a submodule's
-  `.git` is a **file**, and that does not count — the same rule Repotory's own scanner
+  `.git` is a **file**, and that does not count — the same rule Cinder's own scanner
   uses, so the two never disagree about the same directory.
 - **Two answers**: "follow" means "this is my work", "dismiss" means "stop asking".
   **A dismissed repository never surfaces again** — otherwise saying "no" once would still
@@ -84,7 +84,7 @@ directories to look in and it finds the git repositories under them, lists them,
 - **It keeps looking while nobody is looking**: the scan runs every five minutes even with
   the window closed. That is what makes it a robot rather than a report.
 - **The watchlist is the copilot's own** (`repos.json` in the app config directory) and
-  **does not go into Repotory's database**: the writer of `projects.is_starred` there is the
+  **does not go into Cinder's database**: the writer of `projects.is_starred` there is the
   desktop app and there is no MCP twin for it — sharing it would mean changing the main
   repository, which is not a copilot's job.
 

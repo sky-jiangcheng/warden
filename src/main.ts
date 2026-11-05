@@ -1,8 +1,8 @@
-// Repotory Agent — first screen.
+// Warden — first screen.
 //
 // The window asks the Rust side for one status payload and renders it. The
 // frontend owns no runtime knowledge: which model providers exist, and
-// whether the Repotory MCP server is installed, are both facts the backend
+// whether the Cinder MCP server is installed, are both facts the backend
 // owns.
 //
 // The two lists this screen draws are both fetched, never written down here:
@@ -650,7 +650,7 @@ function renderTray(status: ShellStatus) {
 
   if (status.tray.installed) {
     setChip(chip, "已就位", "ok");
-    note.textContent = "点菜单栏的 R 唤回窗口，右键打开菜单。";
+    note.textContent = "点菜单栏的 C 唤回窗口，右键打开菜单。";
   } else {
     setChip(chip, "不可用", "warn");
     note.textContent =

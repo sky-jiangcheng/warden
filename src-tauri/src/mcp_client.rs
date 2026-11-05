@@ -1,9 +1,9 @@
 // The MCP client: a thin client over the Model Context Protocol's stdio
 // transport.
 //
-// This file is the reason the copilot can read the Repotory knowledge base.
+// This file is the reason the copilot can read the Cinder knowledge base.
 // It speaks exactly one wire protocol — newline-delimited JSON-RPC 2.0 over a
-// child process's stdin/stdout — and it knows NOTHING about Repotory's
+// child process's stdin/stdout — and it knows NOTHING about Cinder's
 // internals: not a table, not a project, not a note. The thin-client rule
 // (ADR-0009 in the main repository) says this file evolves only with the MCP
 // wire contract.
@@ -289,7 +289,7 @@ impl McpClient {
     /// The server process's id.
     ///
     /// It is here so the end-to-end test can check that the child really
-    /// dies with the client — an orphaned server holds the Repotory SQLite
+    /// dies with the client — an orphaned server holds the Cinder SQLite
     /// database open, and that is not a thing to leave behind.
     pub fn server_pid(&self) -> Option<u32> {
         self.child
@@ -623,7 +623,7 @@ mod tests {
         let (tx, mut rx) = oneshot::channel();
         pending.lock().unwrap().insert(5, tx);
 
-        dispatch("Repotory MCP server v2.24.0 starting on stdio...", &pending);
+        dispatch("Cinder MCP server v2.24.0 starting on stdio...", &pending);
 
         assert!(
             tokio::time::timeout(Duration::from_millis(50), &mut rx)

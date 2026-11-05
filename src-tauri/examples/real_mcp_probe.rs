@@ -1,8 +1,8 @@
 // A one-off probe against the REAL repotory-mcp on this machine.
 //
-// Not a test: it needs Repotory installed, so it cannot be one. It is the
-// counterpart of the fake-server test — the same client code, the real
-// server.
+// Not a test: it needs the Cinder desktop app installed, so it cannot be
+// one. It is the counterpart of the fake-server test — the same client
+// code, the real server.
 //
 // Run it with: cargo run --example real_mcp_probe
 

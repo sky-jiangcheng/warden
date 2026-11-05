@@ -1,17 +1,17 @@
-# Repotory Agent
+# Warden
 
-**Repotory Agent**——一个跑在你自己机器上的本地 copilot（**不是** GitHub Copilot）：打开一个仓库，用本地模型聊这个项目，让 [Repotory](https://github.com/sky-jiangcheng/repotory) 负责"记得什么"。
+**Warden**——一个跑在你自己机器上的本地 copilot（**不是** GitHub Copilot）：打开一个仓库，用本地模型聊这个项目，让 [Cinder](https://github.com/sky-jiangcheng/repotory) 负责"记得什么"。
 
-**两个产品各担一件事**——Repotory 是**工作台**（浏览、编辑、**审批**、治理这份记忆）；Repotory Agent 是**助手**（读、聊、在 MCP 上执行命令）。共享同一份本地记忆、同一套协议，**审批永远在 Repotory 那边**。
+**两个产品各担一件事**——Cinder Desktop 是**工作台**（浏览、编辑、**审批**、治理这份记忆）；Warden 是**助手**（读、聊、在 MCP 上执行命令）。共享同一份本地记忆、同一套协议，**审批永远在 Cinder Desktop 那边**。
 
 > **当前阶段：Phase 2 — 模型 provider 可配置，聊天链路已通。** 应用可构建、可运行、能连上记忆层、能跟任何符合 OpenAI 兼容标准的模型对话。
 
 ## 这是什么
 
-一个**独立产品**，不是 Repotory 桌面端的一个界面。
+一个**独立产品**，不是 Cinder Desktop 的一个界面。
 
 它做四件事：**自己认出本机的仓库**、**跟模型聊当前项目**、**在白名单内执行命令**、
-**从 Repotory 取回记忆**。
+**从 Cinder 取回记忆**。
 模型由**你**挑——**任何符合 OpenAI 兼容标准的 provider 都能接**（OpenRouter、OpenAI、
 DeepSeek、硅基流动、vLLM、LM Studio，本机的 Ollama 也一样）；界面形态也由你定。
 
@@ -20,14 +20,14 @@ DeepSeek、硅基流动、vLLM、LM Studio，本机的 Ollama 也一样）；界
 | | 归属 | 负责什么 |
 |---|---|---|
 | copilot | Agent（本仓库） | 仓库发现 + 模型入口 + 命令执行 + 记忆面板 |
-| 记忆 | [Repotory](https://github.com/sky-jiangcheng/repotory) | 项目知识、会话交接、已批准的知识页 |
+| 记忆 | [Cinder](https://github.com/sky-jiangcheng/repotory) | 项目知识、会话交接、已批准的知识页 |
 | 协议 | MCP | Agent 只通过 `repotory_*` 工具读记忆，不直连数据库 |
 
-## 它与 Repotory 桌面端的关系
+## 它与 Cinder Desktop 的关系
 
 **两个产品，各担一件事**——不是主从，不是同一产品的两个界面。
 
-| | Repotory 桌面端 | Agent（copilot） |
+| | Cinder Desktop | Agent（copilot） |
 |---|---|---|
 | 定位 | **工作台** | **助手** |
 | 干什么 | 浏览、编辑、**审批**、治理 | 读、聊、执行 |
@@ -36,7 +36,7 @@ DeepSeek、硅基流动、vLLM、LM Studio，本机的 Ollama 也一样）；界
 | 关掉它 | 工作台没了 | copilot 照常跑 |
 | 仓库从哪来 | 它自己的扫描根 | **它自己的扫描根 + 自己的收藏清单** |
 
-**审批权留在人手里，而且不是靠约定维持的**：Repotory 的 MCP 工具面只注册了纯读的知识页工具
+**审批权留在人手里，而且不是靠约定维持的**：Cinder 的 MCP 工具面只注册了纯读的知识页工具
 （`repotory_wiki_search` / `repotory_wiki_read`），写侧的闸门是「把内容发布进检索是人的行为」。
 Agent 走 MCP，就自动站在闸门外。
 
@@ -61,17 +61,17 @@ Agent 走 MCP，就自动站在闸门外。
 
 ## 仓库怎么认的
 
-**copilot 自己扫盘，不经过 Repotory。** 给它几个要看的目录，它把里面的 git 仓库找出来，
+**copilot 自己扫盘，不经过 Cinder。** 给它几个要看的目录，它把里面的 git 仓库找出来，
 列成一张表，**由你判断哪些是你在做的**。
 
 - **仓库的判定**：目录里有 `.git` **目录**才算。worktree / submodule 的 `.git` 是**文件**，不算——
-  这条规则跟 Repotory 主仓的扫描器一致，两边不会对同一目录给出不同的答案。
+  这条规则跟 Cinder 主仓的扫描器一致，两边不会对同一目录给出不同的答案。
 - **两条回答**：「收藏」是「这是我的活」，「忽略」是「别再问」。
   **忽略过的仓库永远不再冒泡**——否则说一次「不」还要被问第二遍。
 - **新仓库冒泡**：扫到没处理过的仓库，窗口顶部滑出一个气泡问「是不是你的」，一个一个来
   （五个卡片一起问是表单，不是问题）。**窗口不在前台时改走系统通知，点通知把窗口叫回来。**
 - **后台常驻**：窗口关掉也在扫（每 5 分钟一轮）。这才叫机器人，不是一张报表。
-- **收藏清单存 copilot 自己**（app config 目录的 `repos.json`），**不写 Repotory 主库**：
+- **收藏清单存 copilot 自己**（app config 目录的 `repos.json`），**不写 Cinder 主库**：
   主库的 `projects.is_starred` 写入方是桌面端，MCP 工具面里没有孪生工具——
   要共享得先改主仓，那不是一个 copilot 该做的事。
 

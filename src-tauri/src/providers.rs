@@ -430,7 +430,7 @@ mod tests {
             name: "OpenRouter".to_string(),
             base_url: "https://openrouter.ai/api/v1".to_string(),
             default_model: Some("anthropic/claude-sonnet-4".to_string()),
-            headers: BTreeMap::from([("X-Title".to_string(), "Repotory Agent".to_string())]),
+            headers: BTreeMap::from([("X-Title".to_string(), "Warden".to_string())]),
             has_api_key: true,
         });
         store.save(&config).expect("save");

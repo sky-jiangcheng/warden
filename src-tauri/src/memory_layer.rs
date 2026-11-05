@@ -1,20 +1,20 @@
-// The memory layer is Repotory's MCP server, not a store of the Agent's own.
+// The memory layer is Cinder's MCP server, not a store of the Agent's own.
 //
-// The positioning is fixed: the Agent is the entry point, Repotory is the
+// The positioning is fixed: the Agent is the entry point, Cinder is the
 // memory, and MCP is the open protocol between them. This module answers the
 // two questions the first screen asks about that memory layer: is the server
 // installed here, and what can it actually do.
 //
 // Why there is NO tool list in this file. An earlier version carried a
 // hardcoded `const TOOLS: &[&str]` with the tool names the Agent would
-// drive. It had already drifted: it listed 7 names while Repotory's MCP
+// drive. It had already drifted: it listed 7 names while Cinder's MCP
 // surface actually registers 18, and the missing ones included
 // `repotory_wiki_search` / `repotory_wiki_read` (the only way to read
 // approved knowledge) and `repotory_ask` (evidence-backed answers). A
 // hardcoded list is worse than no list: it looks authoritative, so a reader
 // believes it is the contract.
 //
-// The single source of truth is Repotory's main repository, and the protocol
+// The single source of truth is Cinder's main repository, and the protocol
 // already has the answer — MCP's `tools/list`. This module asks the server.
 // The list in the payload is the server's answer, fetched over the wire, and
 // it changes when the server changes.
@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use crate::binaries::find_binary;
 use crate::mcp_client::{McpError, McpSession, ToolInfo};
 
-/// The MCP server binary Repotory ships.
+/// The MCP server binary Cinder ships.
 const MCP_BINARY: &str = "repotory-mcp";
 
 #[derive(Serialize)]

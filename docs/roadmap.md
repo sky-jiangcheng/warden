@@ -1,28 +1,28 @@
 # 总体路线
 
 > 来源：2026-10-28 的《总体路线》讨论稿。本页把它落成仓库里的可执行版本。
-> 定位与边界见 [product.md](product.md)；该页同时记录了路线与 Repotory 现状不一致之处。
+> 定位与边界见 [product.md](product.md)；该页同时记录了路线与 Cinder 现状不一致之处。
 
 ## 一张图
 
 ```
-Repotory MCP 记忆层        ↑ copilot（Agent，Tauri）           ↑ 本地模型（Ollama / llama.cpp / MLX）
+Cinder MCP 记忆层          ↑ copilot（Agent，Tauri）           ↑ 本地模型（Ollama / llama.cpp / MLX）
                           ↑ 工具层（Git / Shell / 文件索引 / 数据库 CLI）
                           ↑ 主流客户端（Claude Code / Cursor / VS Code / JetBrains）
 ```
 
 记忆层通过 MCP 开放；copilot 本身只做"本地模型入口 + 命令执行 + 记忆面板"。
-这里的 **copilot 指本产品**（Repotory Agent），**不是 GitHub Copilot**。
+这里的 **copilot 指本产品**（Warden），**不是 GitHub Copilot**。
 
-**它与 Repotory 桌面端是两个产品**：桌面端是**工作台**（浏览、编辑、审批、治理），
+**它与 Cinder Desktop 是两个产品**：桌面端是**工作台**（浏览、编辑、审批、治理），
 copilot 是**助手**（读、聊、执行）。两者共享记忆层与协议，不共享界面，也不共享生命周期。
 
 ## Phase 0：仓库与定位（1 周）—— 已完成
 
-把 copilot 从 Repotory 里明确分出来，做成**自己的产品**，但保持强绑定。
+把 copilot 从 Cinder 里明确分出来，做成**自己的产品**，但保持强绑定。
 
 - 仓库 `repotory-agent`（原名 `repotory-agent-shell`，2026-11-04 改名）；
-- 明确定位：**独立 copilot**，默认接 Repotory MCP；
+- 明确定位：**独立 copilot**，默认接 Cinder MCP；
 - 技术栈定死：Tauri v2 + Rust 后端 + TS 前端（**选 Tauri 的硬理由是它自带托盘**）；
 - 模型入口先选 Ollama，后续可加 llama.cpp / MLX；
 - 默认模型选 Qwen3 8B Q4，M4 Pro 上先跑通；
@@ -35,12 +35,12 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 
 ## Phase 1：MCP 记忆层打通（1–2 周）—— 数据链路已完成
 
-让 copilot 能稳定消费 Repotory 的记忆能力。
+让 copilot 能稳定消费 Cinder 的记忆能力。
 
-- 确认这些 MCP 工具稳定可用：`repotory_context`、`repotory_handoff`、`repotory_notes_search`、`repotory_projects_list`、`repotory_scan`（原路线中的 `repotory_pending` / `repotory_snapshot` 在 Repotory 里不存在，见 [product.md 待确认 1](product.md#1-repotory_pending-与-repotory_snapshot-在-repotory-里不存在已澄清)）；
+- 确认这些 MCP 工具稳定可用：`repotory_context`、`repotory_handoff`、`repotory_notes_search`、`repotory_projects_list`、`repotory_scan`（原路线中的 `repotory_pending` / `repotory_snapshot` 在 Cinder 里不存在，见 [product.md 待确认 1](product.md#1-repotory_pending-与-repotory_snapshot-在-cinder-里不存在已澄清)）；
 - **工具清单动态拉取**：用 MCP 的 `tools/list` 取代那份硬编码副本（它已经漂了，见 [product.md 记忆层契约](product.md#记忆层契约)）；
 - Agent 侧实现 MCP Client（**照抄两个 IDE 插件的路子**：拉起 `repotory-mcp` 子进程走 stdio）：
-  - 自动发现本地 Repotory MCP；
+  - 自动发现本地 Cinder MCP；
   - 启动时检查连接状态；
   - 失败时降级为普通聊天（**首屏要说清「没有 `repotory-mcp` 就没有记忆」，不能假装**）；
 - 最小验证：
@@ -76,7 +76,7 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 - **模型 provider 可配置**：任何符合 OpenAI 兼容标准的 provider 都能接；
 - 支持附加当前仓库路径；
 - 支持附加最近 git diff；
-- 支持附加 Repotory 检索到的上下文；
+- 支持附加 Cinder 检索到的上下文；
 - 所有模型请求走 Rust，不直接暴露端口。
 
 目标：打开 Shell，选一个仓库，就能和模型聊当前项目。
@@ -97,7 +97,7 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 - **流式聊天**：`tauri::ipc::Channel` 把增量推给前端，回答边写边显示；
 - **代理规则**：loopback 直连，其余走 `HTTPS_PROXY` / `HTTP_PROXY`（尊重 `NO_PROXY`）。
 
-**还没做的那一圈**：「附加仓库路径 / git diff / Repotory 上下文」与「回答写回
+**还没做的那一圈**：「附加仓库路径 / git diff / Cinder 上下文」与「回答写回
 `repotory_handoff`」还没接上。「当前仓库」这个概念 Phase 2.5 已经做出来了，
 所以这两件现在是**可以直接接线**的事（不再是前置阻塞）。
 写回侧的分层策略**已定**（见 [product.md](product.md) 的「待确认」第 5 条）：
@@ -105,10 +105,10 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 
 ## Phase 2.5：自己认仓库（1 周）—— 已完成
 
-copilot 从「Repotory 的一个前端」变成「本机的一个独立机器人」。
+copilot 从「Cinder 的一个前端」变成「本机的一个独立机器人」。
 
 - **自己扫盘**：按用户配置的根目录找 git 仓库（`.git` 是目录才算，worktree 的 `.git` 是文件不算），
-  **不经过 Repotory 的扫描器，也不读它的库**；
+  **不经过 Cinder 的扫描器，也不读它的库**；
 - **列表呈现**：仓库列成表，用户自己判断哪些是他要的；
 - **收藏与忽略**：两条路——「收藏」是「这是我的活」，「忽略」是「别再问」；
   **忽略过的仓库永远不再冒泡**，否则说一次「不」还要被问第二遍；
@@ -118,7 +118,7 @@ copilot 从「Repotory 的一个前端」变成「本机的一个独立机器人
 - **后台常驻**：窗口关掉也在扫（每 5 分钟一轮），这才叫机器人而不是一张报表。
 
 **收藏状态存 copilot 自己的 watchlist**（app config 目录的 `repos.json`），
-**不写 Repotory 主库**：主库的 `projects.is_starred` 写入方是桌面端（desktop-only），
+**不写 Cinder 主库**：主库的 `projects.is_starred` 写入方是桌面端（desktop-only），
 MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是一个 copilot 该做的事**。
 
 **没做**：把仓库上下文拼进模型请求（聊天时带上哪个仓库）、git 元信息（分支 / 最后提交时间）。
@@ -142,13 +142,13 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 
 ## Phase 4：记忆面板（1–2 周）
 
-让 Repotory 的价值在 UI 上可见。三个面板：
+让 Cinder 的价值在 UI 上可见。三个面板：
 
 - **当前上下文**：当前仓库、分支、最近 diff、已注入记忆；
-- **已批准知识**：`repotory_wiki_search` 的只读视图（**待批准的页在 copilot 里看不见——那是工作台的事**，见 [product.md 待确认 2](product.md#2-phase-4-的-approve--reject-与-adr-0015-人类闸门冲突已解决选项-c)）；
+- **已批准知识**：`repotory_wiki_search` 的只读视图（**待批准的页在 copilot 里看不见——那是工作台的事**，见 [product.md 待确认 2](product.md#2-phase-4-的-approve--reject-与-adr-0015-的人类闸门冲突已解决选项-c)）；
 - **跨会话记忆**：上次会话的结论、handoff 摘要、可继续任务。
 
-这一阶段是 copilot 和纯聊天工具拉开差距的关键。**面板是只读的**——审批永远在 Repotory 桌面端做。
+这一阶段是 copilot 和纯聊天工具拉开差距的关键。**面板是只读的**——审批永远在 Cinder Desktop 做。
 
 ## Phase 5：本地模型管理（1–2 周）
 
@@ -171,14 +171,14 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 - 可选 Homebrew cask；
 - App Store 版本默认不带模型，引导用户安装 Ollama；
 - 提供 `repotory-agent init` 一键初始化；
-- README 里写清楚：copilot 是入口，Repotory 是记忆层，MCP 是开放协议；
-- **写清版本耦合**：哪个 Agent 版本配哪个**记忆层契约版本**（契约版本是主仓 `internal/version/core.go` 的 `CoreVersion`，它答的是「工具面变了没」；不做能力协商的话这个耦合是隐式的，见 [product.md 待确认 4](product.md#4-与-repotory-的版本耦合)）。
+- README 里写清楚：copilot 是入口，Cinder 是记忆层，MCP 是开放协议；
+- **写清版本耦合**：哪个 Agent 版本配哪个**记忆层契约版本**（契约版本是主仓 `internal/version/core.go` 的 `CoreVersion`，它答的是「工具面变了没」；不做能力协商的话这个耦合是隐式的，见 [product.md 待确认 4](product.md#4-与-cinder-的版本耦合)）。
 
 ## 里程碑
 
 | 里程碑 | 完成标志 | 状态 |
 |---|---|---|
-| M1 | 能调用 Repotory MCP | 已完成（Phase 1） |
+| M1 | 能调用 Cinder MCP | 已完成（Phase 1） |
 | M1.5 | **能自己认仓库，并让用户判断关注谁** | **已完成（Phase 2.5）** |
 | M2 | 能和模型聊当前仓库 | 进行中（Phase 2：聊天链路已通，仓库上下文未接） |
 | M3 | 能安全执行 Git / Shell 命令 | 未开始 |

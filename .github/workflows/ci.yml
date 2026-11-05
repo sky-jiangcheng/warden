@@ -3,15 +3,15 @@
 # Rationale / 背景: this repository had no CI at all — the docs-mirror guard
 # existed as a script but nothing ran it, so the ZH/EN pair could drift silently
 # and nobody would find out until a reader did. This workflow is the gate: every
-# push to master and every pull request must pass all three gates before it can
+# push to master and every pull request must pass all four gates before it can
 # land.
 #
-# Three jobs, independent and parallel: a failure reads as "docs" / "frontend" /
-# "rust" in the checks list instead of hiding inside one red job.
+# Four jobs, independent and parallel: a failure reads as "docs" / "brand" /
+# "frontend" / "rust" in the checks list instead of hiding inside one red job.
 #
 # What this gate does NOT do: it does not build the Tauri application bundle.
 # Packaging (dmg/icns) needs platform SDKs and belongs in a release workflow
-# triggered by a tag, the same split the Repotory main repo uses.
+# triggered by a tag, the same split the Cinder main repo uses.
 name: CI
 
 on:
@@ -54,6 +54,34 @@ jobs:
 
       - name: Check the ZH/EN mirror
         run: npm run check:docs
+
+  # -------------------------------------------------------------- brand ----
+  # ADR-0049 renamed this product: the assistant is now Warden, the workbench
+  # it talks to is Cinder Desktop. The rename drew one line — the display
+  # layer moves, the interface layer is frozen — and both halves drift on
+  # their own: a display-layer miss shows the user a name that no longer
+  # exists, and an interface-layer "cleanup" breaks every MCP client config
+  # that was wired to `repotory-mcp` and the `repotory_*` tool names.
+  #
+  # So this gate checks both ends: the product name at every surface equals
+  # the one in brand.json, the frozen identifiers are still there verbatim,
+  # the old brand word is gone from the current surfaces, and the anchors
+  # pointing at renamed headings still point at a heading.
+  brand:
+    name: Brand drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check brand drift
+        run: npm run check:brand
 
   # ----------------------------------------------------------- frontend ----
   # `npm run build` runs `tsc && vite build`, so it type-checks first and then
