@@ -59,11 +59,23 @@ Phase 0 定下的五项，做到就算第一版：
 |---|---|---|
 | 技术栈 | Tauri v2 + Rust 后端 + TypeScript 前端 | 与 Repotory 桌面端（Wails/Go）不是同一套栈，两边共享的只有数据与协议 |
 | **选 Tauri 的理由** | **它自带托盘**（菜单栏图标 + 点击唤起）——Wails v2 没有托盘（`pkg/menu` 的 `TrayMenu` 是死类型，外部 `systray` 要 cgo）。**托盘已落地**（`src-tauri/src/tray.rs`）：左键唤回窗口，右键是 Show / Quit 菜单 | **Tauri 用系统 WebView，不是 Swift/AppKit 原生控件**——它是"独立进程 + 真托盘 + 真分发渠道"，**不是"原生 UI 框架"** |
-| 模型入口 | 先 Ollama；后续 llama.cpp / MLX 走插件式后端，不硬编码 | 后端注册表要先立住（`src-tauri/src/model_backends.rs`） |
+| 模型入口 | **任何符合 OpenAI 兼容标准的 provider**，不硬编码厂商 | 一套客户端通吃，本地与云端同一条路 |
+| 默认 provider | 本机 Ollama（`http://127.0.0.1:11434/v1`）——不需要账号也不需要 Key | 想要别的模型得自己配一个 provider |
 | 默认模型 | `qwen3:8b`（Qwen3 8B Q4），M4 Pro 上先跑通 | 换模型要用户自己在 Ollama 里 pull |
 | 记忆通道 | MCP，不自建 | Agent 依赖 Repotory 的 MCP 二进制存在 |
 
-模型后端的注册表已经按"插件式"立住了：Ollama 是唯一实现，`llama.cpp` 与 `MLX` 声明为 `planned`，UI 调一个命令拿到全部后端状态，新增后端不需要改前端。
+**模型入口在 Phase 2 已经放开**：provider 就是「一个 base URL」，
+OpenRouter / OpenAI / DeepSeek / 硅基流动 / vLLM / LM Studio / Ollama 的 `/v1` 面
+全都说同一套协议，所以**代码里只有一个客户端**（`src-tauri/src/llm.rs`），
+**加一家厂商是改配置不是改代码**。
+
+原先那个「本地运行时注册表」（`model_backends.rs`，Ollama 已实现、llama.cpp 与 MLX 声明为
+`planned`）**已经删掉**：它把「本地模型」和「云端模型」当成两类东西，
+于是每加一家厂商都要改代码。**本机 Ollama 现在走的就是远程 provider 那条路**
+（`http://127.0.0.1:11434/v1`）——「装了 Ollama」和「配了 OpenRouter」是同一件事。
+
+**API Key 存进系统钥匙串**（macOS Keychain / Windows 凭据管理器 / Linux Secret Service），
+provider 配置文件里只存「有没有 Key」。
 
 **「看用户喜好」的部分明确交给用户**：模型后端、界面形态都不由本仓决定。
 

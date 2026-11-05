@@ -15,10 +15,107 @@
           <h1 class="brand__name">Repotory Agent</h1>
           <p class="brand__tagline">本地 copilot · 记忆层由 Repotory MCP 提供</p>
         </div>
-        <span class="chip chip--quiet">local-only</span>
+        <span class="chip chip--quiet" id="brand-chip">检测中</span>
       </header>
 
       <main class="panels">
+        <section class="card card--chat">
+          <div class="card__head">
+            <h2 class="card__title">对话</h2>
+            <span class="chip" id="chat-chip">未就绪</span>
+          </div>
+          <p class="card__hint">
+            模型请求一律经 Rust 后端代理，前端不直连任何端口，也不持有 API Key。
+          </p>
+          <div class="chat__log" id="chat-log">
+            <p class="chat__empty" id="chat-empty">
+              选一个 provider 和模型，然后问点什么。
+            </p>
+          </div>
+          <form class="chat__form" id="chat-form">
+            <select class="field" id="chat-provider" aria-label="Provider"></select>
+            <select class="field" id="chat-model" aria-label="模型"></select>
+            <textarea
+              class="field field--grow"
+              id="chat-input"
+              rows="2"
+              placeholder="问点什么…"
+            ></textarea>
+            <button class="btn btn--primary" id="chat-send" type="submit">发送</button>
+          </form>
+          <p class="meta meta--error" id="chat-error"></p>
+        </section>
+
+        <section class="card">
+          <div class="card__head">
+            <h2 class="card__title">模型 Provider</h2>
+            <span class="chip" id="provider-chip">检测中</span>
+          </div>
+          <p class="card__hint">
+            任何符合 OpenAI 兼容标准的 provider 都能接：OpenRouter、OpenAI、
+            DeepSeek、硅基流动、vLLM、LM Studio，本机的 Ollama 也一样。
+            工具清单由服务端给出，本仓不抄一份。
+          </p>
+          <ul class="providers" id="providers"></ul>
+          <div class="provider__actions">
+            <button class="btn" id="provider-add" type="button">添加 provider</button>
+          </div>
+          <p class="meta meta--error" id="provider-error"></p>
+        </section>
+
+        <section class="card card--editor" id="provider-editor" hidden>
+          <div class="card__head">
+            <h2 class="card__title" id="editor-title">添加 provider</h2>
+            <span class="chip chip--quiet">API Key 存进系统钥匙串</span>
+          </div>
+          <form class="form" id="provider-form">
+            <label class="form__row">
+              <span class="form__label">名称</span>
+              <input class="field" id="field-name" type="text" placeholder="OpenRouter" />
+            </label>
+            <label class="form__row">
+              <span class="form__label">Base URL</span>
+              <input
+                class="field"
+                id="field-base-url"
+                type="text"
+                placeholder="https://openrouter.ai/api/v1"
+              />
+            </label>
+            <label class="form__row">
+              <span class="form__label">API Key</span>
+              <input
+                class="field"
+                id="field-api-key"
+                type="password"
+                placeholder="本机 Ollama 可留空"
+                autocomplete="off"
+              />
+            </label>
+            <label class="form__row">
+              <span class="form__label">模型</span>
+              <input
+                class="field"
+                id="field-model"
+                type="text"
+                placeholder="拉取模型列表后挑选"
+                list="model-options"
+              />
+            </label>
+            <datalist id="model-options"></datalist>
+            <div class="form__buttons">
+              <button class="btn" id="provider-fetch-models" type="button">
+                拉取模型列表
+              </button>
+              <button class="btn" id="provider-test" type="button">测试连接</button>
+              <button class="btn btn--primary" id="provider-save" type="submit">保存</button>
+              <button class="btn" id="provider-cancel" type="button">取消</button>
+            </div>
+          </form>
+          <p class="meta meta--error" id="editor-error"></p>
+          <p class="meta" id="editor-detail"></p>
+        </section>
+
         <section class="card">
           <div class="card__head">
             <h2 class="card__title">记忆层</h2>
@@ -34,17 +131,6 @@
           <button class="btn" id="memory-retry" type="button" hidden>
             重试连接
           </button>
-        </section>
-
-        <section class="card">
-          <div class="card__head">
-            <h2 class="card__title">模型运行时</h2>
-            <span class="chip" id="default-chip"></span>
-          </div>
-          <p class="card__hint">
-            模型请求一律经 Rust 后端代理，前端不直连任何端口。
-          </p>
-          <ul class="backends" id="backends"></ul>
         </section>
 
         <section class="card">
@@ -65,7 +151,7 @@
             <span class="chip chip--quiet">Phase 2–4</span>
           </div>
           <ul class="boundary">
-            <li><span class="boundary__name">聊天</span><span class="boundary__note">与本地模型就当前项目对话</span></li>
+            <li><span class="boundary__name">聊天</span><span class="boundary__note">与模型就当前项目对话</span></li>
             <li><span class="boundary__name">读项目</span><span class="boundary__note">附加仓库路径与最近 diff</span></li>
             <li><span class="boundary__name">执行命令</span><span class="boundary__note">白名单工具，写操作需确认</span></li>
             <li><span class="boundary__name">记忆面板</span><span class="boundary__note">已批准知识与跨会话结论</span></li>
@@ -76,7 +162,7 @@
 
       <footer class="milestones">
         <span class="milestone milestone--done">M1 接入 Repotory MCP</span>
-        <span class="milestone milestone--next">M2 与本地模型聊当前仓库</span>
+        <span class="milestone milestone--next">M2 与模型聊当前仓库</span>
         <span class="milestone">M3 安全执行命令</span>
         <span class="milestone">M4 跨会话记忆</span>
         <span class="milestone">M5 一键安装</span>

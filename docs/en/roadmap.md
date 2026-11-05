@@ -66,17 +66,40 @@ which is Phase 2's work — **with no model request there is nothing to put anyt
 Likewise "degrade to plain chat" waits for Phase 2: today a failed connection makes the first screen say "not answering" and offer a retry,
 instead of pretending the memory is still there.
 
-## Phase 2: the smallest usable chat shell (1–2 weeks)
+## Phase 2: the smallest usable chat shell (1–2 weeks) — done
 
 - A simple chat interface;
-- A Rust backend that proxies the local model API;
+- A Rust backend that proxies the model API;
 - Streaming output;
+- **Model providers are configurable**: anything that conforms to the OpenAI-compatible API works;
 - Attach the current repository path;
 - Attach the recent git diff;
 - Attach context retrieved from Repotory;
 - Every model request goes through Rust; no port is exposed to the frontend.
 
-Goal: open the copilot, pick a repository, talk to the local model about the project.
+Goal: open the copilot, pick a repository, talk to a model about the project.
+
+**Progress so far**: **the chat loop works and the model entry is open**.
+
+- **The provider configuration layer** (`src-tauri/src/providers.rs`): a provider is "a base URL".
+  The configuration lives in a JSON file in the app config directory, and the **API key lives in the
+  operating system's credential store** (macOS Keychain / Windows Credential Manager / Linux Secret
+  Service) — the config file holds only whether a key exists, because **a key in a plain file is a key
+  in every backup**;
+- **The OpenAI-compatible client** (`src-tauri/src/llm.rs`): **there is exactly one client in the
+  code**. OpenRouter, OpenAI, DeepSeek, SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all
+  speak the same thing, so adding a vendor is a configuration change rather than a code change;
+  **a local Ollama takes the same road** — "local model" and "hosted model" are not two kinds of thing;
+- **Fetching the model list**: the list comes from the server, **this repository keeps no copy**;
+- **Testing the connection**: a real minimal request, which proves the key, the endpoint and the model
+  all work — pinging the port proves none of them;
+- **Streaming chat**: `tauri::ipc::Channel` pushes the deltas to the frontend, so the answer appears
+  while it is written;
+- **The proxy rule**: loopback is reached directly, everything else goes through `HTTPS_PROXY` /
+  `HTTP_PROXY` (and `NO_PROXY` is honoured).
+
+**Still not done**: attaching the repository path / git diff / Repotory context, and writing the answer
+back with `repotory_handoff` — those need the notion of "the current repository" first.
 
 ## Phase 3: the tool execution layer (2–3 weeks)
 
@@ -135,7 +158,7 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 | Milestone | Done when | State |
 |---|---|---|
 | M1 | It can call Repotory MCP | done (Phase 1) |
-| M2 | It can talk to a local model about the current repository | next (Phase 2) |
+| M2 | It can talk to a model about the current repository | in progress (Phase 2: the chat loop works, the repository context is not wired) |
 | M3 | It can safely run Git / Shell commands | not started |
 | M4 | It can see and manage cross-session memory | not started |
 | M5 | It installs and initializes in one step | not started |

@@ -40,9 +40,12 @@ src-tauri/           后端（Rust）
   src/lib.rs         Tauri 命令装配与窗口生命周期
   src/mcp_client.rs  MCP stdio 客户端：initialize / tools/list / tools/call
   src/tray.rs        托盘（copilot 的唤回入口）：左键唤回窗口，右键 Show / Quit
-  src/model_backends.rs  模型运行时注册表（Ollama 已实现，llama.cpp / MLX 预留）
+  src/binaries.rs    在本机找可执行文件（只找，不探活）
+  src/providers.rs   provider 配置：持久化 + 钥匙串里的 API Key
+  src/llm.rs         OpenAI 兼容客户端：拉模型 / 聊天 / SSE 流式
+  src/provider_commands.rs  provider 命令背后的逻辑
   src/memory_layer.rs    记忆层（Repotory MCP）状态：连接 + 服务端给的工具清单
-  tests/             端到端测试（真管道 + fake MCP server）
+  tests/             端到端测试（真管道 + fake MCP server / fake LLM server）
 docs/                中文文档源
 docs/en/             英文文档源（与 docs/ 严格 1:1 镜像）
 scripts/             仓库守卫脚本
@@ -52,7 +55,17 @@ scripts/             仓库守卫脚本
 
 - **范围冻结**：Agent 不复制 Repotory 的检索逻辑、不直连它的数据库、不做完整 IDE、不做审批。这四条是产品边界，不是实现偏好——改边界要改 `docs/product.md`，不是改代码。
 - **不越审批闸门**：知识页的 approve / reject 永远在 Repotory 桌面端做。copilot 走 MCP，工具面里本来就没有这两个工具——**不要为了「让面板更完整」去加绕过它的路径**。
-- **模型请求一律走 Rust 后端**，前端不直连任何端口（Ollama、Repotory 服务都不例外）。
+- **模型请求一律走 Rust 后端**，前端不直连任何端口（Ollama、OpenRouter、Repotory 服务都不例外）。
+- **模型 provider 是「一个 base URL」，不是一份厂商清单。**
+  任何符合 OpenAI 兼容标准的 provider 都能接（OpenRouter / OpenAI / DeepSeek / 硅基流动 /
+  vLLM / LM Studio / Ollama 的 `/v1` 面），所以**代码里只有一个客户端**。
+  **加一家厂商是改配置不是改代码**——别为某家厂商开分支。
+  **本机 Ollama 和远程 provider 走同一条路**（「本地模型」与「云端模型」不是两类东西）。
+- **API Key 存系统钥匙串**（keyring crate），provider 配置文件里只存「有没有 Key」。
+  **别把 Key 落进 JSON**——明文落盘的密钥就是躺在每个备份里的密钥。
+  前端 payload 里也**永远只有 `hasApiKey`，没有 Key 本身**。
+- **模型清单由服务端给出，本仓不保留副本**——跟 MCP 工具清单同一条规矩。
+  拉到的清单不进配置文件（会漂），要用就现拉。
 - **双语手册必须同批改**：`docs/**` 与 `docs/en/**` 是镜像，只改一边 = 双语漂移。守卫是 `npm run check:docs`（`scripts/check-docs-mirror.mjs`），有意只出中文的文档要在脚本的 `ZH_ONLY` 白名单登记并附理由。
 - **提交规范**：conventional commits，`feat(scope): …` / `fix(scope): …` / `docs(scope): …` / `chore(scope): …`；一次提交只做一件事。
 - **MCP 工具名的真相在 Repotory 主仓库**，但**本仓库不再抄一份**：
@@ -88,6 +101,21 @@ scripts/             仓库守卫脚本
 - **现在真的会拉起进程了**（Phase 1）：MCP client 启动 `repotory-mcp` 子进程，
   一次握手然后长驻。**别把它改回「只探测不拉起」**——
   首屏要分三态：未安装 / 装了但连不上 / 已连接 + 服务端给的工具清单。
+- **Tauri 的 `#[tauri::command]` 函数必须定义在 `lib.rs` 里**：`generate_handler!` 展开成
+  `__cmd__<name>` 宏，而那些宏对定义它们的模块是私有的，跨模块引用报
+  "macro import is private"。逻辑可以放别的模块，**命令外壳必须挨着 handler 列表**。
+- **`reqwest` 的 TLS feature 叫 `rustls`**（0.13 已经删掉旧名 `rustls-tls`；
+  `rustls-no-provider` 则要自己装 crypto provider）。`reqwest` 已经在依赖树里，
+  但**只对 tauri 的 android/ios target 编译**——桌面端要用得自己写进 `Cargo.toml`。
+- **loopback 绝不能走代理**：开着 Clash 之类的代理时（`HTTP_PROXY` 全局设着），
+  代理是另一台机器，它的 `127.0.0.1` 是它自己——本机 Ollama 会被代理转出去然后失败。
+  `llm.rs` 里 loopback 直连、其余走 `HTTPS_PROXY`/`HTTP_PROXY`（尊重 `NO_PROXY`）。
+  **reqwest 默认的系统代理不绕过 loopback**，这条规则得自己实现。
+- **前端 `pick()` 找不到元素会抛异常**——它不是 `querySelector` 的别名。
+  **可选元素要用 `querySelector` 直取**：写成 `pick("#x")?.remove()` 里的 `?.` 根本轮不到
+  （可选链在函数调用之后才生效），元素一不存在就炸。
+- **流式输出用 `tauri::ipc::Channel`**（前端 `Channel` 类在 `@tauri-apps/api/core` 里），
+  不要用返回值——返回值要让前端等整个回答，流式就没了。
 - **后端注册表里 `planned` 的后端不能被前端当成可用**：UI 必须区分「可用 / 未安装 / 规划中」三态，否则会向用户承诺一个不存在的运行时。
 - **图标已换成 Repotory 品牌标识**（OS 应用域 = squircle，与主仓 `build/appicon.png` 像素级一致）。
   品牌图标三域规则（母图 → 品牌域 / OS 应用域 / 字形域）在 Repotory 主仓库，

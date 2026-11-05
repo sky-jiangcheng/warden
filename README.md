@@ -2,22 +2,23 @@
 
 A **copilot** that runs on your own machine: open a repository, talk to a local model about that project, and let [Repotory](https://github.com/sky-jiangcheng/repotory) remember what matters.
 
-> **Status: Phase 1 — the MCP memory layer is wired up and the data path works.** The app builds and runs, it reaches the memory layer; the chat loop lands in Phase 2.
+> **Status: Phase 2 — model providers are configurable and the chat loop works.** The app builds and runs, it reaches the memory layer, and it talks to any model behind an OpenAI-compatible API.
 
 ## What this is
 
 An **independent product**, not one more screen inside the Repotory desktop app.
 
-It does three things: **talks to a local model about the project you have open**, **runs commands
-within a whitelist**, and **pulls memory back from Repotory**. Which model backend you use is
-**your** choice (Ollama first, llama.cpp / MLX as pluggable backends), and so is the shape of the
+It does three things: **talks to a model about the project you have open**, **runs commands
+within a whitelist**, and **pulls memory back from Repotory**. Which model you use is **your**
+choice — **any provider that conforms to the OpenAI-compatible API works** (OpenRouter, OpenAI,
+DeepSeek, SiliconFlow, vLLM, LM Studio, and the local Ollama too) — and so is the shape of the
 interface.
 
 The three roles stay separate:
 
 | | Owner | What it owns |
 |---|---|---|
-| copilot | Agent (this repo) | Local model entry, command execution, memory panels |
+| copilot | Agent (this repo) | Model entry, command execution, memory panels |
 | memory | [Repotory](https://github.com/sky-jiangcheng/repotory) | Project knowledge, session handoffs, approved knowledge pages |
 | protocol | MCP | The Agent reads memory through `repotory_*` tools only — never the database |
 
@@ -44,14 +45,44 @@ pretending.
 
 ## What runs today
 
-- Detects the local model runtimes (Ollama first; llama.cpp / MLX reserved as pluggable backends)
+- **Configure a model provider**: type a base URL and any OpenAI-compatible service connects;
+  **fetch the model list** (whatever the server reports is what is shown — **this repository keeps no
+  copy of it**), **test the connection** (a real request, which proves the key, the endpoint and the
+  model all work), and pick a model
+- **Chat with the model**: the answer streams in as it is written
 - **Actually reaches the memory layer**: it launches the `repotory-mcp` child process over stdio by
   itself, does one MCP handshake, then fetches the **real tool list** with `tools/list` and shows it on
   the first screen (**18 tools** on this machine — **this repository keeps no copy of the list**; it
   shows whatever the server reports)
 - Shows the first-version product boundary and the milestones
 
-Chat, command execution and the memory panels do not exist yet — see the [roadmap](docs/roadmap.md).
+Command execution and the memory panels do not exist yet — see the [roadmap](docs/roadmap.md).
+
+## How model providers are reached
+
+**One protocol covers them all.** The OpenAI-compatible API is the de-facto standard here, and its
+shape is small:
+
+```
+GET  {base}/models            → {"data": [{"id": "..."}, ...]}
+POST {base}/chat/completions  → {"choices": [{"message": {"content": "..."}}]}
+POST {base}/chat/completions  (with "stream": true) → SSE lines, ended by data: [DONE]
+```
+
+OpenRouter, OpenAI, DeepSeek, SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all speak
+it, so **there is exactly one client in the code** — adding a vendor is a configuration change,
+not a code change.
+
+**A local Ollama takes the same road** (`http://127.0.0.1:11434/v1`): "local model" and "hosted
+model" are not two kinds of thing here, they are one shape.
+
+**The API key lives in the operating system's credential store** (macOS Keychain, Windows Credential
+Manager, Linux Secret Service); the config file holds only the fact that a key exists — **a key in
+a plain file is a key in every backup**.
+
+**Loopback never goes through a proxy**: a local provider is reached directly, everything else goes
+through `HTTPS_PROXY` / `HTTP_PROXY` (and `NO_PROXY` is honoured). That is not a preference — with
+a proxy running, the proxy is a different machine, and its `127.0.0.1` is itself.
 
 ## How the memory layer is reached
 
@@ -74,8 +105,9 @@ tools**.
 
 ## Stack
 
-Tauri v2, Rust backend, TypeScript frontend. Ollama is the first model entry point; the default
-model is `qwen3:8b` (Qwen3 8B Q4).
+Tauri v2, Rust backend, TypeScript frontend. The default provider is the local Ollama and the
+default model is `qwen3:8b` (Qwen3 8B Q4) — it needs no account and no key, so it works the moment
+it is installed.
 
 **Why Tauri**: it ships a **tray** (menu-bar icon, click to wake), which is what makes "close the
 workbench and an assistant is still there" possible at all. (Wails v2 has no tray — the `TrayMenu`

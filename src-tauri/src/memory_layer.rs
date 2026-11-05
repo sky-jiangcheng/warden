@@ -26,8 +26,8 @@
 use serde::Serialize;
 use std::path::PathBuf;
 
+use crate::binaries::find_binary;
 use crate::mcp_client::{McpError, McpSession, ToolInfo};
-use crate::model_backends::find_binary;
 
 /// The MCP server binary Repotory ships.
 const MCP_BINARY: &str = "repotory-mcp";

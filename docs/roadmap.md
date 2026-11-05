@@ -64,19 +64,39 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 同理，「失败时降级为普通聊天」也要等 Phase 2：现在失败时首屏直说「连不上」并给一个重试按钮，
 而不是假装记忆还在。
 
-## Phase 2：最小聊天 Shell（1–2 周）
+## Phase 2：最小聊天 Shell（1–2 周）—— 已完成
 
-一个能用的本地 Agent 入口。
+一个能用的 Agent 入口。
 
 - 前端做一个简单聊天界面；
-- Rust 后端代理本地模型 API；
+- Rust 后端代理模型 API；
 - 支持流式输出；
+- **模型 provider 可配置**：任何符合 OpenAI 兼容标准的 provider 都能接；
 - 支持附加当前仓库路径；
 - 支持附加最近 git diff；
 - 支持附加 Repotory 检索到的上下文；
 - 所有模型请求走 Rust，不直接暴露端口。
 
-目标：打开 Shell，选一个仓库，就能和本地模型聊当前项目。
+目标：打开 Shell，选一个仓库，就能和模型聊当前项目。
+
+**当前进度**：**聊天链路已完成，模型入口已放开**。
+
+- **provider 配置层**（`src-tauri/src/providers.rs`）：provider 就是「一个 base URL」。
+  配置落在 app config 目录的 JSON 里，**API Key 存进系统钥匙串**（macOS Keychain /
+  Windows 凭据管理器 / Linux Secret Service）——配置文件里只存「有没有 Key」，
+  **明文落盘的密钥就是躺在每个备份里的密钥**；
+- **OpenAI 兼容客户端**（`src-tauri/src/llm.rs`）：**代码里只有一个客户端**。
+  OpenRouter、OpenAI、DeepSeek、硅基流动、vLLM、LM Studio、Ollama 的 `/v1` 面
+  全都说同一套话，所以加一家厂商是改配置不是改代码；
+  **本机 Ollama 走同一条路**——「本地模型」和「云端模型」不是两类东西；
+- **拉取模型列表**：模型清单是服务端给的，**本仓不保留副本**；
+- **测试连接**：真发一次最小请求，验 key / 端点 / 模型三者都通——
+  只 ping 端口证明不了任何一件；
+- **流式聊天**：`tauri::ipc::Channel` 把增量推给前端，回答边写边显示；
+- **代理规则**：loopback 直连，其余走 `HTTPS_PROXY` / `HTTP_PROXY`（尊重 `NO_PROXY`）。
+
+**还没做的那一圈**：「附加仓库路径 / git diff / Repotory 上下文」与「回答写回
+`repotory_handoff`」还没接上——它们要先把「当前仓库」这个概念做出来。
 
 ## Phase 3：工具执行层（2–3 周）
 
@@ -133,7 +153,7 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 | 里程碑 | 完成标志 | 状态 |
 |---|---|---|
 | M1 | 能调用 Repotory MCP | 已完成（Phase 1） |
-| M2 | 能和本地模型聊当前仓库 | 下一个（Phase 2） |
+| M2 | 能和模型聊当前仓库 | 进行中（Phase 2：聊天链路已通，仓库上下文未接） |
 | M3 | 能安全执行 Git / Shell 命令 | 未开始 |
 | M4 | 能看到并管理跨会话记忆 | 未开始 |
 | M5 | 能一键安装、一键初始化 | 未开始 |

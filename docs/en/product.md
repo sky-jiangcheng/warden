@@ -5,13 +5,13 @@
 
 ## One line
 
-**Repotory Agent is an independent product: a copilot that runs on your own machine — not another Agent platform, and not one more screen inside the Repotory desktop app.** It turns "talk to a local model about the project in front of you" into a window, and leaves "what to remember" to Repotory.
+**Repotory Agent is an independent product: a copilot that runs on your own machine — not another Agent platform, and not one more screen inside the Repotory desktop app.** It turns "talk to a model about the project in front of you" into a window, and leaves "what to remember" to Repotory.
 
 ## Three roles, three hard boundaries
 
 | Role | Owner | Owns | Does not own |
 |---|---|---|---|
-| copilot | Agent (this repo) | Local model entry, command execution, memory panels | Retrieval ranking, project knowledge storage, **approval** |
+| copilot | Agent (this repo) | Model entry, command execution, memory panels | Retrieval ranking, project knowledge storage, **approval** |
 | memory | [Repotory](https://github.com/sky-jiangcheng/repotory) | Project context, session handoffs, approved knowledge pages | Deciding what the copilot looks like |
 | protocol | MCP | The only channel between the Agent and the memory layer | —— |
 
@@ -50,7 +50,7 @@ Five capabilities, fixed by Phase 0. Together they are version one:
 
 | Capability | Means | Done when |
 |---|---|---|
-| Chat | Talk to the local model about the current project, streamed | Pick a repository + ask a question → get an answer |
+| Chat | Talk to the model about the current project, streamed | Pick a repository + ask a question → get an answer |
 | Read project | Attach the repository path, the recent git diff, context retrieved from Repotory | Every attachment is selectable and previewable |
 | Run commands | Whitelisted tool execution; writes need human confirmation | The full command is shown, dangerous ones are blocked by default, every run is logged |
 | Memory panels | Current context / approved knowledge / cross-session conclusions | All three panels show real data |
@@ -62,13 +62,27 @@ Five capabilities, fixed by Phase 0. Together they are version one:
 |---|---|---|
 | Stack | Tauri v2, Rust backend, TypeScript frontend | Not the same stack as the Repotory desktop app (Wails/Go). The two share data and protocol, nothing else |
 | **Why Tauri** | **it ships a tray** (menu-bar icon, click to wake) — Wails v2 has no tray (the `TrayMenu` in `pkg/menu` is a dead type, and the external `systray` needs cgo). **The tray is in place** (`src-tauri/src/tray.rs`): left click wakes the window, right click opens the Show / Quit menu | **Tauri uses the system WebView, not Swift/AppKit native controls** — it is "an independent process + a real tray + a real distribution channel", **not "a native UI framework"** |
-| Model entry | Ollama first; llama.cpp / MLX arrive as pluggable backends, never hard-coded | The backend registry has to exist up front (`src-tauri/src/model_backends.rs`) |
+| Model entry | **Any provider that conforms to the OpenAI-compatible API**, no vendor hard-coded | One client covers them all; local and hosted take the same road |
+| Default provider | the local Ollama (`http://127.0.0.1:11434/v1`) — no account, no key | Another model means configuring another provider |
 | Default model | `qwen3:8b` (Qwen3 8B Q4), proven on an M4 Pro first | Switching models means the user pulls it in Ollama |
 | Memory channel | MCP, never a private store | The Agent depends on Repotory's MCP binary being present |
 
-The model backend registry is already shaped for "pluggable": Ollama is the only implementation, `llama.cpp` and `MLX` are declared `planned`, and the UI asks one command for the whole list — adding a backend does not touch the frontend.
+**The model entry is open in Phase 2**: a provider is "a base URL". OpenRouter, OpenAI, DeepSeek,
+SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all speak the same protocol, so **there is
+exactly one client in the code** (`src-tauri/src/llm.rs`) and **adding a vendor is a configuration
+change, not a code change**.
 
-**Everything the user is allowed to have a preference about** — the model backend, the shape of the interface — is left to the user.
+The old "local runtime registry" (`model_backends.rs`, with Ollama implemented and `llama.cpp` / `MLX`
+declared `planned`) is **deleted**: it treated "local model" and "hosted model" as two kinds of thing,
+so every new vendor meant a code change. **The local Ollama now takes the same road as a remote
+provider** (`http://127.0.0.1:11434/v1`) — "Ollama is installed" and "OpenRouter is configured" are
+the same kind of fact.
+
+**The API key lives in the operating system's credential store** (macOS Keychain, Windows Credential
+Manager, Linux Secret Service); the provider config file holds only whether a key exists.
+
+**Everything the user is allowed to have a preference about** — which model, the shape of the
+interface — is left to the user.
 
 **The wake-up entry is in place, but the overall shape of the wake-up interaction is still undecided**: the tray icon is the current entry (left click wakes the window, right click opens the menu), and the first screen carries a "wake-up entry" card that shows in real time whether the tray is there — macOS does not let an external process query somebody else's menu-bar status item, so "is the tray actually there" can only be answered by the app itself (`tray.installed`), and when the tray fails to install the log carries a `[tray] ...` line.
 **A global shortcut and an always-visible window are not built yet** — they wait for user feedback.

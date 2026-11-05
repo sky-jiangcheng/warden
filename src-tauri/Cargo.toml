@@ -38,6 +38,27 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# The model client speaks the OpenAI-compatible API (GET {base}/models and
+# POST {base}/chat/completions), which every provider the user might pick
+# exposes: OpenRouter, OpenAI, DeepSeek, SiliconFlow, vLLM, LM Studio and
+# Ollama's `/v1` surface. One client, no vendor-specific code.
+#
+# The `rustls` feature is the TLS backend. The name matters: reqwest 0.13
+# dropped the old `rustls-tls` spelling, and `rustls-no-provider` would need
+# a crypto provider installed by hand. `rustls` pulls aws-lc-rs, which builds
+# with the C compiler the runners already have.
+reqwest = { version = "0.13", features = ["json", "stream", "rustls"] }
+
+# API keys live in the operating system's credential store (macOS Keychain,
+# Windows Credential Manager, Linux Secret Service) rather than in the
+# provider config file. The feature set covers all three; a build for one
+# platform still compiles the others' code paths as no-ops.
+keyring = { version = "4", features = [
+    "apple-native-keyring-store",
+    "windows-native-keyring-store",
+    "zbus-secret-service-keyring-store",
+] }
+
 # The MCP client drives a child process over stdio. `tokio::time::timeout`
 # bounds every request (a wedged server must not leave a caller pending
 # forever) and `tokio::sync::oneshot` carries each answer from the reader
@@ -45,6 +66,10 @@ serde_json = "1"
 # `sync`, so this adds no new crate to the tree — only the `time` feature and
 # `macros` for `#[tokio::test]`.
 tokio = { version = "1", features = ["time", "macros"] }
+
+# The model client consumes the HTTP response as a byte stream, so the answer
+# arrives in pieces as it is written rather than all at once at the end.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [features]
 # The test fixtures — the fake MCP server the end-to-end test drives.
@@ -90,6 +115,17 @@ strip = true
 [[bin]]
 name = "fake-mcp-server"
 path = "tests/support/fake_mcp_server.rs"
+required-features = ["test-fixtures"]
+test = false
+bench = false
+
+# The fake OpenAI-compatible server the end-to-end test drives. Same
+# reasoning as the fake MCP server above: it is a binary so that
+# `CARGO_BIN_EXE_<name>` is set, and it is gated behind the feature so it
+# never reaches a shipped build.
+[[bin]]
+name = "fake-llm-server"
+path = "tests/support/fake_llm_server.rs"
 required-features = ["test-fixtures"]
 test = false
 bench = false

@@ -2,20 +2,21 @@
 
 一个跑在你自己机器上的 **copilot**：打开一个仓库，用本地模型聊这个项目，让 [Repotory](https://github.com/sky-jiangcheng/repotory) 负责"记得什么"。
 
-> **当前阶段：Phase 1 — MCP 记忆层打通，数据链路已通。** 应用可构建、可运行、能连上记忆层；聊天链路在 Phase 2 落地。
+> **当前阶段：Phase 2 — 模型 provider 可配置，聊天链路已通。** 应用可构建、可运行、能连上记忆层、能跟任何符合 OpenAI 兼容标准的模型对话。
 
 ## 这是什么
 
 一个**独立产品**，不是 Repotory 桌面端的一个界面。
 
-它做三件事：**跟本地模型聊当前项目**、**在白名单内执行命令**、**从 Repotory 取回记忆**。
-模型后端由**你**挑（Ollama 起，llama.cpp / MLX 走插件式后端）；界面形态也由你定。
+它做三件事：**跟模型聊当前项目**、**在白名单内执行命令**、**从 Repotory 取回记忆**。
+模型由**你**挑——**任何符合 OpenAI 兼容标准的 provider 都能接**（OpenRouter、OpenAI、
+DeepSeek、硅基流动、vLLM、LM Studio，本机的 Ollama 也一样）；界面形态也由你定。
 
 职责分得很清：
 
 | | 归属 | 负责什么 |
 |---|---|---|
-| copilot | Agent（本仓库） | 本地模型入口 + 命令执行 + 记忆面板 |
+| copilot | Agent（本仓库） | 模型入口 + 命令执行 + 记忆面板 |
 | 记忆 | [Repotory](https://github.com/sky-jiangcheng/repotory) | 项目知识、会话交接、已批准的知识页 |
 | 协议 | MCP | Agent 只通过 `repotory_*` 工具读记忆，不直连数据库 |
 
@@ -40,13 +41,39 @@ Agent 走 MCP，就自动站在闸门外。
 
 ## 现在能跑什么
 
-- 探测本机的模型运行时（Ollama 优先，llama.cpp / MLX 预留为插件式后端）
+- **配置模型 provider**：填一个 base URL 就能接上任何 OpenAI 兼容的服务；
+  **拉取模型列表**（服务端给什么就显示什么，**本仓不抄一份清单**）、
+  **测试连接**（真发一次请求，验 key / 端点 / 模型三者都通）、选定模型
+- **跟模型聊天**：回答是流式出来的，边写边显示
 - **真的连上记忆层**：自动拉起 `repotory-mcp` 子进程走 stdio，做一次 MCP 握手，
   然后用 `tools/list` 拿服务端报的**真实工具清单**并在首屏列出来
   （本机实测 18 个工具——**本仓不抄一份清单**，服务端给什么就显示什么）
 - 展示第一版产品边界与里程碑
 
-聊天、命令执行、记忆面板都还没有 —— 见[路线](docs/roadmap.md)。
+命令执行、记忆面板还没有 —— 见[路线](docs/roadmap.md)。
+
+## 模型 provider 怎么接的
+
+**一套协议通吃**：OpenAI 兼容的 API 是这件事的事实标准，形状很小——
+
+```
+GET  {base}/models            → {"data": [{"id": "..."}, ...]}
+POST {base}/chat/completions  → {"choices": [{"message": {"content": "..."}}]}
+POST {base}/chat/completions  （"stream": true）→ SSE 行，data: [DONE] 收尾
+```
+
+OpenRouter、OpenAI、DeepSeek、硅基流动、vLLM、LM Studio、Ollama 的 `/v1` 面
+全都说这套话，所以**代码里只有一个客户端**——加一家厂商是改配置，不是改代码。
+
+**本机的 Ollama 走同一条路**（`http://127.0.0.1:11434/v1`）：
+「本地模型」和「云端模型」在这里不是两类东西，是同一个形状。
+
+**API Key 存进系统钥匙串**（macOS Keychain / Windows 凭据管理器 / Linux Secret Service），
+配置文件里只存「有没有 Key」这一个事实——**明文落盘的密钥就是躺在每个备份里的密钥**。
+
+**loopback 不走代理**：本机 provider 直连，其余走 `HTTPS_PROXY` / `HTTP_PROXY`（并尊重
+`NO_PROXY`）。这不是偏好——开着 Clash 之类的代理时，代理是另一台机器，
+它连 `127.0.0.1` 连的是它自己。
 
 ## 记忆层怎么接的
 
@@ -67,7 +94,8 @@ copilot 的等价宿主是 Rust 侧。
 
 ## 技术栈
 
-Tauri v2 + Rust 后端 + TypeScript 前端。模型入口先选 Ollama，默认模型 `qwen3:8b`（Qwen3 8B Q4）。
+Tauri v2 + Rust 后端 + TypeScript 前端。默认 provider 是本机 Ollama，默认模型
+`qwen3:8b`（Qwen3 8B Q4）——它不需要账号也不需要 Key，装好就能用。
 
 **为什么是 Tauri**：它自带**托盘**（菜单栏图标 + 点击唤起），所以「关掉工作台还有一个助手在」
 是做得出来的。（Wails v2 没有托盘，`pkg/menu` 里的

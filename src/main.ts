@@ -1,21 +1,42 @@
 // Repotory Agent — first screen.
 //
 // The window asks the Rust side for one status payload and renders it. The
-// frontend owns no runtime knowledge: which model backends exist, and whether
-// the Repotory MCP server is installed, are both facts the backend owns.
+// frontend owns no runtime knowledge: which model providers exist, and
+// whether the Repotory MCP server is installed, are both facts the backend
+// owns.
 //
-// The memory layer's tool list is the sharpest case of that rule. The server
-// advertises its tools over MCP's `tools/list`; the Rust client fetches that
-// list over the wire; this file draws whatever arrived. No tool name is
-// written down here — a copy would drift, and a drifted copy reads like a
-// contract.
+// The two lists this screen draws are both fetched, never written down here:
+//
+//   * the memory layer's tool list comes over MCP's `tools/list`;
+//   * a provider's model list comes over the OpenAI-compatible `/models`.
+//
+// A copy would drift, and a drifted copy reads like a contract.
+//
+// The API key never reaches this file. It is typed into a password field,
+// handed straight to the Rust side, and stored in the operating system's
+// credential store — this window only ever learns WHETHER a key exists.
 import { invoke } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
 
-type BackendStatus = {
+type Provider = {
   id: string;
-  available: boolean;
-  path: string | null;
-  state: string;
+  name: string;
+  baseUrl: string;
+  defaultModel: string | null;
+  headers: Record<string, string>;
+  hasApiKey: boolean;
+  active: boolean;
+};
+
+type ProviderList = {
+  providers: Provider[];
+  activeProviderId: string | null;
+  problem: string | null;
+};
+
+type ModelInfo = {
+  id: string;
+  name: string | null;
 };
 
 /// One tool the MCP server advertised.
@@ -42,19 +63,32 @@ type TrayStatus = {
 };
 
 type ShellStatus = {
-  backends: BackendStatus[];
-  defaultBackend: string;
-  defaultModel: string;
+  providers: ProviderList;
   memory: MemoryStatus;
   tray: TrayStatus;
 };
 
-const BACKEND_LABELS: Record<string, string> = {
-  ollama: "Ollama",
-  "llama.cpp": "llama.cpp",
-  mlx: "MLX",
+type ConnectionTest = {
+  ok: boolean;
+  detail: string;
+  model: string;
+  latencyMs: number;
 };
 
+/// One streamed piece of an answer.
+type ChatChunk = {
+  delta: string;
+  text: string;
+  done: boolean;
+  error: string | null;
+};
+
+/// The one element with this selector, or an error.
+///
+/// The error is the point: a missing element means the screen and the code
+/// disagree about what exists, and that is a bug worth hearing about rather
+/// than a null to guard against. For an element that is legitimately
+/// optional, use `querySelector` directly.
 function pick<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
   if (!found) throw new Error(`missing element: ${selector}`);
@@ -66,6 +100,15 @@ function setChip(el: HTMLElement, text: string, variant: "ok" | "warn" | "quiet"
   el.classList.remove("chip--ok", "chip--warn", "chip--quiet");
   el.classList.add(`chip--${variant}`);
 }
+
+/// The state the editor keeps while it is open.
+///
+/// A new provider has no id yet — the Rust side derives one from the name
+/// when it is saved.
+let editingProviderId: string | null = null;
+
+/// The provider list as the backend last reported it.
+let currentProviders: Provider[] = [];
 
 /// Render the memory layer's state.
 ///
@@ -124,48 +167,212 @@ function renderMemory(status: ShellStatus) {
   }
 }
 
-function renderBackends(status: ShellStatus) {
-  const list = pick<HTMLElement>("#backends");
-  const defaultChip = pick<HTMLElement>("#default-chip");
+/// Render the provider list.
+///
+/// The list is rebuilt from scratch on every render: a save re-invokes the
+/// list command, and appending to a stale list would double every row.
+function renderProviders(list: ProviderList) {
+  currentProviders = list.providers;
 
-  // The list is rebuilt from scratch on every render: a retry re-invokes the
-  // status command, and appending to a stale list would double every row.
-  list.replaceChildren();
+  const chip = pick<HTMLElement>("#provider-chip");
+  const container = pick<HTMLElement>("#providers");
+  const error = pick<HTMLElement>("#provider-error");
 
-  for (const backend of status.backends) {
-    const item = document.createElement("li");
-    item.className = "backend";
+  container.replaceChildren();
+  error.textContent = "";
 
-    const name = document.createElement("span");
-    name.className = "backend__name";
-    name.textContent = BACKEND_LABELS[backend.id] ?? backend.id;
-
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    if (backend.state === "planned") {
-      setChip(chip, "规划中", "quiet");
-    } else if (backend.available) {
-      setChip(chip, "可用", "ok");
-    } else {
-      setChip(chip, "未安装", "warn");
-    }
-
-    item.append(name, chip);
-
-    if (backend.path) {
-      const path = document.createElement("span");
-      path.className = "backend__path";
-      path.textContent = backend.path;
-      item.appendChild(path);
-    }
-
-    list.appendChild(item);
+  if (list.problem) {
+    setChip(chip, "配置有问题", "warn");
+    error.textContent = list.problem;
+  } else if (list.providers.length === 0) {
+    setChip(chip, "未配置", "warn");
+  } else {
+    const active = list.providers.find((p) => p.active);
+    setChip(
+      chip,
+      active ? `${active.name} · ${active.defaultModel ?? "未选模型"}` : "未选中",
+      active ? "ok" : "warn",
+    );
   }
 
-  const isDefaultReady = status.backends.some(
-    (b) => b.id === status.defaultBackend && b.available,
+  for (const provider of list.providers) {
+    const item = document.createElement("li");
+    item.className = "provider";
+
+    const name = document.createElement("span");
+    name.className = "provider__name";
+    name.textContent = provider.name;
+
+    const url = document.createElement("span");
+    url.className = "provider__url";
+    url.textContent = provider.baseUrl;
+
+    const row = document.createElement("div");
+    row.className = "provider__row";
+    row.append(name, url);
+
+    const tags = document.createElement("div");
+    tags.className = "provider__tags";
+
+    if (provider.active) {
+      const activeTag = document.createElement("span");
+      activeTag.className = "chip chip--ok";
+      activeTag.textContent = "使用中";
+      tags.appendChild(activeTag);
+    }
+    if (provider.hasApiKey) {
+      const keyTag = document.createElement("span");
+      keyTag.className = "chip chip--quiet";
+      keyTag.textContent = "有 Key";
+      tags.appendChild(keyTag);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "provider__actions-inline";
+
+    if (!provider.active) {
+      actions.appendChild(
+        makeButton("设为使用中", () => {
+          void invoke<ProviderList>("provider_set_active", { id: provider.id }).then(
+            (list: ProviderList) => renderProviders(list),
+            (err: unknown) => {
+              pick<HTMLElement>("#provider-error").textContent = String(err);
+            },
+          );
+        }),
+      );
+    }
+    actions.appendChild(
+      makeButton("编辑", () => openEditor(provider)),
+    );
+    actions.appendChild(
+      makeButton("删除", () => {
+        void invoke<ProviderList>("provider_remove", { id: provider.id }).then(
+          (list: ProviderList) => renderProviders(list),
+          (err: unknown) => {
+            pick<HTMLElement>("#provider-error").textContent = String(err);
+          },
+        );
+      }),
+    );
+
+    row.appendChild(tags);
+    row.appendChild(actions);
+    item.appendChild(row);
+    container.appendChild(item);
+  }
+
+  renderModelPickers();
+}
+
+/// A small text button.
+function makeButton(label: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.className = "btn btn--tight";
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+/// Fill the provider and model pickers in the chat form.
+function renderModelPickers() {
+  const providerSelect = pick<HTMLSelectElement>("#chat-provider");
+  const modelSelect = pick<HTMLSelectElement>("#chat-model");
+
+  const previousProvider = providerSelect.value;
+  const previousModel = modelSelect.value;
+
+  providerSelect.replaceChildren();
+  modelSelect.replaceChildren();
+
+  for (const provider of currentProviders) {
+    const option = document.createElement("option");
+    option.value = provider.id;
+    option.textContent = provider.name;
+    providerSelect.appendChild(option);
+  }
+
+  const active = currentProviders.find((p) => p.active) ?? currentProviders[0];
+  if (!active) {
+    providerSelect.disabled = true;
+    modelSelect.disabled = true;
+    setChip(pick<HTMLElement>("#chat-chip"), "没有 provider", "warn");
+    return;
+  }
+  providerSelect.disabled = false;
+  modelSelect.disabled = false;
+
+  // Keep the user's selection when it is still there; otherwise fall back to
+  // the active provider.
+  if (currentProviders.some((p) => p.id === previousProvider)) {
+    providerSelect.value = previousProvider;
+  } else {
+    providerSelect.value = active.id;
+  }
+
+  const chosen = currentProviders.find((p) => p.id === providerSelect.value) ?? active;
+  if (chosen.defaultModel) {
+    const option = document.createElement("option");
+    option.value = chosen.defaultModel;
+    option.textContent = chosen.defaultModel;
+    modelSelect.appendChild(option);
+    if (previousModel === chosen.defaultModel) {
+      modelSelect.value = previousModel;
+    }
+  }
+
+  setChip(
+    pick<HTMLElement>("#chat-chip"),
+    chosen.defaultModel ? chosen.name : "未选模型",
+    chosen.defaultModel ? "ok" : "warn",
   );
-  setChip(defaultChip, `默认 ${status.defaultModel}`, isDefaultReady ? "ok" : "warn");
+}
+
+/// Open the editor for a provider, or for a new one.
+function openEditor(provider?: Provider) {
+  const editor = pick<HTMLElement>("#provider-editor");
+  editor.hidden = false;
+
+  editingProviderId = provider?.id ?? null;
+  pick<HTMLElement>("#editor-title").textContent = provider
+    ? `编辑 ${provider.name}`
+    : "添加 provider";
+  pick<HTMLInputElement>("#field-name").value = provider?.name ?? "";
+  pick<HTMLInputElement>("#field-base-url").value = provider?.baseUrl ?? "";
+  pick<HTMLInputElement>("#field-model").value = provider?.defaultModel ?? "";
+  // The stored key is never sent to this window, so the field starts empty.
+  // Leaving it empty keeps the stored key; a new value replaces it.
+  pick<HTMLInputElement>("#field-api-key").value = "";
+  pick<HTMLElement>("#editor-error").textContent = "";
+  pick<HTMLElement>("#editor-detail").textContent = provider?.hasApiKey
+    ? "已存有 API Key —— 留空则保持不变"
+    : "";
+}
+
+/// The values the editor currently holds.
+function editorValues() {
+  return {
+    id: editingProviderId ?? "",
+    name: pick<HTMLInputElement>("#field-name").value.trim(),
+    baseUrl: pick<HTMLInputElement>("#field-base-url").value.trim(),
+    apiKey: pick<HTMLInputElement>("#field-api-key").value,
+    defaultModel: pick<HTMLInputElement>("#field-model").value.trim(),
+  };
+}
+
+/// Append a line to the chat log.
+function appendChat(role: "user" | "assistant", text: string): HTMLElement {
+  const log = pick<HTMLElement>("#chat-log");
+  // The placeholder is optional: it is gone after the first message.
+  log.querySelector("#chat-empty")?.remove();
+
+  const bubble = document.createElement("div");
+  bubble.className = `chat__msg chat__msg--${role}`;
+  bubble.textContent = text;
+  log.appendChild(bubble);
+  log.scrollTop = log.scrollHeight;
+  return bubble;
 }
 
 /// Render the tray (the wake-up entry) state.
@@ -189,11 +396,52 @@ function renderTray(status: ShellStatus) {
   }
 }
 
+/// Send a message to the model and stream the answer back.
+async function sendMessage(text: string) {
+  const error = pick<HTMLElement>("#chat-error");
+  error.textContent = "";
+
+  const providerId = pick<HTMLSelectElement>("#chat-provider").value;
+  const model = pick<HTMLSelectElement>("#chat-model").value;
+  const send = pick<HTMLButtonElement>("#chat-send");
+
+  appendChat("user", text);
+  const bubble = appendChat("assistant", "");
+
+  send.disabled = true;
+  const channel = new Channel<ChatChunk>();
+  channel.onmessage = (chunk: ChatChunk) => {
+    if (chunk.error) {
+      error.textContent = chunk.error;
+      bubble.textContent = chunk.text || "（没有内容）";
+      return;
+    }
+    bubble.textContent = chunk.text;
+    const log = pick<HTMLElement>("#chat-log");
+    log.scrollTop = log.scrollHeight;
+  };
+
+  try {
+    await invoke("chat_send", {
+      channel,
+      message: text,
+      model: model || null,
+      providerId,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    error.textContent = detail;
+    if (!bubble.textContent) bubble.textContent = "（没有内容）";
+  } finally {
+    send.disabled = false;
+  }
+}
+
 async function main() {
   const refresh = async () => {
     const status = await invoke<ShellStatus>("shell_status");
     renderMemory(status);
-    renderBackends(status);
+    renderProviders(status.providers);
     renderTray(status);
   };
 
@@ -216,6 +464,123 @@ async function main() {
       const detail = error instanceof Error ? error.message : String(error);
       pick<HTMLElement>("#memory-error").textContent = detail;
     });
+  });
+
+  // --- the provider editor ---------------------------------------------
+
+  pick<HTMLButtonElement>("#provider-add").addEventListener("click", () => {
+    openEditor();
+  });
+
+  pick<HTMLButtonElement>("#provider-cancel").addEventListener("click", () => {
+    pick<HTMLElement>("#provider-editor").hidden = true;
+  });
+
+  pick<HTMLFormElement>("#provider-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const values = editorValues();
+    const editorError = pick<HTMLElement>("#editor-error");
+    const editorDetail = pick<HTMLElement>("#editor-detail");
+    editorError.textContent = "";
+    editorDetail.textContent = "";
+
+    void invoke<ProviderList>("provider_save", {
+      input: {
+        id: values.id,
+        name: values.name,
+        baseUrl: values.baseUrl,
+        defaultModel: values.defaultModel || null,
+        apiKey: values.apiKey || null,
+        // The key is only written when one was typed. An empty field on an
+        // existing provider means "keep the stored one".
+        saveApiKey: values.apiKey.length > 0,
+      },
+    }).then(
+      (list: ProviderList) => {
+        pick<HTMLElement>("#provider-editor").hidden = true;
+        renderProviders(list);
+      },
+      (err: unknown) => {
+        editorError.textContent = err instanceof Error ? err.message : String(err);
+      },
+    );
+  });
+
+  pick<HTMLButtonElement>("#provider-fetch-models").addEventListener("click", () => {
+    const values = editorValues();
+    const editorError = pick<HTMLElement>("#editor-error");
+    const editorDetail = pick<HTMLElement>("#editor-detail");
+    editorError.textContent = "";
+    editorDetail.textContent = "拉取中…";
+
+    void invoke<ModelInfo[]>("provider_fetch_models", {
+      baseUrl: values.baseUrl || null,
+      id: values.id || null,
+      apiKey: values.apiKey || null,
+    }).then(
+      (models: ModelInfo[]) => {
+        const options = pick<HTMLDataListElement>("#model-options");
+        options.replaceChildren();
+        for (const model of models) {
+          const option = document.createElement("option");
+          option.value = model.id;
+          options.appendChild(option);
+        }
+        editorDetail.textContent = `拉到 ${models.length} 个模型`;
+        // The first model is a starting point, not a choice: it is filled in
+        // only when the field is still empty.
+        if (!values.defaultModel && models.length > 0) {
+          pick<HTMLInputElement>("#field-model").value = models[0].id;
+        }
+      },
+      (err: unknown) => {
+        editorDetail.textContent = "";
+        editorError.textContent = err instanceof Error ? err.message : String(err);
+      },
+    );
+  });
+
+  pick<HTMLButtonElement>("#provider-test").addEventListener("click", () => {
+    const values = editorValues();
+    const editorError = pick<HTMLElement>("#editor-error");
+    const editorDetail = pick<HTMLElement>("#editor-detail");
+    editorError.textContent = "";
+    editorDetail.textContent = "测试中…";
+
+    void invoke<ConnectionTest>("provider_test_connection", {
+      baseUrl: values.baseUrl || null,
+      id: values.id || null,
+      apiKey: values.apiKey || null,
+      model: values.defaultModel || null,
+    }).then(
+      (result: ConnectionTest) => {
+        if (result.ok) {
+          editorDetail.textContent = `连接正常 · ${result.model} · ${result.latencyMs}ms · 回答「${result.detail}」`;
+        } else {
+          editorDetail.textContent = "";
+          editorError.textContent = result.detail;
+        }
+      },
+      (err: unknown) => {
+        editorDetail.textContent = "";
+        editorError.textContent = err instanceof Error ? err.message : String(err);
+      },
+    );
+  });
+
+  // --- the chat ---------------------------------------------------------
+
+  pick<HTMLSelectElement>("#chat-provider").addEventListener("change", () => {
+    renderModelPickers();
+  });
+
+  pick<HTMLFormElement>("#chat-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = pick<HTMLTextAreaElement>("#chat-input");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    void sendMessage(text);
   });
 }
 
