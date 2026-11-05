@@ -55,9 +55,13 @@ Chat, command execution and the memory panels do not exist yet — see the [road
 Tauri v2, Rust backend, TypeScript frontend. Ollama is the first model entry point; the default
 model is `qwen3:8b` (Qwen3 8B Q4).
 
-**Why Tauri**: it ships a **tray** (menu-bar icon, click to wake, background residency), which is
-what makes "close the workbench and an assistant is still there" possible at all. (Wails v2 has no
-tray — the `TrayMenu` in `pkg/menu` is a dead type — and the external `systray` needs cgo.)
+**Why Tauri**: it ships a **tray** (menu-bar icon, click to wake), which is what makes "close the
+workbench and an assistant is still there" possible at all. (Wails v2 has no tray — the `TrayMenu`
+in `pkg/menu` is a dead type — and the external `systray` needs cgo.)
+
+**The tray is in place** (`src-tauri/src/tray.rs`): left click wakes the window, right click opens
+the Show / Quit menu. **Closing the window still ends the app** — the tray is a wake-up entry for a
+process that is already running, not a "hide the window and keep an icon" kind of residency.
 
 **It is "an independent process + a real tray + a real distribution channel", not a native UI
 framework** — Tauri uses the system WebView, not Swift/AppKit controls.

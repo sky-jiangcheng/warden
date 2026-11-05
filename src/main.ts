@@ -17,11 +17,16 @@ type MemoryStatus = {
   path: string | null;
 };
 
+type TrayStatus = {
+  installed: boolean;
+};
+
 type ShellStatus = {
   backends: BackendStatus[];
   defaultBackend: string;
   defaultModel: string;
   memory: MemoryStatus;
+  tray: TrayStatus;
 };
 
 const BACKEND_LABELS: Record<string, string> = {
@@ -95,11 +100,33 @@ function renderBackends(status: ShellStatus) {
   setChip(defaultChip, `默认 ${status.defaultModel}`, isDefaultReady ? "ok" : "warn");
 }
 
+/// Render the tray (the wake-up entry) state.
+///
+/// The tray is reported rather than assumed: macOS gives no way to check
+/// another process's status items from the outside, so the app can only
+/// answer for itself. A user who cannot find the tray needs to be able to
+/// tell "it failed to install" from "it is there and I missed it" — and the
+/// first screen is where that distinction has to be visible.
+function renderTray(status: ShellStatus) {
+  const chip = pick<HTMLElement>("#tray-chip");
+  const note = pick<HTMLElement>("#tray-path");
+
+  if (status.tray.installed) {
+    setChip(chip, "已就位", "ok");
+    note.textContent = "点菜单栏的 R 唤回窗口，右键打开菜单。";
+  } else {
+    setChip(chip, "不可用", "warn");
+    note.textContent =
+      "托盘图标没能装上——这个窗口关掉就找不回来了。日志里有 [tray] 开头的错误。";
+  }
+}
+
 async function main() {
   try {
     const status = await invoke<ShellStatus>("shell_status");
     renderMemory(status);
     renderBackends(status);
+    renderTray(status);
   } catch (error) {
     // The frontend also runs in a plain browser (npm run dev without Tauri),
     // where there is no backend to ask. Say that instead of showing an empty

@@ -34,6 +34,7 @@ src/                 前端（TypeScript + Vite，无框架）
   styles.css         设计令牌 + 卡片/徽章/排版
 src-tauri/           后端（Rust）
   src/lib.rs         Tauri 命令装配与窗口生命周期
+  src/tray.rs        托盘（copilot 的唤回入口）：左键唤回窗口，右键 Show / Quit
   src/model_backends.rs  模型运行时注册表（Ollama 已实现，llama.cpp / MLX 预留）
   src/memory_layer.rs    记忆层（Repotory MCP）探测；**工具名副本已漂，Phase 1 换成 tools/list 动态拉取**
 docs/                中文文档源
@@ -65,3 +66,10 @@ scripts/             仓库守卫脚本
   换版本要**故意**改，不要顺手改。
 - **`cargo fmt` 会重排长行**：新增测试断言后如果 CI 的 fmt job 红了，
   跑 `cargo fmt --all` 而不是手改格式。
+- **托盘是唤回入口，不是常驻**：关窗口仍然结束应用（与桌面端一致，ADR-0047 决策⑤）。
+  托盘图标**必须在主线程创建**——`muda::Menu` 离开主线程会 panic，所以 `tray::install` 用
+  `run_on_main_thread` 包一层。**tauri 的 `mock_app` 在单测里建不了真托盘**，
+  正例只能靠运行时验证；单测只断言「未安装时 `tray.installed` 为 false」。
+- **托盘图标素材**：macOS 用单色 template 图（`src-tauri/icons/tray-22.png`，22px——
+  `tray-icon` 的 macOS 后端把图标固定缩到 18 points，44px 会被画成两倍高）；
+  Windows / Linux 用彩色 app 图标（`32x32.png`）。**Tauri 只吃 PNG / ICO，不吃 SVG**。

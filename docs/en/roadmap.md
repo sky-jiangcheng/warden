@@ -29,7 +29,9 @@ bound.
 - Default model Qwen3 8B Q4, proven on an M4 Pro first;
 - Define the first-version boundary: chat, read project, run commands, memory panels, human confirmation.
 
-**Progress so far**: the repository and skeleton are in place, the positioning/boundary/decisions live in [product.md](product.md), and the first screen shows the detected memory layer and model runtimes.
+**Progress so far**: the repository and skeleton are in place, the positioning/boundary/decisions live in [product.md](product.md), and the first screen shows the detected memory layer, model runtimes, and the **wake-up entry (the tray)**.
+The CI gates (docs mirror, frontend build, `cargo fmt` / `clippy` / `test`), the brand icon, and the tray (ADR-0047 decision 5) are all in place.
+**Still to do**: the MCP client for Phase 1 (fetching the tool list dynamically and spawning the `repotory-mcp` subprocess).
 
 ## Phase 1: wire up the MCP memory layer (1–2 weeks)
 
@@ -130,6 +132,11 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 
 Do not turn the copilot into a "full IDE" on day one. Make it a good local assistant first: open it and chat about the project, see the memory, run commands safely, continue where the last session stopped. Once that path works, consider Claude Code, Cursor, VS Code and JetBrains — or turning it into a more general local Agent platform.
 
-**The tray and residency are not in this roadmap** — they are the carrier of "close the workbench and
-an assistant is still there", which under ADR-0047 decision 5 belongs to the copilot's own form
-decision (the form is decided by user feedback, not preset).
+**The tray is in place** (ADR-0047 decision 5): it is the carrier of "close the workbench and
+an assistant is still there". The tray icon is the copilot's wake-up entry — click it to bring the
+window back, right-click for the menu (Show / Quit).
+**Closing the window still ends the app**: the tray is a wake-up entry for a process that is
+*already running*, not a "hide the window and leave only an icon" kind of residency — that trades
+one unreachable window for one unreachable process.
+**The exact wake-up interaction is still decided by user feedback** (a global shortcut and an
+always-visible window are both not built yet).

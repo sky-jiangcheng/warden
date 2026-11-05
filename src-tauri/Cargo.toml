@@ -18,10 +18,25 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon` is NOT in tauri's default feature set, and it is the single
+# hard reason this project is on Tauri at all: Wails v2 has no tray
+# (`options.App` has no Tray field, `pkg/menu`'s `TrayMenu` is a dead type),
+# and the third-party systray crates need cgo, which breaks the bare-ubuntu
+# `go build ./...` in the main repository's CI.
+#
+# `image-png` is needed because the tray icon is embedded with
+# `tauri::image::Image::from_bytes`, which decodes through the `image`
+# crate: PNG and ICO only, no SVG.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+# `tauri::test::mock_app` gives the tests a real `App` without a window
+# server, which is what makes "the tray is installed" a checkable fact
+# instead of a claim.
+tauri = { version = "2", features = ["test"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Browser-automation artifacts (local inspection only).
+# The archived inspection screenshots under outputs/screenshots/ ARE committed.
+.playwright/
+.playwright-cli/

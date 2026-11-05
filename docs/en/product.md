@@ -61,14 +61,17 @@ Five capabilities, fixed by Phase 0. Together they are version one:
 | Decision | Content | Cost |
 |---|---|---|
 | Stack | Tauri v2, Rust backend, TypeScript frontend | Not the same stack as the Repotory desktop app (Wails/Go). The two share data and protocol, nothing else |
-| **Why Tauri** | **it ships a tray** (menu-bar icon, click to wake, background residency) — Wails v2 has no tray (the `TrayMenu` in `pkg/menu` is a dead type, and the external `systray` needs cgo) | **Tauri uses the system WebView, not Swift/AppKit native controls** — it is "an independent process + a real tray + a real distribution channel", **not "a native UI framework"** |
+| **Why Tauri** | **it ships a tray** (menu-bar icon, click to wake) — Wails v2 has no tray (the `TrayMenu` in `pkg/menu` is a dead type, and the external `systray` needs cgo). **The tray is in place** (`src-tauri/src/tray.rs`): left click wakes the window, right click opens the Show / Quit menu | **Tauri uses the system WebView, not Swift/AppKit native controls** — it is "an independent process + a real tray + a real distribution channel", **not "a native UI framework"** |
 | Model entry | Ollama first; llama.cpp / MLX arrive as pluggable backends, never hard-coded | The backend registry has to exist up front (`src-tauri/src/model_backends.rs`) |
 | Default model | `qwen3:8b` (Qwen3 8B Q4), proven on an M4 Pro first | Switching models means the user pulls it in Ollama |
 | Memory channel | MCP, never a private store | The Agent depends on Repotory's MCP binary being present |
 
 The model backend registry is already shaped for "pluggable": Ollama is the only implementation, `llama.cpp` and `MLX` are declared `planned`, and the UI asks one command for the whole list — adding a backend does not touch the frontend.
 
-**Everything the user is allowed to have a preference about** — the model backend, whether it stays resident, the shape of the interface — is left to the user.
+**Everything the user is allowed to have a preference about** — the model backend, the shape of the interface — is left to the user.
+
+**The wake-up entry is in place, but the overall shape of the wake-up interaction is still undecided**: the tray icon is the current entry (left click wakes the window, right click opens the menu), and the first screen carries a "wake-up entry" card that shows in real time whether the tray is there — macOS does not let an external process query somebody else's menu-bar status item, so "is the tray actually there" can only be answered by the app itself (`tray.installed`), and when the tray fails to install the log carries a `[tray] ...` line.
+**A global shortcut and an always-visible window are not built yet** — they wait for user feedback.
 
 ## The memory-layer contract
 
