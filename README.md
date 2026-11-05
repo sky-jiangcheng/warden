@@ -8,8 +8,9 @@ A **copilot** that runs on your own machine: open a repository, talk to a local 
 
 An **independent product**, not one more screen inside the Repotory desktop app.
 
-It does three things: **talks to a model about the project you have open**, **runs commands
-within a whitelist**, and **pulls memory back from Repotory**. Which model you use is **your**
+It does four things: **finds the repositories on this machine by itself**, **talks to a model
+about the project you have open**, **runs commands within a whitelist**, and **pulls memory
+back from Repotory**. Which model you use is **your**
 choice — **any provider that conforms to the OpenAI-compatible API works** (OpenRouter, OpenAI,
 DeepSeek, SiliconFlow, vLLM, LM Studio, and the local Ollama too) — and so is the shape of the
 interface.
@@ -18,7 +19,7 @@ The three roles stay separate:
 
 | | Owner | What it owns |
 |---|---|---|
-| copilot | Agent (this repo) | Model entry, command execution, memory panels |
+| copilot | Agent (this repo) | Repository discovery, model entry, command execution, memory panels |
 | memory | [Repotory](https://github.com/sky-jiangcheng/repotory) | Project knowledge, session handoffs, approved knowledge pages |
 | protocol | MCP | The Agent reads memory through `repotory_*` tools only — never the database |
 
@@ -33,6 +34,7 @@ The three roles stay separate:
 | Memory channel | uses `internal/service` directly | **MCP only** |
 | Approval (approve / reject) | **yes** (a human is present) | **no** — those two tools are not on the MCP surface at all |
 | Closing it | the workbench is gone | the copilot keeps running |
+| Where the repositories come from | its own scan roots | **its own scan roots + its own watchlist** |
 
 **Approval stays with the human, and not by convention**: Repotory's MCP surface registers only the
 pure-read knowledge page tools (`repotory_wiki_search` / `repotory_wiki_read`), because the gate on
@@ -45,6 +47,9 @@ pretending.
 
 ## What runs today
 
+- **Find the repositories yourself**: it scans the directories you give it for git repositories,
+  lists them, and **a new one surfaces as a bubble at the top of the window asking whether you
+  want to follow it**; **a dismissed repository is never asked about again**
 - **Configure a model provider**: type a base URL and any OpenAI-compatible service connects;
   **fetch the model list** (whatever the server reports is what is shown — **this repository keeps no
   copy of it**), **test the connection** (a real request, which proves the key, the endpoint and the
@@ -57,6 +62,31 @@ pretending.
 - Shows the first-version product boundary and the milestones
 
 Command execution and the memory panels do not exist yet — see the [roadmap](docs/roadmap.md).
+
+## How the repositories are found
+
+**The copilot walks the disk itself, without going through Repotory.** Give it a few
+directories to look in and it finds the git repositories under them, lists them, and
+**lets you say which ones are yours**.
+
+- **What counts as a repository**: a `.git` **directory**. A worktree's or a submodule's
+  `.git` is a **file**, and that does not count — the same rule Repotory's own scanner
+  uses, so the two never disagree about the same directory.
+- **Two answers**: "follow" means "this is my work", "dismiss" means "stop asking".
+  **A dismissed repository never surfaces again** — otherwise saying "no" once would still
+  be asked a second time.
+- **A bubble for new repositories**: one at a time, sliding down from the top of the window
+  (five cards at once is a form, not a question). **When the window is in the background it
+  becomes a system notification, and clicking it brings the window back.**
+- **It keeps looking while nobody is looking**: the scan runs every five minutes even with
+  the window closed. That is what makes it a robot rather than a report.
+- **The watchlist is the copilot's own** (`repos.json` in the app config directory) and
+  **does not go into Repotory's database**: the writer of `projects.is_starred` there is the
+  desktop app and there is no MCP twin for it — sharing it would mean changing the main
+  repository, which is not a copilot's job.
+
+The list carries names and paths for now. **Git metadata (branch, last commit) and "bring a
+repository into the conversation" are not done.**
 
 ## How model providers are reached
 

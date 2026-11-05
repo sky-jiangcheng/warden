@@ -9,16 +9,60 @@
   </head>
 
   <body>
+    <div class="toast" id="repo-toast" hidden>
+      <div class="toast__body">
+        <span class="toast__label">发现新仓库</span>
+        <span class="toast__name" id="toast-name"></span>
+        <span class="toast__path" id="toast-path"></span>
+      </div>
+      <div class="toast__actions">
+        <button class="btn btn--tight btn--primary" id="toast-favorite" type="button">
+          收藏
+        </button>
+        <button class="btn btn--tight" id="toast-dismiss" type="button">忽略</button>
+      </div>
+    </div>
+
     <div class="app">
       <header class="brand">
         <div class="brand__text">
           <h1 class="brand__name">Repotory Agent</h1>
-          <p class="brand__tagline">本地 copilot · 记忆层由 Repotory MCP 提供</p>
+          <p class="brand__tagline">
+            本地 copilot · 自己认仓库，自己记你要什么
+          </p>
         </div>
         <span class="chip chip--quiet" id="brand-chip">检测中</span>
       </header>
 
       <main class="panels">
+        <section class="card card--repos">
+          <div class="card__head">
+            <h2 class="card__title">仓库</h2>
+            <span class="chip" id="repo-chip">检测中</span>
+          </div>
+          <p class="card__hint">
+            copilot 自己扫盘，不经过 Repotory。给它几个要看的目录，它把里面的
+            git 仓库列出来，由你决定哪些是你在做的。
+          </p>
+          <ul class="roots" id="roots"></ul>
+          <form class="roots__add" id="root-form">
+            <input
+              class="field field--grow"
+              id="root-input"
+              type="text"
+              placeholder="/Users/you/work"
+              spellcheck="false"
+            />
+            <button class="btn" id="root-add" type="submit">添加目录</button>
+          </form>
+          <div class="repos__bar">
+            <button class="btn" id="repo-scan" type="button">重新扫描</button>
+            <span class="meta" id="repo-detail"></span>
+          </div>
+          <ul class="repos" id="repos"></ul>
+          <p class="meta meta--error" id="repo-error"></p>
+        </section>
+
         <section class="card card--chat">
           <div class="card__head">
             <h2 class="card__title">对话</h2>
@@ -151,17 +195,18 @@
             <span class="chip chip--quiet">Phase 2–4</span>
           </div>
           <ul class="boundary">
+            <li><span class="boundary__name">认仓库</span><span class="boundary__note">自己扫盘，你决定关注哪些</span></li>
             <li><span class="boundary__name">聊天</span><span class="boundary__note">与模型就当前项目对话</span></li>
             <li><span class="boundary__name">读项目</span><span class="boundary__note">附加仓库路径与最近 diff</span></li>
             <li><span class="boundary__name">执行命令</span><span class="boundary__note">白名单工具，写操作需确认</span></li>
             <li><span class="boundary__name">记忆面板</span><span class="boundary__note">已批准知识与跨会话结论</span></li>
-            <li><span class="boundary__name">人工确认</span><span class="boundary__note">危险动作默认禁止</span></li>
           </ul>
         </section>
       </main>
 
       <footer class="milestones">
         <span class="milestone milestone--done">M1 接入 Repotory MCP</span>
+        <span class="milestone milestone--done">M1.5 自己认仓库</span>
         <span class="milestone milestone--next">M2 与模型聊当前仓库</span>
         <span class="milestone">M3 安全执行命令</span>
         <span class="milestone">M4 跨会话记忆</span>

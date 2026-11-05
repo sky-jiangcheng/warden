@@ -14,10 +14,11 @@ pub mod mcp_client;
 pub mod memory_layer;
 mod provider_commands;
 pub mod providers;
+pub mod repos;
 mod tray;
 
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use std::collections::BTreeMap;
 
@@ -30,6 +31,8 @@ use crate::provider_commands::{
 use crate::providers::{
     Provider, ProviderStore, delete_api_key, load_api_key, slugify, store_api_key,
 };
+use crate::repos::{RepoEntry, RepoScan, RepoStore};
+use tauri_plugin_notification::NotificationExt;
 
 /// What the first screen needs: which model providers are configured, whether
 /// the memory layer is installed AND answering, and whether the wake-up path
@@ -107,6 +110,151 @@ async fn mcp_call_tool<R: tauri::Runtime>(
         .call_tool(&name, arguments)
         .await
         .map_err(|err| err.to_string())
+}
+
+// The repository commands.
+//
+// The copilot finds the repositories on this machine by itself: it scans the
+// roots the user configured, shows what it found, and remembers what the
+// user decided about each one.
+//
+// None of this goes through Repotory. A copilot that needs another
+// product's database to know what is on this disk is not independent of
+// it, and the whole point of this product is that it stands on its own.
+
+/// Scans the configured roots and reports what is there.
+///
+/// The bodies of these commands live in `repos.rs` so that the end-to-end
+/// test can drive the very same functions the IPC layer calls. A test that
+/// re-implements the command would only be testing itself.
+#[tauri::command]
+fn repo_scan(store: tauri::State<'_, RepoStore>) -> RepoScan {
+    let scan = repos::scan_now(&store);
+    // The scan is logged because it is the one thing that happens without
+    // the user asking: the window opens, the disk is walked, and a list
+    // appears. If that list is wrong, the log is where the answer is.
+    eprintln!(
+        "[repos] {} repositories under {} roots, {} new",
+        scan.repos.len(),
+        scan.roots.len(),
+        scan.new_repos.len()
+    );
+    scan
+}
+
+/// Adds a scan root and reports the new scan.
+#[tauri::command]
+fn repo_roots_add(store: tauri::State<'_, RepoStore>, path: String) -> Result<RepoScan, String> {
+    repos::add_root_and_scan(&store, &path)
+}
+
+/// Removes a scan root and reports the new scan.
+#[tauri::command]
+fn repo_roots_remove(store: tauri::State<'_, RepoStore>, path: String) -> Result<RepoScan, String> {
+    repos::remove_root_and_scan(&store, &path)
+}
+
+/// Follows or unfollows a repository.
+///
+/// Following a repository is the user's answer to "is this one of yours?" —
+/// the copilot stops announcing it and starts treating it as the user's
+/// work.
+#[tauri::command]
+fn repo_set_favorite(
+    store: tauri::State<'_, RepoStore>,
+    path: String,
+    favorite: bool,
+) -> Result<RepoScan, String> {
+    repos::set_favorite_and_scan(&store, &path, favorite)
+}
+
+/// Marks a repository as "not this one".
+///
+/// This is the other half of the same answer, and it matters as much: a
+/// dismissed repository is never announced again. Without it, saying "no"
+/// once would still be asked again on the next scan.
+#[tauri::command]
+fn repo_dismiss(store: tauri::State<'_, RepoStore>, path: String) -> Result<RepoScan, String> {
+    repos::dismiss_and_scan(&store, &path)
+}
+
+/// How often the background scan looks for new repositories.
+const RESCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The notification action that brings the window back.
+const ACTION_NEW_REPOS: &str = "repos-new";
+
+/// Announces repositories the user has not dealt with yet.
+///
+/// Two channels, one per situation. When the window is in front, the
+/// window asks — a system notification on top of a screen the user is
+/// already reading is noise. When the copilot is in the background, a
+/// system notification is the only thing that can reach the user at all.
+fn announce_new_repos<R: tauri::Runtime>(app: &tauri::AppHandle<R>, new_repos: &[RepoEntry]) {
+    if new_repos.is_empty() {
+        return;
+    }
+
+    let foreground = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+
+    if foreground {
+        eprintln!(
+            "[repos] {} new repositor{} in the foreground",
+            new_repos.len(),
+            if new_repos.len() == 1 { "y" } else { "ies" }
+        );
+        let _ = app.emit("repos:new", new_repos);
+        return;
+    }
+
+    let title = if new_repos.len() == 1 {
+        "发现一个新仓库".to_string()
+    } else {
+        format!("发现 {} 个新仓库", new_repos.len())
+    };
+    let body = new_repos
+        .iter()
+        .map(|repo| repo.name.as_str())
+        .collect::<Vec<_>>()
+        .join("、");
+
+    // A failed notification is logged rather than swallowed: the user
+    // would otherwise see "nothing happened" and have no way to tell that
+    // the copilot found a repository and failed to say so.
+    if let Err(err) = app
+        .notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .action_type_id(ACTION_NEW_REPOS)
+        .show()
+    {
+        eprintln!("[notify] the notification could not be shown: {err}");
+    }
+}
+
+/// Keeps looking for repositories while nobody is looking at the screen.
+///
+/// This is what makes the copilot a resident rather than a screen: the
+/// window can be closed for hours and the scan still runs. The first scan
+/// is not here — the window asks for it when it opens, because a window
+/// that is not listening yet cannot be told about a new repository.
+fn spawn_background_scan<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    store_path: std::path::PathBuf,
+) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(RESCAN_INTERVAL).await;
+            let store = RepoStore::new(store_path.clone());
+            let (list, _) = store.load();
+            let scan = repos::scan_into(&list.roots, &list, None);
+            announce_new_repos(&app, &scan.new_repos);
+        }
+    });
 }
 
 // The provider commands.
@@ -476,11 +624,40 @@ async fn chat_send(
     }
 }
 
+/// The builder every entry point uses.
+///
+/// It is a function, not a chain inside `run()`, so that the test can
+/// build the same app the production code builds. A plugin that is
+/// depended on but not registered here panics at the first call — and the
+/// panic only happens in the running app, because `mock_app` never runs
+/// the setup hook. Sharing this builder is what lets the test see it.
+fn builder<R: tauri::Runtime>() -> tauri::Builder<R> {
+    // `Builder::default()` is only implemented for `Builder<Wry>` when the
+    // wry feature is on, so it would pin the runtime to the desktop one.
+    // `Builder::<R>::new()` is the generic constructor.
+    tauri::Builder::<R>::new()
+        .plugin(tauri_plugin_opener::init())
+        // The notification plugin has to be registered here, not merely
+        // depended on: `app.notification()` reads the plugin's managed
+        // state, and calling it without the plugin panics with "state()
+        // called before manage()". A dependency in Cargo.toml and a
+        // permission in the capability file are not the same thing as a
+        // registered plugin.
+        .plugin(tauri_plugin_notification::init())
+        // The page load is logged because a window that shows nothing is
+        // indistinguishable from a window that failed to load. In a debug
+        // build the window points at the dev server, not at the built
+        // files, so "the page is blank" almost always means "the dev
+        // server is not running" — and this line is what says so.
+        .on_page_load(|_webview, payload| {
+            eprintln!("[page] {} {:?}", payload.url(), payload.event());
+        })
+        .manage(mcp_client::McpSession::default())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .manage(mcp_client::McpSession::default())
+    builder::<tauri::Wry>()
         .setup(|app| {
             // The tray is the copilot's wake-up entry (ADR-0047 decision 5).
             // It is installed here, in the setup hook, so it exists from the
@@ -494,6 +671,27 @@ pub fn run() {
             let store = provider_commands::store_for(app.handle())?;
             app.manage(store);
 
+            // The repository watchlist lives beside the provider config.
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .map_err(|err| format!("the app config directory could not be resolved: {err}"))?;
+            let repo_path = config_dir.join("repos.json");
+            app.manage(RepoStore::new(repo_path.clone()));
+
+            // Clicking the "a new repository appeared" notification brings
+            // the window back: the notification is a door into the app, not
+            // just a message about it.
+            let handle = app.handle().clone();
+            app.notification().register_action_types(vec![
+                tauri_plugin_notification::ActionType::builder(ACTION_NEW_REPOS).build(),
+            ])?;
+            app.notification().on_action(move |_performed| {
+                tray::show_window(&handle);
+            })?;
+
+            spawn_background_scan(app.handle().clone(), repo_path);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -506,6 +704,11 @@ pub fn run() {
             provider_fetch_models,
             provider_test_connection,
             chat_send,
+            repo_scan,
+            repo_roots_add,
+            repo_roots_remove,
+            repo_set_favorite,
+            repo_dismiss,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Repotory Agent");
@@ -552,6 +755,35 @@ mod tests {
         assert!(payload.contains("\"tray\""));
         assert!(payload.contains("\"installed\""));
         println!("{payload}");
+    }
+
+    /// The notification channel has to be registered, not merely depended on.
+    ///
+    /// `app.notification()` reads the plugin's managed state, and calling
+    /// it without the plugin registered panics with "state() called before
+    /// manage()". That panic used to happen only in the running app: the
+    /// unit tests built their app with `mock_app`, which never runs the
+    /// setup hook where the notification channel is wired.
+    ///
+    /// Building the app through the same `builder()` the production code
+    /// uses, and then asking for the notification API, makes that failure
+    /// a test failure instead of a crash on the user's screen.
+    #[test]
+    fn the_notification_channel_is_registered() {
+        let app = builder::<tauri::test::MockRuntime>()
+            // The macOS default menu is built on the main thread only, and a
+            // test runs on a worker thread, so it is turned off here. It has
+            // nothing to do with the notification channel.
+            .enable_macos_default_menu(false)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("the app builds");
+
+        // Asking for the notification API reads the plugin's managed state.
+        // Without the plugin registered this panics with "state() called
+        // before manage()", which is exactly the failure the test guards.
+        // The notification is not shown: a test has no business popping a
+        // banner on the machine that runs it.
+        let _channel = app.handle().notification();
     }
 
     /// The tray is the copilot's only wake-up path (ADR-0047 decision 5), and

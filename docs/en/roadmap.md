@@ -101,6 +101,34 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
 **Still not done**: attaching the repository path / git diff / Repotory context, and writing the answer
 back with `repotory_handoff` — those need the notion of "the current repository" first.
 
+## Phase 2.5: finding the repositories itself (1 week) — done
+
+The copilot goes from "one front end of Repotory" to "an independent robot on this machine".
+
+- **It walks the disk itself**: git repositories under the roots the user configured
+  (a `.git` *directory* counts; a worktree's `.git` *file* does not), **without going
+  through Repotory's scanner and without reading its database**;
+- **A list, and the user decides**: the repositories are listed, and the user says which
+  ones are theirs;
+- **Follow or dismiss**: two answers. "Follow" means "this is my work"; "dismiss" means
+  "stop asking". **A dismissed repository never surfaces again** — otherwise saying "no"
+  once would still be asked a second time;
+- **A bubble for new repositories**: one repository at a time (five cards at once is a
+  form, not a question). The bubble slides down from the top of the window; when the
+  window is in the background it becomes a system notification, and **clicking the
+  notification brings the window back**;
+- **It keeps looking while nobody is looking**: the scan runs every five minutes even
+  with the window closed. That is what makes it a robot rather than a report.
+
+**The watchlist is the copilot's own** (`repos.json` in the app config directory) and
+**does not go into Repotory's database**: the writer of `projects.is_starred` there is the
+desktop app (desktop-only), and there is no MCP twin for it — **sharing it would mean
+changing the main repository, which is not a copilot's job**.
+
+**Not done**: feeding a repository into a model request (which repository the
+conversation is about), and git metadata (branch, last commit). The list carries names
+and paths for now.
+
 ## Phase 3: the tool execution layer (2–3 weeks)
 
 Whitelisted tools first:
@@ -158,6 +186,7 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 | Milestone | Done when | State |
 |---|---|---|
 | M1 | It can call Repotory MCP | done (Phase 1) |
+| M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
 | M2 | It can talk to a model about the current repository | in progress (Phase 2: the chat loop works, the repository context is not wired) |
 | M3 | It can safely run Git / Shell commands | not started |
 | M4 | It can see and manage cross-session memory | not started |

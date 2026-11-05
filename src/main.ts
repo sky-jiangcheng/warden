@@ -17,6 +17,7 @@
 // credential store — this window only ever learns WHETHER a key exists.
 import { invoke } from "@tauri-apps/api/core";
 import { Channel } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 type Provider = {
   id: string;
@@ -60,6 +61,23 @@ type MemoryStatus = {
 
 type TrayStatus = {
   installed: boolean;
+};
+
+/// One repository the copilot found on this machine.
+type RepoEntry = {
+  path: string;
+  name: string;
+  favorite: boolean;
+  missing: boolean;
+};
+
+/// Everything the repository screen draws, in one payload.
+type RepoScan = {
+  roots: string[];
+  repos: RepoEntry[];
+  newRepos: RepoEntry[];
+  truncated: boolean;
+  problem: string | null;
 };
 
 type ShellStatus = {
@@ -164,6 +182,250 @@ function renderMemory(status: ShellStatus) {
 
     item.append(name, description);
     tools.appendChild(item);
+  }
+}
+
+/// Repositories the user has not answered for yet.
+///
+/// The queue is what keeps the toast honest: one repository at a time, and
+/// a repository that is already waiting is never announced twice.
+let pendingRepos: RepoEntry[] = [];
+
+/// The repository the toast is asking about right now.
+let currentRepo: RepoEntry | null = null;
+
+/// Render the scan roots and the repository list.
+function renderRepos(scan: RepoScan) {
+  const chip = pick<HTMLElement>("#repo-chip");
+  const list = pick<HTMLElement>("#repos");
+  const roots = pick<HTMLElement>("#roots");
+  const detail = pick<HTMLElement>("#repo-detail");
+  const error = pick<HTMLElement>("#repo-error");
+
+  list.replaceChildren();
+  roots.replaceChildren();
+  error.textContent = "";
+
+  if (scan.problem) {
+    setChip(chip, "配置有问题", "warn");
+    error.textContent = scan.problem;
+  }
+
+  // --- the scan roots -------------------------------------------------
+
+  if (scan.roots.length === 0) {
+    const hint = document.createElement("li");
+    hint.className = "roots__empty";
+    hint.textContent =
+      "还没加目录 —— 填一个你放代码的路径，比如 ~/work。";
+    roots.appendChild(hint);
+  } else {
+    for (const root of scan.roots) {
+      const item = document.createElement("li");
+      item.className = "root";
+
+      const path = document.createElement("span");
+      path.className = "root__path";
+      path.textContent = root;
+
+      const actions = document.createElement("div");
+      actions.className = "root__actions";
+      actions.appendChild(
+        makeButton("移除", () => {
+          void invoke<RepoScan>("repo_roots_remove", { path: root }).then(
+            (scan: RepoScan) => renderRepos(scan),
+            (err: unknown) => {
+              pick<HTMLElement>("#repo-error").textContent = String(err);
+            },
+          );
+        }),
+      );
+
+      item.append(path, actions);
+      roots.appendChild(item);
+    }
+  }
+
+  // --- the repositories ------------------------------------------------
+
+  // Followed repositories first: they are the ones the user has already
+  // answered for, and they are what the copilot will act on.
+  const followed = scan.repos.filter((repo) => repo.favorite);
+  const others = scan.repos.filter((repo) => !repo.favorite);
+
+  if (scan.repos.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "repos__empty";
+    empty.textContent =
+      scan.roots.length === 0
+        ? "先加一个目录，copilot 才知道去哪儿找。"
+        : "这些目录里没有 git 仓库。";
+    list.appendChild(empty);
+  } else {
+    for (const repo of [...followed, ...others]) {
+      list.appendChild(renderRepoRow(repo));
+    }
+  }
+
+  setChip(
+    chip,
+    followed.length > 0
+      ? `${scan.repos.length} 个仓库 · ${followed.length} 个已收藏`
+      : `${scan.repos.length} 个仓库`,
+    followed.length > 0 ? "ok" : "quiet",
+  );
+
+  detail.textContent = scan.truncated
+    ? "扫到的仓库太多，只列了前一批 —— 把目录指得更准一点。"
+    : "";
+}
+
+/// One row of the repository list.
+function renderRepoRow(repo: RepoEntry): HTMLLIElement {
+  const item = document.createElement("li");
+  item.className = "repo";
+
+  const main = document.createElement("div");
+  main.className = "repo__main";
+
+  const name = document.createElement("span");
+  name.className = "repo__name";
+  name.textContent = repo.name;
+
+  const path = document.createElement("span");
+  path.className = "repo__path";
+  path.textContent = repo.path;
+  path.title = repo.path;
+
+  main.append(name, path);
+
+  const tags = document.createElement("div");
+  tags.className = "repo__tags";
+
+  if (repo.favorite) {
+    const tag = document.createElement("span");
+    tag.className = "chip chip--ok";
+    tag.textContent = "已收藏";
+    tags.appendChild(tag);
+  }
+  if (repo.missing) {
+    const tag = document.createElement("span");
+    tag.className = "chip chip--warn";
+    tag.textContent = "找不到";
+    tags.appendChild(tag);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "repo__actions";
+  actions.appendChild(
+    makeButton(repo.favorite ? "取消收藏" : "收藏", () => {
+      void invoke<RepoScan>("repo_set_favorite", {
+        path: repo.path,
+        favorite: !repo.favorite,
+      }).then(
+        (scan: RepoScan) => renderRepos(scan),
+        (err: unknown) => {
+          pick<HTMLElement>("#repo-error").textContent = String(err);
+        },
+      );
+    }),
+  );
+
+  item.append(main, tags, actions);
+  return item;
+}
+
+/// Ask about the next repository the user has not answered for.
+///
+/// One at a time. Five "is this yours?" cards stacked at once is a form,
+/// not a question — and the answer only means something when it is about
+/// one repository.
+function showNextRepoToast() {
+  if (currentRepo || pendingRepos.length === 0) return;
+
+  const repo = pendingRepos.shift();
+  if (!repo) return;
+  currentRepo = repo;
+
+  pick<HTMLElement>("#toast-name").textContent = repo.name;
+  const path = pick<HTMLElement>("#toast-path");
+  path.textContent = repo.path;
+  // The path is clipped to keep the bubble narrow, so the full one has to
+  // be one hover away.
+  path.title = repo.path;
+
+  const toast = pick<HTMLElement>("#repo-toast");
+  toast.hidden = false;
+  // The browser has to paint the un-hidden state before the transition
+  // runs, otherwise the slide-in has nothing to animate from.
+  requestAnimationFrame(() => toast.classList.add("toast--in"));
+}
+
+/// Put the toast away and let the next one in.
+function hideRepoToast() {
+  const toast = pick<HTMLElement>("#repo-toast");
+  toast.classList.remove("toast--in");
+  toast.hidden = true;
+  currentRepo = null;
+}
+
+/// Answer the question the toast asks.
+function answerToast(favorite: boolean) {
+  const repo = currentRepo;
+  if (!repo) return;
+  hideRepoToast();
+
+  const done = (scan: RepoScan) => {
+    renderRepos(scan);
+    showNextRepoToast();
+  };
+  const failed = (err: unknown) => {
+    pick<HTMLElement>("#repo-error").textContent = String(err);
+  };
+
+  if (favorite) {
+    void invoke<RepoScan>("repo_set_favorite", {
+      path: repo.path,
+      favorite: true,
+    }).then(done, failed);
+  } else {
+    void invoke<RepoScan>("repo_dismiss", { path: repo.path }).then(done, failed);
+  }
+}
+
+/// Queue the repositories the user has not dealt with, and ask about the
+/// first one.
+function queueNewRepos(repos: RepoEntry[]) {
+  for (const repo of repos) {
+    const waiting = pendingRepos.some((queued) => queued.path === repo.path);
+    if (!waiting && currentRepo?.path !== repo.path) {
+      pendingRepos.push(repo);
+    }
+  }
+  showNextRepoToast();
+}
+
+/// Load the repository screen.
+async function loadRepos() {
+  try {
+    const scan = await invoke<RepoScan>("repo_scan");
+    renderRepos(scan);
+    queueNewRepos(scan.newRepos);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    pick<HTMLElement>("#repo-error").textContent = detail;
+  }
+}
+
+/// Watch for repositories found while the window is open.
+async function watchForNewRepos() {
+  try {
+    await listen<RepoEntry[]>("repos:new", (event) => {
+      queueNewRepos(event.payload);
+    });
+  } catch {
+    // No backend (the frontend also runs in a plain browser). There is
+    // nothing to listen to, and that is not a failure worth reporting.
   }
 }
 
@@ -445,16 +707,64 @@ async function main() {
     renderTray(status);
   };
 
-  try {
-    await refresh();
-  } catch (error) {
-    // The frontend also runs in a plain browser (npm run dev without Tauri),
-    // where there is no backend to ask. Say that instead of showing an empty
-    // screen that reads like a broken install.
+  // The memory layer is optional, and connecting to it is not instant: the
+  // handshake can take ten seconds, or hang on a server that never
+  // answers. Awaiting it here would hold the whole first screen hostage —
+  // the repository list would not appear until the memory layer had
+  // finished failing. So the two run side by side instead.
+  void refresh().catch((error: unknown) => {
+    // The frontend also runs in a plain browser (npm run dev without
+    // Tauri), where there is no backend to ask. Say that instead of
+    // showing an empty screen that reads like a broken install.
     const detail = error instanceof Error ? error.message : String(error);
     setChip(pick<HTMLElement>("#memory-chip"), "后端不可达", "warn");
     pick<HTMLElement>("#memory-path").textContent = detail;
-  }
+  });
+
+  // The repository screen and the announcement channel.
+  //
+  // The listener is registered before the first scan, so a repository
+  // found while the window is opening is not missed.
+  void watchForNewRepos();
+  void loadRepos();
+
+  pick<HTMLFormElement>("#root-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = pick<HTMLInputElement>("#root-input");
+    const path = input.value.trim();
+    if (!path) return;
+    input.value = "";
+
+    void invoke<RepoScan>("repo_roots_add", { path }).then(
+      (scan: RepoScan) => {
+        renderRepos(scan);
+        queueNewRepos(scan.newRepos);
+      },
+      (err: unknown) => {
+        pick<HTMLElement>("#repo-error").textContent = String(err);
+      },
+    );
+  });
+
+  pick<HTMLButtonElement>("#repo-scan").addEventListener("click", () => {
+    void invoke<RepoScan>("repo_scan").then(
+      (scan: RepoScan) => {
+        renderRepos(scan);
+        queueNewRepos(scan.newRepos);
+      },
+      (err: unknown) => {
+        pick<HTMLElement>("#repo-error").textContent = String(err);
+      },
+    );
+  });
+
+  pick<HTMLButtonElement>("#toast-favorite").addEventListener("click", () => {
+    answerToast(true);
+  });
+
+  pick<HTMLButtonElement>("#toast-dismiss").addEventListener("click", () => {
+    answerToast(false);
+  });
 
   // A failed connection is worth one more try: the server may have been
   // installed since the window opened. The retry re-runs the same status

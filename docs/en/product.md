@@ -11,7 +11,7 @@
 
 | Role | Owner | Owns | Does not own |
 |---|---|---|---|
-| copilot | Agent (this repo) | Model entry, command execution, memory panels | Retrieval ranking, project knowledge storage, **approval** |
+| copilot | Agent (this repo) | **Finding the repositories on this machine and the user's watchlist**, model entry, command execution, memory panels | Retrieval ranking, project knowledge storage, **approval** |
 | memory | [Repotory](https://github.com/sky-jiangcheng/repotory) | Project context, session handoffs, approved knowledge pages | Deciding what the copilot looks like |
 | protocol | MCP | The only channel between the Agent and the memory layer | —— |
 
@@ -20,6 +20,7 @@ The three boundaries are hard:
 1. **The Agent does not re-implement Repotory's retrieval.** Context comes from `repotory_context`; it does not rank FTS itself, does not compute embeddings itself, and keeps no vector store of its own.
 2. **The Agent does not touch Repotory's database.** MCP tools only. The database is Repotory's private implementation, and the Agent has no business knowing it exists.
 3. **The Agent is not a full IDE.** Routing belongs to Repotory (`repotory_notes_read` / `repotory_notes_update` and friends); the Agent only consumes it.
+4. **The Agent finds the repositories itself, without borrowing Repotory's hands.** Walking the disk is the copilot's own job: it looks for git repositories under the roots the user gave it, lists them, and remembers which ones the user cares about. **The repository list does not go into Repotory's database** — that database is a knowledge base, not the register of "what the user is working on".
 
 ## How it relates to the Repotory desktop app: two products, one job each
 
@@ -32,6 +33,7 @@ The three boundaries are hard:
 | Memory channel | uses `internal/service` directly | **MCP only** |
 | Approval (approve / reject) | **yes** (a human is present) | **no** — those two tools are not on the MCP surface at all |
 | Closing it | the workbench is gone | the copilot keeps running |
+| Where the repositories come from | its own scan roots (`scan_roots`) | **its own scan roots + its own watchlist** |
 | Interface | the three-column shell + the small bot float | its own window + a tray |
 
 **Approval stays with the human, and not by convention.** Repotory's MCP surface registers only two
@@ -46,10 +48,11 @@ pretending.
 
 ## The first-version boundary
 
-Five capabilities, fixed by Phase 0. Together they are version one:
+Five capabilities, fixed by Phase 0, plus one more ("find the repositories") added by Phase 2.5:
 
 | Capability | Means | Done when |
 |---|---|---|
+| **Find repositories** | **Walk the disk, list the repositories, and let the user say which ones matter** | **A new repository surfaces as a bubble; a followed one lands in the list** |
 | Chat | Talk to the model about the current project, streamed | Pick a repository + ask a question → get an answer |
 | Read project | Attach the repository path, the recent git diff, context retrieved from Repotory | Every attachment is selectable and previewable |
 | Run commands | Whitelisted tool execution; writes need human confirmation | The full command is shown, dangerous ones are blocked by default, every run is logged |
@@ -66,6 +69,7 @@ Five capabilities, fixed by Phase 0. Together they are version one:
 | Default provider | the local Ollama (`http://127.0.0.1:11434/v1`) — no account, no key | Another model means configuring another provider |
 | Default model | `qwen3:8b` (Qwen3 8B Q4), proven on an M4 Pro first | Switching models means the user pulls it in Ollama |
 | Memory channel | MCP, never a private store | The Agent depends on Repotory's MCP binary being present |
+| Finding repositories | **the copilot walks the disk itself**; the user gives roots and decides what to follow | **the watchlist and Repotory's database are two separate stores** — sharing them means changing the main repository, which is not a copilot's job |
 
 **The model entry is open in Phase 2**: a provider is "a base URL". OpenRouter, OpenAI, DeepSeek,
 SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all speak the same protocol, so **there is

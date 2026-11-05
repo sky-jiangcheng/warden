@@ -45,7 +45,8 @@ src-tauri/           后端（Rust）
   src/llm.rs         OpenAI 兼容客户端：拉模型 / 聊天 / SSE 流式
   src/provider_commands.rs  provider 命令背后的逻辑
   src/memory_layer.rs    记忆层（Repotory MCP）状态：连接 + 服务端给的工具清单
-  tests/             端到端测试（真管道 + fake MCP server / fake LLM server）
+  src/repos.rs        仓库发现与收藏清单：扫盘 + watchlist 持久化
+  tests/             端到端测试（真管道 + fake MCP server / fake LLM server / 真仓库目录）
 docs/                中文文档源
 docs/en/             英文文档源（与 docs/ 严格 1:1 镜像）
 scripts/             仓库守卫脚本
@@ -74,6 +75,17 @@ scripts/             仓库守卫脚本
   `src/memory_layer.rs` 里有一条自检测试，专门盯着别把工具名写回源码——
   它只扫字符串字面量，注释里可以提名（那是解释历史，不是契约）。
   **别再往任何前端文件里抄工具名**：那份副本已经漂过一次（少列 11 个）。
+- **仓库是 copilot 自己认的**：扫盘在 `src/repos.rs`，**不借 Repotory 的手**——
+  主仓那个扫描器是为它的知识库服务的，规则可以借用（`.git` 是目录才算），**代码不能复用**
+  （那是它的库，copilot 不直连）。
+  **收藏清单存 copilot 自己的 `repos.json`**（app config 目录），
+  **不写主库的 `projects.is_starred`**——那个字段的写入方是桌面端（desktop-only），
+  MCP 工具面里没有孪生工具，想共享得先改主仓。
+- **「已处理」是收藏 ∪ 忽略**：一个仓库只有在这两个集合之外才算「新仓库」。
+  **忽略过的仓库永远不再冒泡**——否则用户说一次「不」就要被问第二遍，这是最快让机器人变烦的办法。
+- **首屏不能被可选能力阻塞**：记忆层是可选的，握手可能要十秒。
+  `main()` 里**不要 `await` 它**——仓库列表、provider 列表各自独立跑。
+  否则一个还没装的 `repotory-mcp` 会让整个首屏白等。
 - **「原生」这个词在这个仓里不成立**：Tauri 用系统 WebView，不是 Swift/AppKit 控件。copilot 是「独立进程 + 真托盘 + 真分发渠道」。**别在文档里把它写成原生应用。**
 
 ## 高频陷阱
@@ -133,3 +145,34 @@ scripts/             仓库守卫脚本
 - **托盘图标素材**：macOS 用单色 template 图（`src-tauri/icons/tray-22.png`，22px——
   `tray-icon` 的 macOS 后端把图标固定缩到 18 points，44px 会被画成两倍高）；
   Windows / Linux 用彩色 app 图标（`32x32.png`）。**Tauri 只吃 PNG / ICO，不吃 SVG**。
+- **debug build 的窗口连的是 dev server，不是 `dist`**：`tauri.conf.json` 里的 `devUrl`
+  （`http://localhost:1420`）在 debug 下生效。**裸 `cargo run` 而没起 `npm run dev` 时，
+  窗口是空白的**——不是代码坏了，是没人监听那个端口。
+  窗口里加一行 `.on_page_load` 日志（`[page] <url> Started/Finished`），
+  它一句话就能把「白屏」分成「页面没加载」和「前端报错了」。
+- **`cargo build` 不跟踪 `frontendDist` 的内容变化**：改了 `dist/` 之后重新 `cargo build`，
+  cargo 认为没什么可做的（0.4 秒就完），二进制里嵌的**还是旧的资源**。
+  `touch tauri.conf.json` 也不行——tauri-build 按配置的**内容哈希**判断要不要重新生成 codegen。
+  **要重新嵌入就 `cargo clean -p repotory-agent && cargo build`**（或干脆用 `tauri dev`）。
+- **插件要在 Builder 上注册，光有依赖和权限不够**：`tauri-plugin-notification` 加进 `Cargo.toml`、
+  权限写进 `capabilities/default.json`，**但忘了 `.plugin(tauri_plugin_notification::init())`** 时，
+  `app.notification()` 会 panic：`state() called before manage()`。
+  **这条现在有测试守着**：Builder 抽成了共享函数 `builder<R>()`（`lib.rs`），
+  测试用同一个函数建 app 再取 `notification()`——插件没注册就在这里 panic。
+  **别把 Builder 改回 `run()` 里的一条链**，那样测试就看不见生产代码了。
+- **macOS 默认菜单只能在主线程建**：`Builder::build` 在 macOS 上会建一个默认菜单，
+  它走 `muda::Submenu` → 离开主线程就 panic（`can only be created on the main thread`）。
+  **单测建 app 必须 `.enable_macos_default_menu(false)`**（tauri 自己的 `mock_builder()` 也这么做）。
+  这跟通知插件无关，别为了它去改生产代码里的菜单行为。
+- **`Builder::default()` 只对 `Builder<Wry>` 存在**（wry feature 开着的时候），
+  泛型版本要用 `Builder::<R>::new()`。写 `tauri::Builder::default()` 再返回 `Builder<R>`
+  会报类型不匹配。
+- **真 app 冒烟的最小代价**：`npm run dev` + `HOME=/tmp/xxx cargo run`（隔离配置目录，
+  别污染用户的 `~/Library/Application Support`），然后看 stderr 里有没有 `[page]` / `[repos]` 这几行。
+- **`#[tauri::command]` 不能是 `pub fn`**：宏会为 pub 函数生成 `#[macro_export]` 的版本，
+  和模块内的定义撞车，报 "the name `__cmd__xxx` is defined multiple times"。
+  **命令保持私有，逻辑放 `pub` 的普通函数**（`repos.rs` 里的 `add_root_and_scan` 之类），
+  端到端测试驱动那些函数——测试的就是命令要走的那条路。
+- **仓库的判定：`.git` 是目录才算**，worktree / submodule 的 `.git` 是**文件**，不算。
+  这条规则跟 Repotory 主仓的 scanner 一致（`internal/scanner/scanner.go`），
+  **两边不能对同一目录给出不同答案**。

@@ -151,11 +151,14 @@ pub fn is_installed<R: Runtime>(app: &AppHandle<R>) -> bool {
 
 /// Bring the copilot's window back.
 ///
+/// The notification that says "a new repository appeared" lands here too:
+/// clicking it must bring the window up, or the message is a dead end.
+///
 /// `show` alone is not enough: the window may still be minimized from an
 /// earlier hide, and a shown-but-minimized window reads as "the app did
 /// nothing". `unminimize` first, then `set_focus`, so the keystroke lands
 /// where the user is looking.
-fn show_window<R: Runtime>(app: &AppHandle<R>) {
+pub fn show_window<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window("main") else {
         // No window to bring back. The tray still works as a menu (Quit is
         // still reachable), so this is a degraded state, not a broken one.

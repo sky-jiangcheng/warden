@@ -11,7 +11,7 @@
 
 | 角色 | 归属 | 负责 | 不负责 |
 |---|---|---|---|
-| copilot | Agent（本仓库） | 本地模型入口、命令执行、记忆面板 | 检索排序、项目知识存储、**审批** |
+| copilot | Agent（本仓库） | **本机仓库发现与用户关注清单**、本地模型入口、命令执行、记忆面板 | 检索排序、项目知识存储、**审批** |
 | 记忆 | [Repotory](https://github.com/sky-jiangcheng/repotory) | 项目上下文、会话交接、已批准的知识页 | 决定 copilot 长什么样 |
 | 协议 | MCP | Agent 与记忆层之间唯一的通道 | —— |
 
@@ -20,6 +20,8 @@
 1. **Agent 不复制 Repotory 的检索逻辑。** 上下文从 `repotory_context` 来，不自己排 FTS、不自己算 embedding、不自建向量库。
 2. **Agent 不直连 Repotory 的数据库。** 只走 MCP 工具。数据库是 Repotory 的私有实现，Agent 没有理由知道它的存在。
 3. **Agent 不做完整 IDE。** 路由是 Repotory 的（`repotory_notes_read` / `repotory_notes_update` 等），Agent 只消费。
+4. **Agent 自己认仓库，不借 Repotory 的手。** 扫盘是 copilot 自己的事：它按用户给的根目录找 git 仓库，
+   自己列出来、自己记住用户关注了哪些。**仓库清单不进 Repotory 的库**——那台库是知识库，不是「用户正在做什么」的登记处。
 
 ## 与 Repotory 桌面端的关系：两个产品，各担一件事
 
@@ -32,6 +34,7 @@
 | 记忆通道 | 直接用 `internal/service` | **只走 MCP** |
 | 审批（approve / reject） | **有**（人在场） | **没有**——MCP 工具面里就没有这两个工具 |
 | 关掉它 | 工作台没了 | copilot 照常跑 |
+| 仓库从哪来 | 它自己的扫描根（`scan_roots`） | **它自己的扫描根 + 自己的收藏清单** |
 | 界面 | 三栏外壳 + 小机器人浮层 | 自己的窗口 + 托盘 |
 
 **审批权留在人手里，而且不是靠约定维持的。** Repotory 的 MCP 工具面在知识页上只注册了两个**纯读**工具（`repotory_wiki_search` / `repotory_wiki_read`），
@@ -43,10 +46,11 @@
 
 ## 第一版产品边界
 
-Phase 0 定下的五项，做到就算第一版：
+Phase 0 定下的五项，做到就算第一版；Phase 2.5 又加了一项「认仓库」：
 
 | 能力 | 含义 | 做到什么算完 |
 |---|---|---|
+| **认仓库** | **自己扫盘列出本机仓库，用户判断哪些要关注** | **新仓库冒泡提醒，收藏后进入列表** |
 | 聊天 | 与本地模型就当前项目对话，流式输出 | 选一个仓库 + 一段提问 → 有回答 |
 | 读项目 | 附加仓库路径、最近 git diff、Repotory 检索到的上下文 | 附加项可勾选、可预览 |
 | 执行命令 | 白名单工具执行，写操作需人工确认 | 命令完整显示、危险项默认禁止、执行有日志 |
@@ -63,6 +67,7 @@ Phase 0 定下的五项，做到就算第一版：
 | 默认 provider | 本机 Ollama（`http://127.0.0.1:11434/v1`）——不需要账号也不需要 Key | 想要别的模型得自己配一个 provider |
 | 默认模型 | `qwen3:8b`（Qwen3 8B Q4），M4 Pro 上先跑通 | 换模型要用户自己在 Ollama 里 pull |
 | 记忆通道 | MCP，不自建 | Agent 依赖 Repotory 的 MCP 二进制存在 |
+| 仓库发现 | **copilot 自己扫盘**，用户配根目录、自己决定关注谁 | **收藏清单与 Repotory 主库各存各的**——想共享得改主仓，那不是一个 copilot 该做的事 |
 
 **模型入口在 Phase 2 已经放开**：provider 就是「一个 base URL」，
 OpenRouter / OpenAI / DeepSeek / 硅基流动 / vLLM / LM Studio / Ollama 的 `/v1` 面
