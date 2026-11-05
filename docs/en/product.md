@@ -110,18 +110,22 @@ Every MCP tool the Agent consumes comes from Cinder's existing `repotory_*` tool
 - `repotory_scan` — discovering local Git repositories
 - `repotory_ask` — evidence-backed answers with sources (ADR-0033)
 - `repotory_agent_score` / `repotory_integrity` — introspection
+- `repotory_ai_audit` — what this machine sent to an AI model recently: when, which endpoint, which model, which surface, how many characters, and whether a local review rule blocked or flagged it
+- `repotory_ai_review_rules` — the local AI review rules and the input/output review switches (**read-only**)
+- `repotory_chat` — the **shared conversation**: threads and messages read and written across clients (`list` / `create` / `read` / `append` / `rename`); Warden, VS Code and JetBrains look at **the same record**
+- `repotory_metrics` — **the numbers**: repository and knowledge counts already stored in memory (it does not scan disk, run git or refresh caches)
 
 The tool names' single source of truth is the Cinder main repository, and **this repository keeps no
 runtime copy of that list**. Phase 1 deleted that copy: the tool list is fetched dynamically via MCP's
 `tools/list` at connection time (`src-tauri/src/mcp_client.rs`), and what the first screen shows is what
 the server just reported.
-**Phase 0's copy listed 7 names while the server registers 18** — and the missing ones included
+**Phase 0's copy listed 7 names while the server registered 18 at the time** (20 today, see below) — and the missing ones included
 `repotory_wiki_search` / `repotory_wiki_read` (the only way to read approved knowledge) and
 `repotory_ask` (evidence-backed answers).
 **A list that drifts is worse than no list, because it makes people think it is real** — there is now a
 self-check test in `memory_layer.rs` that watches for tool names being written back into the source.
 
-> The list above is **for readers, not a runtime contract**: on this machine the server reports **18**
+> The list above is **for readers, not a runtime contract**: on this machine the server reports **20**
 > tools, matching the names listed above. **At runtime the server's answer always wins** — when
 > Cinder adds a tool, the copilot sees it without a line of code changing here.
 
@@ -132,6 +136,58 @@ change", not "is the build new"** — the main repo pins that number next to the
 with a CI gate (changing the tool surface forces a version bump), so the implicit "which version pairs
 with which" constraint **has become a number you can read** on that side. **This repo keeps no copy of
 it** (same rule as the tool list) — it reads the server's value when it connects.
+
+## The resident shape, the numbers panel and cross-client sync (landed 2026-11-06)
+
+The user's positioning of this product is three sentences: **a small resident robot**, **a fast look at
+numbers like lines of code**, and **a topic-switching chat panel that stays in sync with the IDE
+plugins**. All three are landed; each has its own boundary.
+
+**① Resident = the companion window + the tray, not "the window is always on screen"**. The companion
+window is 168×196 (`index.html?surface=companion`), the main window 480×760; clicking the companion
+opens the chat, clicking its metric line opens the numbers panel. **Only the lantern body starts a
+native window drag** (`window_drag`); no control carries `data-tauri-drag-region` — an illustration made
+into a button is a button the user cannot press, and they will blame the program. **Closing the window
+hides it; only the tray's Quit exits**: `on_window_event` answers `CloseRequested` with `prevent_close`
+plus a hide, and the reason written in the code is "keep both webviews and their in-flight chat tasks
+alive" — **the red button must not cut off an answer that is being generated**. Warden is also the
+parent process of `repotory-mcp`, so exiting would tear down that conversation channel with it.
+**Cinder Desktop does the opposite and already exits on close** (ADR-0047 amendment): it hosts no
+long-lived channel.
+
+**② The numbers panel reads what memory already stores; it does not compute on the spot**.
+`workspace_metrics` → MCP `repotory_metrics`, polled every 15 seconds, with a manual refresh button that
+re-fetches once. **That reading is deliberate**: the tool **does not scan disk, run git or refresh
+caches**, so the panel answers fast and a click cannot change anything stored. `totalLines` is a number
+only when the cached language LOC covers the whole unambiguous scope — **otherwise it is null: the panel
+would rather show "there is no such number" than show a guessed one**. The "N lines · N commits" line on
+the companion window takes the same road and the same 15 seconds.
+
+**③ What syncs across clients is one and the same conversation, not two records that look alike**.
+The topic list and the messages are each polled every 2.5 seconds from those two new tables in memory
+(`chat_threads` / `chat_messages`); Warden, VS Code and JetBrains each keep a long-lived connection to
+`repotory-mcp` and read and write the same rows. **Three hard constraints**:
+
+- **Only completed messages sync**. A half-finished stream is not stored — **cross-client token streaming
+  means pushing every token through a stdio pipe into another process's UI, which does not buy
+  "in sync", it buys "frequently out of sync"**. So the status line says "synced / not synced",
+  **never "typing"**.
+- **Messages are immutable**. A message id is a client-generated UUID (an assistant reply uses
+  `${uuid}-reply`): replaying the same id with the same payload is **idempotent**, the same id with a
+  different payload **errors and never overwrites**. **Three clients appending to one thread concurrently
+  can only be kept honest by forbidding edits and allowing appends.**
+- **Sources are labelled truthfully**. Whether an assistant message reads "Warden" or "assistant · vscode"
+  comes from the message's own `source` field — **labelling a reply written back by a plugin as Warden is
+  claiming another client's answer**.
+
+A conversation with no shared topic and no history is a **temporary chat**: it stays in this window only,
+and the status line marks it as temporary and unsynced — **it does not pretend to be in the shared
+layer**. Chat keeps working when the memory layer is unreachable, consistent with decision 3 above.
+
+**④ The frontend opens no port**. Every sync is `invoke → Rust → MCP`; there is not one `fetch` to a
+local port anywhere in `src/`. This is not a style preference: **"the Agent goes over MCP and touches no
+other channel" is one of the hard boundaries above**, and a shared conversation is no reason to become
+the first exception — one more channel is one more place that can answer "who is writing this memory".
 
 ## Open questions (the maintainer decides)
 
@@ -231,16 +287,21 @@ technical one**.
 
 **Settled (2026-11-05): a layered gate.**
 
-① **The MCP write surface is five tools**: `notes_create` / `notes_update` / `notes_organize` /
-`handoff` / `scan` (`ai_review_rules` is read-only in practice). The other 13 are reads.
+① **The MCP write surface is six tools**: `notes_create` / `notes_update` / `notes_organize` /
+`handoff` / `scan` / `chat` (`ai_review_rules` is read-only in practice). The other 14 are reads.
 ② **Written automatically**: `handoff` (the session handoff — it was designed for agents to write, and
-ADR-0040 already put it in the evidence layer) and `scan` (registering a repository is not knowledge).
+ADR-0040 already put it in the evidence layer), `scan` (registering a repository is not knowledge) and
+`chat` (appending a session message — a **session output**, and the tables `repotory_chat` writes
+**never enter retrieval**, so this write cannot influence what the copilot reads next; it belongs with
+②, not with ③).
 ③ **Confirmed by a human first**: `notes_create` / `notes_update` / `notes_organize` — **a note is
 retrievable the moment it is written** (`SearchAll` covers notes), so the copilot could write into
 **the very memory it is about to read next**; ADR-0015's own words describe exactly that shape
 ("model writes into the store with no gate"). **A session output and durable knowledge are not the
 same kind of write**: the former is automatic, the latter goes through the gate.
-④ **When it lands**: the copilot **calls no MCP tool at all today** (it only connects and lists), so
-this applies when M2 actually writes the answer back through `repotory_handoff`.
+④ **When it lands**: the copilot **has called exactly two tools so far** — `repotory_chat` (the shared
+conversation) and `repotory_metrics` (the numbers panel), both session output or read-only, so neither
+touches this gate; the three durable-knowledge writes have never been called. This applies when M2
+actually writes the answer back through `repotory_handoff`.
 ⑤ **Phase 0's "human confirmation" now covers two things**: whitelisted command execution (Phase 3),
 and the copilot writing durable knowledge over MCP (the three above).

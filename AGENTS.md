@@ -136,16 +136,16 @@ scripts/             仓库守卫脚本
 - **流式输出用 `tauri::ipc::Channel`**（前端 `Channel` 类在 `@tauri-apps/api/core` 里），
   不要用返回值——返回值要让前端等整个回答，流式就没了。
 - **后端注册表里 `planned` 的后端不能被前端当成可用**：UI 必须区分「可用 / 未安装 / 规划中」三态，否则会向用户承诺一个不存在的运行时。
-- **图标已换成 Cinder 品牌标识**（OS 应用域 = squircle，与主仓 `build/appicon.png` 同一份母图）。
+- **图标是 Warden 的提灯标识**（OS 应用域 = squircle，母图在主仓 `build/icon-warden.svg`；**不是** Cinder 的字母 C —— Warden 是独立产品，ADR-0050 决策④）。
   品牌图标三域规则（母图 → 品牌域 / OS 应用域 / 字形域）在 Cinder 主仓库，
   **换图标要走那边的生成器，别在本仓库手改 PNG**：
   ```bash
   # 在主仓根目录跑，一条命令覆盖本仓的整套 Tauri 图标 + 托盘图
-  node scripts/generate-icons.mjs --agent-repo ../repotory-agent
+  node scripts/generate-icons.mjs --agent-repo ../warden
   ```
   本仓的图标**全部是生成物**（`src-tauri/icons/`：Tauri 的 PNG 阶梯 + Square* 商店阶梯 +
-  `icon.ico` / `icon.icns` + `tray-22.png`）。改动母图后必须重跑这条命令，
-  否则 app 会带着旧字母上线。
+  `icon.ico` / `icon.icns` + `tray-22.png`）。改动 `icon-warden.svg` 后必须重跑这条命令，
+  否则 app 会带着旧提灯上线。
 - **CI 有三道门**（`.github/workflows/ci.yml`）：docs mirror / 前端 build / Rust fmt+clippy+test。
   **本地提交前把三条都跑一遍**——`cargo fmt` 尤其，它会改文件。
 - **Rust 版本钉在 `rust-toolchain.toml`**（1.98.0），CI 与本地共用这一份真值。

@@ -58,9 +58,24 @@ pretending.
   copy of it**), **test the connection** (a real request, which proves the key, the endpoint and the
   model all work), and pick a model
 - **Chat with the model**: the answer streams in as it is written
+- **A chat panel with topics that is the same conversation the IDE plugins see**: the topic list and
+  the messages poll `repotory_chat` every 2.5 seconds, and **Warden, VS Code and JetBrains read and
+  write one record** — not three histories that look alike. **Only completed messages sync** (a
+  half-finished stream is never stored), **messages are immutable** (the same id with a different
+  payload errors instead of overwriting), and every assistant message is labelled from its own
+  `source` — **calling a plugin's reply "Warden" is claiming another client's answer**. A conversation
+  with no shared topic is a **temporary chat**: it stays in this window, and the status line says it
+  is not synced
+- **A small resident companion window**: 168×196 — click it to open the chat, click its metric line to
+  open the numbers panel, and only the lantern body drags the window. **Closing a window hides it
+  rather than quitting** (the red button must not cut off an answer being generated); **Quit in the tray
+  is what exits**
+- **The numbers, fast**: `repotory_metrics` reads what memory **already stores** — **it does not scan
+  disk, run git or refresh caches** — every 15 seconds, with a manual refresh; a scope it cannot cover
+  shows null, **never a guessed number**
 - **Actually reaches the memory layer**: it launches the `repotory-mcp` child process over stdio by
   itself, does one MCP handshake, then fetches the **real tool list** with `tools/list` and shows it on
-  the first screen (**18 tools** on this machine — **this repository keeps no copy of the list**; it
+  the first screen (**20 tools** on this machine — **this repository keeps no copy of the list**; it
   shows whatever the server reports)
 - Shows the first-version product boundary and the milestones
 
@@ -147,8 +162,12 @@ workbench and an assistant is still there" possible at all. (Wails v2 has no tra
 in `pkg/menu` is a dead type — and the external `systray` needs cgo.)
 
 **The tray is in place** (`src-tauri/src/tray.rs`): left click wakes the window, right click opens
-the Show / Quit menu. **Closing the window still ends the app** — the tray is a wake-up entry for a
-process that is already running, not a "hide the window and keep an icon" kind of residency.
+the Show / Quit menu. **Closing a window hides it instead of quitting** (`on_window_event` answers
+`CloseRequested` with `prevent_close`): an answer that is being generated must not be cut off by the
+red button, and Warden is the parent of its `repotory-mcp` child — quitting tears that channel down
+with it (`Drop` kills the child). **Quit in the tray is the way out.** Cinder Desktop does the
+opposite: **closing its window exits it**, because it hosts no long-lived channel (main repo
+ADR-0047).
 
 **It is "an independent process + a real tray + a real distribution channel", not a native UI
 framework** — Tauri uses the system WebView, not Swift/AppKit controls.
