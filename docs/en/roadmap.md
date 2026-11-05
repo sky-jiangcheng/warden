@@ -23,7 +23,7 @@ layer and the protocol — not the interface, and not the lifecycle.
 Split the copilot out of Cinder explicitly, making it **its own product**, while keeping it tightly
 bound.
 
-- Create the `repotory-agent` repository (formerly `repotory-agent-shell`, renamed on 2026-11-04);
+- Create the `warden` repository (formerly `repotory-agent-shell` → `repotory-agent`, renamed on 2026-11-04; renamed again to `sky-jiangcheng/warden` on 2026-11-05);
 - Position it: an **independent copilot** that talks to Cinder MCP by default;
 - Lock the stack: Tauri v2 + Rust backend + TS frontend;
 - Ollama first as the model entry, llama.cpp / MLX later;

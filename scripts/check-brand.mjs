@@ -6,12 +6,14 @@
 //
 // 这条线两边都会漂，而且方向相反：显示层漏一处，用户就看到一个旧名字（本仓的
 // 首屏曾经写着「Repotory Agent」就是这么来的）；标识层被「顺手清理」一处，每个
-// 用户的 MCP 客户端配置就断一次。所以这里查四件事：
+// 用户的 MCP 客户端配置就断一次。所以这里查五件事：
 //
 //   ① 品牌词有唯一真相源（brand.json），各处产品名必须与它相等
 //   ② 标识层冻结清单逐条仍在原处——冻结不是「不检查」，是「检查它还在」
 //   ③ 当前面（用户看得见的面）不再出现旧品牌词
-//   ④ 标题里的品牌词改了，指向它的锚点也得跟着改——否则文档链接指向空处
+//   ④ 改过名的仓地址不留当前面——旧仓地址与旧 Pages 路径都不是「旧一点」，
+//      它们是打不开的链接
+//   ⑤ 标题里的品牌词改了，指向它的锚点也得跟着改——否则文档链接指向空处
 //
 // 依赖：git（只扫已提交的文件——未提交的本地中间物不该决定门红不红）。
 //
@@ -267,7 +269,46 @@ for (const file of scanned) {
   })
 }
 
-// ------------------------------------------- ④ 标题改名 → 锚点跟着改 ----
+// ------------------------------------------ ④ 改过名的仓地址不留当前面 ----
+
+// The repository slugs changed on 2026-11-05 (ADR-0049 addendum two) —
+// this repository's own slug, and the upstream one — and the upstream had
+// changed once before (v2.0.0). A stale address is not "slightly old":
+// GitHub Pages does not follow a rename — the old path answers 404 while
+// the new one answers 200 — and GitHub promises no permanence for the 301
+// it hands out for the repository itself. So the old addresses are hunted
+// where a reader can still follow them.
+//
+// The org prefix is what makes a mention an address. A bare "repotory" is
+// the frozen identifier layer, which section ③ already owns, and a bare
+// mention of the old name in prose is a remark about history — neither is
+// a link. That is also why this check reads the raw line: the comment
+// stripper cuts at "//", which is inside every https:// URL, so a
+// stripped line would have had the address cut off before the scan.
+//
+// The stems are the names these two repositories have ever published
+// under: repo-nest (up to v1.16) and repotory (v2.0 to v2.31), the latter
+// also the stem of this repository's own repotory-agent. Everything after
+// the stem belongs to the same stale address, so the stem is what gets
+// hunted.
+const OLD_SLUG_STEMS = ['repo-nest', 'repotory']
+const oldAddressRe = new RegExp(
+  `sky-jiangcheng(?:\\.github\\.io)?/(?:${OLD_SLUG_STEMS.join('|')})[A-Za-z0-9._-]*`
+)
+
+for (const file of scanned) {
+  if (!existsSync(join(root, file))) continue
+  read(file)
+    .split('\n')
+    .forEach((line, i) => {
+      if (!oldAddressRe.test(line)) return
+      issues.push(
+        `${file}:${i + 1}: 当前面还指着改过名的仓地址 —— ${line.trim().slice(0, 90)}`
+      )
+    })
+}
+
+// ------------------------------------------- ⑤ 标题改名 → 锚点跟着改 ----
 
 // A markdown anchor is derived from the heading text. When the heading's
 // brand word changed, the anchor changed with it — and every link that
@@ -352,7 +393,9 @@ if (issues.length > 0) {
   for (const line of issues) console.error(`  - ${line}`)
   console.error(
     '\n修法：显示层改成 brand.json 里的词；标识层不许动——' +
-      '它是接口不是品牌（ADR-0049 决策③），要动先走契约 major bump。'
+      '它是接口不是品牌（ADR-0049 决策③），要动先走契约 major bump。' +
+      '旧仓地址换成 GitHub 上现在那个路径（仓地址不是品牌词，它跟实际路径走，' +
+      '改名当天必须同批换掉）。'
   )
   process.exit(1)
 }
@@ -360,5 +403,6 @@ if (issues.length > 0) {
 console.log(
   `brand OK: 母品牌 ${brand.mother} / 桌面 ${brand.desktop} / 助手 ${brand.agent}；` +
     `${BRAND_SITES.length + SIBLING_SITES.length} 处产品名一致，${FROZEN.length} 条冻结标识层仍在原处，` +
-    `${scanned.length} 个当前面文件无旧品牌词，${mdFiles.length} 个文档的锚点都还指得到标题。`
+    `${scanned.length} 个当前面文件无旧品牌词、无改过名的仓地址，` +
+    `${mdFiles.length} 个文档的锚点都还指得到标题。`
 )

@@ -72,7 +72,7 @@ scripts/             仓库守卫脚本
 - **品牌分两层：显示层全换、标识层冻结**（ADR-0049）。
   显示层是「用户看得见的名字」——本仓叫 **Warden**，桌面工作台叫 **Cinder Desktop**，母品牌叫 **Cinder**；真相源是本仓根目录的 `brand.json`（上游那份在主仓的 `build/brand.json`，**两处要同批改**，CI 各跑各的仓，谁也看不到对方）。
   标识层是「别人的机器认的东西」——`com.jiangcheng.repotoryagent`（Tauri 应用 id）、`repotory-agent`（crate / 二进制 / npm 包名）、`repotory-mcp`（它拉起的那个 MCP server）、`repotory_*`（工具名前缀）：**一个字都不许改**，改了是换接口，不是改名。
-  **上游主仓的 GitHub slug 不在这张清单里**：它已于 2026-11-05 由 `sky-jiangcheng/repotory` 改成 `sky-jiangcheng/cinder`（ADR-0049 补注）。仓地址由 GitHub 自动重定向，老 clone 照常 fetch；但 **GitHub Pages 不随仓名重定向**（旧路径实测 404），所以文档站 URL 必须与改名同批改掉。
+  **上游主仓的 GitHub slug 不在这张清单里**：它已于 2026-11-05 随母品牌 Cinder 改成 `sky-jiangcheng/cinder`（ADR-0049 补注二；改名前的地址记在那篇 ADR 里）。仓地址由 GitHub 自动重定向，老 clone 照常 fetch；但 **GitHub Pages 不随仓名重定向**（旧路径实测 404），所以文档站 URL 必须与改名同批改掉。
   守卫是 `npm run check:brand`（`scripts/check-brand.mjs`）：产品名必须等于 `brand.json`、冻结清单逐条仍在原处、当前面不留旧品牌词、标题改名后指向它的锚点也要跟着改。
   **要改品牌词：先改 `brand.json`，再改各处**，别反过来。
 - **提交规范**：conventional commits，`feat(scope): …` / `fix(scope): …` / `docs(scope): …` / `chore(scope): …`；一次提交只做一件事。

@@ -21,7 +21,7 @@ copilot 是**助手**（读、聊、执行）。两者共享记忆层与协议�
 
 把 copilot 从 Cinder 里明确分出来，做成**自己的产品**，但保持强绑定。
 
-- 仓库 `repotory-agent`（原名 `repotory-agent-shell`，2026-11-04 改名）；
+- 仓库 `warden`（原名 `repotory-agent-shell` → `repotory-agent`，2026-11-04 改名；2026-11-05 随品牌改成 `sky-jiangcheng/warden`）；
 - 明确定位：**独立 copilot**，默认接 Cinder MCP；
 - 技术栈定死：Tauri v2 + Rust 后端 + TS 前端（**选 Tauri 的硬理由是它自带托盘**）；
 - 模型入口先选 Ollama，后续可加 llama.cpp / MLX；
