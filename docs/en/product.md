@@ -1,11 +1,13 @@
 # Positioning and boundary
 
-> This page settles three things for Phase 0: what this copilot is, how far the first version goes, and which decisions are left to the maintainer.
+> This page settles three things for Phase 0: what this assistant is, how far the first version goes, and which decisions are left to the maintainer.
 > The phases and milestones live in [roadmap.md](roadmap.md).
 
 ## One line
 
-**Repotory Agent is an independent product: a copilot that runs on your own machine — not another Agent platform, and not one more screen inside the Repotory desktop app.** It turns "talk to a model about the project in front of you" into a window, and leaves "what to remember" to Repotory.
+**Repotory Agent is an independent product: a local copilot that runs on your own machine (**not** GitHub Copilot) — not another Agent platform, and not one more screen inside the Repotory desktop app.** It turns "talk to a model about the project in front of you" into a window, and leaves "what to remember" to Repotory.
+
+**It and Repotory are two products, one job each**: Repotory is the **workbench** (browse, edit, **approve**, govern), Repotory Agent is the **assistant** (read, chat, execute). They share one local memory and one protocol, and **approval stays in Repotory**.
 
 ## Three roles, three hard boundaries
 
@@ -58,6 +60,10 @@ Five capabilities, fixed by Phase 0, plus one more ("find the repositories") add
 | Run commands | Whitelisted tool execution; writes need human confirmation | The full command is shown, dangerous ones are blocked by default, every run is logged |
 | Memory panels | Current context / approved knowledge / cross-session conclusions | All three panels show real data |
 | Human confirmation | Dangerous actions never run unattended | The user sees the full command and its blast radius before confirming |
+
+**"Human confirmation" covers two things**: whitelisted command execution (Phase 3), and the copilot
+writing **durable knowledge** over MCP (`notes_create` / `notes_update` / `notes_organize`) — see item 5
+under "Open questions" below.
 
 ## Decisions fixed in Phase 0
 
@@ -165,23 +171,58 @@ reason to exist; while "probe but never launch" makes the first screen say "inst
 promising something it never verified**. The first screen now tells three states apart: not installed /
 installed but not answering / connected with the server's tool list.
 
-**The half that is still open**: "fall back to plain chat when the connection fails" waits for Phase 2.
-Today a failed connection makes the first screen say "not answering" and offer a retry — **it does not
-pretend the memory is still there**.
+**Settled (2026-11-05): the chat continues, and a banner says so out loud.** When the memory layer
+cannot be reached the chat still works, but the interface has to say "this turn has no memory", and
+**a failed context assembly must never be swallowed** — a silent fallback means the model answers with
+no basis while the user cannot tell that this turn had none. **Today the shape is already this**: the
+chat and the memory layer are two independent roads (`chat_send` does not depend on the MCP state), and
+the memory layer is one card among several. What this decision really constrains is the behaviour
+**after context injection lands** — not "can we chat", but "does this turn have a basis, and did we
+say so".
 
-### 4. Version coupling with Repotory
+### 4. ~~Version coupling with Repotory~~ (settled: self-evident at runtime, warn in plain words)
 
-The MCP tool set the Agent consumes evolves with Repotory (`repotory_*` tools are added and removed). Does the Agent need a capability handshake ("which tools do you have?") instead of assuming a list, or is a semantic-version constraint on Repotory enough?
+The original question: the MCP tool set the Agent consumes evolves with Repotory (`repotory_*` tools are added and removed). Does the Agent need a capability handshake ("which tools do you have?") instead of assuming a list, or is a semantic-version constraint on Repotory enough?
 
-**Open**: without a handshake, the Agent↔Repotory version combination is an implicit constraint that has to be written down in the README and the installer (not just kept in someone's head).
+**Settled (2026-11-05): self-evident at runtime, warn in plain words, never hard-refuse.**
+
+① **The server's version was already in hand** — Repotory's MCP server reports its `serverInfo` in the
+`initialize` response (main repo, `cmd/mcp/main.go:37` — `server.NewMCPServer("repotory-mcp", version.Version)`),
+and **this repo threw the whole response away** (`mcp_client.rs:250-259` only `?`s the result, it never
+binds it). Catching it is one change, **not a new protocol**.
+② **The first screen proves it**: it shows "Repotory vX.Y.Z · N tools" — the version and the tool count
+both come from the server, and **this repo keeps no copy** (the same rule as the tool list).
+③ **Warn only when out of bounds, never block**: below the supported floor the app says one plain
+sentence ("this Repotory is too old — upgrade it to use memory") and **does not hard-refuse** — a
+hard refusal turns an implicit coupling into an explicit one that still stops people, while the dynamic
+tool list already covers the "a tool was added" half.
+④ **No real capability handshake** (the client declares the tools it needs and probes for the missing
+ones): that solves "a tool was removed or renamed", which is rare, at a cost far above the benefit —
+**that half waits for the day it actually happens**.
+⑤ **The floor is derived from "the tool list changed"**, not from a magic number copied by hand.
+
 **Already decided**: the tool list is **fetched dynamically** (see above), so a newly added tool is not
 invisible just because a list was not updated — **a capability handshake solves "a tool was removed or
 renamed", not "a tool was added"**.
 
-### 5. Should the copilot perform writes at all?
+### 5. ~~Should the copilot perform writes at all?~~ (settled: layered — session output automatic, durable knowledge gated)
 
-What this repo fixes is "it goes over MCP, with one set of write tools" (`notes_create` / `notes_update` /
+The original question: what this repo fixes is "it goes over MCP, with one set of write tools" (`notes_create` / `notes_update` /
 `notes_organize` / `handoff`). But **"should the copilot write notes" is a product decision, not a
 technical one**.
 
-**Open**: whether writes also require human confirmation (Phase 0's "human confirmation" capability currently covers command execution only).
+**Settled (2026-11-05): a layered gate.**
+
+① **The MCP write surface is five tools**: `notes_create` / `notes_update` / `notes_organize` /
+`handoff` / `scan` (`ai_review_rules` is read-only in practice). The other 13 are reads.
+② **Written automatically**: `handoff` (the session handoff — it was designed for agents to write, and
+ADR-0040 already put it in the evidence layer) and `scan` (registering a repository is not knowledge).
+③ **Confirmed by a human first**: `notes_create` / `notes_update` / `notes_organize` — **a note is
+retrievable the moment it is written** (`SearchAll` covers notes), so the copilot could write into
+**the very memory it is about to read next**; ADR-0015's own words describe exactly that shape
+("model writes into the store with no gate"). **A session output and durable knowledge are not the
+same kind of write**: the former is automatic, the latter goes through the gate.
+④ **When it lands**: the copilot **calls no MCP tool at all today** (it only connects and lists), so
+this applies when M2 actually writes the answer back through `repotory_handoff`.
+⑤ **Phase 0's "human confirmation" now covers two things**: whitelisted command execution (Phase 3),
+and the copilot writing durable knowledge over MCP (the three above).

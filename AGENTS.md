@@ -1,6 +1,6 @@
 # AGENTS — 开发入口（面向 AI agent / 新成员）
 
-Repotory Agent：一个跑在本机的 **copilot**，独立产品。copilot 是入口，[Repotory](https://github.com/sky-jiangcheng/repotory) 是记忆层，MCP 是两者之间的开放协议。
+Repotory Agent：一个跑在本机的 **copilot**（**不是** GitHub Copilot），独立产品。copilot 是入口，[Repotory](https://github.com/sky-jiangcheng/repotory) 是记忆层，MCP 是两者之间的开放协议。
 
 **它与 Repotory 桌面端是两个产品**：桌面端是**工作台**（浏览、编辑、**审批**、治理），
 copilot 是**助手**（读、聊、执行）。**审批权留在人手里，而且不靠约定维持**——

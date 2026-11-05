@@ -12,6 +12,7 @@ Repotory MCP memory layer     ↑ copilot (Agent, Tauri)             ↑ local m
 ```
 
 The memory layer is open over MCP; the copilot itself only does "local model entry + command execution + memory panels".
+Here **"copilot" means this product** (Repotory Agent) — **not** GitHub Copilot.
 
 **It and the Repotory desktop app are two products**: the desktop app is the **workbench** (browse,
 edit, approve, govern), the copilot is the **assistant** (read, chat, execute). They share the memory
@@ -61,10 +62,12 @@ No UI polish in this phase — the data path comes first.
 - **Three states on the first screen**: not installed / installed but not answering / connected with N tools — none of them is mistaken for another;
 - **End-to-end tests**: a real pipe and a fake MCP server, covering the handshake, the tool list, the call round trip, the server's error, and **that the process really is killed**.
 
-**The one loop that is still open**: "put the context into the model request → write the answer back with `repotory_handoff`" needs a chat interface,
-which is Phase 2's work — **with no model request there is nothing to put anything into**.
-Likewise "degrade to plain chat" waits for Phase 2: today a failed connection makes the first screen say "not answering" and offer a retry,
-instead of pretending the memory is still there.
+**The one loop that is still open**: "put the context into the model request → write the answer back with `repotory_handoff`".
+The chat interface landed in Phase 2, so this is now **M2's work**, not "waiting for Phase 2".
+The policy for "degrade to plain chat when the connection fails" is **settled** (see "Open questions" item 3
+in [product.md](product.md)): **the chat continues and a banner says so out loud** — when the memory layer
+cannot be reached the chat still works, but the interface has to say "this turn has no memory", and
+**a failed context assembly must never be swallowed**.
 
 ## Phase 2: the smallest usable chat shell (1–2 weeks) — done
 
@@ -99,7 +102,11 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
   `HTTP_PROXY` (and `NO_PROXY` is honoured).
 
 **Still not done**: attaching the repository path / git diff / Repotory context, and writing the answer
-back with `repotory_handoff` — those need the notion of "the current repository" first.
+back with `repotory_handoff`. The notion of "the current repository" landed in Phase 2.5, so these two
+are **wiring, not a blocked prerequisite** any more.
+The layered policy for what may be written is **settled** (see "Open questions" item 5 in
+[product.md](product.md)): `handoff` / `scan` are written automatically, while **durable knowledge
+(`notes_create` / `notes_update` / `notes_organize`) needs a human confirmation first**.
 
 ## Phase 2.5: finding the repositories itself (1 week) — done
 
@@ -127,7 +134,7 @@ changing the main repository, which is not a copilot's job**.
 
 **Not done**: feeding a repository into a model request (which repository the
 conversation is about), and git metadata (branch, last commit). The list carries names
-and paths for now.
+and paths for now. **"The current repository" is in place — what is left is wiring, not a new concept.**
 
 ## Phase 3: the tool execution layer (2–3 weeks)
 

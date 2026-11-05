@@ -1,6 +1,8 @@
 # Repotory Agent
 
-一个跑在你自己机器上的 **copilot**：打开一个仓库，用本地模型聊这个项目，让 [Repotory](https://github.com/sky-jiangcheng/repotory) 负责"记得什么"。
+**Repotory Agent**——一个跑在你自己机器上的本地 copilot（**不是** GitHub Copilot）：打开一个仓库，用本地模型聊这个项目，让 [Repotory](https://github.com/sky-jiangcheng/repotory) 负责"记得什么"。
+
+**两个产品各担一件事**——Repotory 是**工作台**（浏览、编辑、**审批**、治理这份记忆）；Repotory Agent 是**助手**（读、聊、在 MCP 上执行命令）。共享同一份本地记忆、同一套协议，**审批永远在 Repotory 那边**。
 
 > **当前阶段：Phase 2 — 模型 provider 可配置，聊天链路已通。** 应用可构建、可运行、能连上记忆层、能跟任何符合 OpenAI 兼容标准的模型对话。
 

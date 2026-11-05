@@ -1,6 +1,8 @@
 # Repotory Agent
 
-A **copilot** that runs on your own machine: open a repository, talk to a local model about that project, and let [Repotory](https://github.com/sky-jiangcheng/repotory) remember what matters.
+**Repotory Agent** — a local copilot that runs on your own machine (**not** GitHub Copilot): open a repository, talk to a local model about that project, and let [Repotory](https://github.com/sky-jiangcheng/repotory) remember what matters.
+
+**Two products, one job each** — Repotory is the **workbench** (browse, edit, **approve** and govern this memory); Repotory Agent is the **assistant** (read, chat, run commands over MCP). One shared local memory, one protocol, and **approval stays in Repotory**.
 
 > **Status: Phase 2 — model providers are configurable and the chat loop works.** The app builds and runs, it reaches the memory layer, and it talks to any model behind an OpenAI-compatible API.
 
