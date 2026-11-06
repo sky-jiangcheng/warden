@@ -137,7 +137,7 @@ with a CI gate (changing the tool surface forces a version bump), so the implici
 with which" constraint **has become a number you can read** on that side. **This repo keeps no copy of
 it** (same rule as the tool list) — it reads the server's value when it connects.
 
-## The resident shape, the numbers panel and cross-client sync (landed 2026-11-06)
+## The resident shape, conversation-as-interface and cross-client sync (landed 2026-11-06)
 
 The user's positioning of this product is three sentences: **a small resident robot**, **a fast look at
 numbers like lines of code**, and **a topic-switching chat panel that stays in sync with the IDE
@@ -145,7 +145,7 @@ plugins**. All three are landed; each has its own boundary.
 
 **① Resident = the companion window + the tray, not "the window is always on screen"**. The companion
 window is 168×196 (`index.html?surface=companion`), the main window 480×760; clicking the companion
-opens the chat, clicking its metric line opens the numbers panel. **Only the lantern body starts a
+opens the chat; its metric line is a glanceable status now, not a button. **Only the lantern body starts a
 native window drag** (`window_drag`); no control carries `data-tauri-drag-region` — an illustration made
 into a button is a button the user cannot press, and they will blame the program. **Closing the window
 hides it; only the tray's Quit exits**: `on_window_event` answers `CloseRequested` with `prevent_close`
@@ -155,15 +155,27 @@ parent process of `repotory-mcp`, so exiting would tear down that conversation c
 **Cinder Desktop does the opposite and already exits on close** (ADR-0047 amendment): it hosts no
 long-lived channel.
 
-**② The numbers panel reads what memory already stores; it does not compute on the spot**.
-`workspace_metrics` → MCP `repotory_metrics`, polled every 15 seconds, with a manual refresh button that
-re-fetches once. **That reading is deliberate**: the tool **does not scan disk, run git or refresh
-caches**, so the panel answers fast and a click cannot change anything stored. `totalLines` is a number
-only when the cached language LOC covers the whole unambiguous scope — **otherwise it is null: the panel
-would rather show "there is no such number" than show a guessed one**. The "N lines · N commits" line on
-the companion window takes the same road and the same 15 seconds.
+**② Conversation as the interface: the numbers come from tool calls in the chat, and the main window
+no longer carries a resident panel** (landed the same day). The model request now carries `tools` — a
+read-only whitelist filtered live from the server's `tools/list` (`repotory_metrics` /
+`repotory_context` / `projects_list` / `projects_stats` / `notes_search` / `notes_read` /
+`wiki_search` / `wiki_read`), **with the schemas passed through verbatim from the server**; a model
+that names a tool outside the whitelist (including write tools the server advertises) gets a
+**client-side refusal**, never an execution; `repotory_chat` is not in the model's tool face at all —
+**persisting the reply is Warden's own job, and a model that could append would double-write the very
+conversation it is answering**. The round cap is 5, after which one final text-only round is forced.
+A tool call shows in the conversation as a "calling / done" status line only, **never written into
+`repotory_chat`** — it is a UI-layer event, not a conversation artifact. A temporary conversation
+without Cinder carries no tools and no system prompt; its single-turn contract is unchanged.
 
-**③ What syncs across clients is one and the same conversation, not two records that look alike**.
+**③ The numbers still read what memory already stores; nothing is computed on the spot**. In the
+conversation, `repotory_metrics` and the "N lines · N commits" line on the companion window take the
+same road (`workspace_metrics` → MCP, 15 seconds). **That reading is deliberate**: the tool **does not
+scan disk, run git or refresh caches**, so the numbers come fast and a question cannot change anything
+stored. `totalLines` is a number only when the cached language LOC covers the whole unambiguous scope —
+**otherwise it is null: better to show "there is no such number" than show a guessed one**.
+
+**④ What syncs across clients is one and the same conversation, not two records that look alike**.
 The topic list and the messages are each polled every 2.5 seconds from those two new tables in memory
 (`chat_threads` / `chat_messages`); Warden, VS Code and JetBrains each keep a long-lived connection to
 `repotory-mcp` and read and write the same rows. **Three hard constraints**:
@@ -184,7 +196,7 @@ A conversation with no shared topic and no history is a **temporary chat**: it s
 and the status line marks it as temporary and unsynced — **it does not pretend to be in the shared
 layer**. Chat keeps working when the memory layer is unreachable, consistent with decision 3 above.
 
-**④ The frontend opens no port**. Every sync is `invoke → Rust → MCP`; there is not one `fetch` to a
+**⑤ The frontend opens no port**. Every sync is `invoke → Rust → MCP`; there is not one `fetch` to a
 local port anywhere in `src/`. This is not a style preference: **"the Agent goes over MCP and touches no
 other channel" is one of the hard boundaries above**, and a shared conversation is no reason to become
 the first exception — one more channel is one more place that can answer "who is writing this memory".
@@ -299,9 +311,11 @@ retrievable the moment it is written** (`SearchAll` covers notes), so the copilo
 **the very memory it is about to read next**; ADR-0015's own words describe exactly that shape
 ("model writes into the store with no gate"). **A session output and durable knowledge are not the
 same kind of write**: the former is automatic, the latter goes through the gate.
-④ **When it lands**: the copilot **has called exactly two tools so far** — `repotory_chat` (the shared
-conversation) and `repotory_metrics` (the numbers panel), both session output or read-only, so neither
-touches this gate; the three durable-knowledge writes have never been called. This applies when M2
+④ **When it lands**: the copilot's own by-name bindings are still two — `repotory_chat` (the shared
+conversation transport) and `repotory_metrics` (the companion metric line); **the model**, in
+conversation, can call the eight read-only whitelisted tools (see "the resident shape" ②), all
+read-only, so none of this touches the gate; the three durable-knowledge writes are **refused
+client-side** for the model and will never execute. This applies when M2
 actually writes the answer back through `repotory_handoff`.
 ⑤ **Phase 0's "human confirmation" now covers two things**: whitelisted command execution (Phase 3),
 and the copilot writing durable knowledge over MCP (the three above).

@@ -153,6 +153,12 @@ pub struct ToolInfo {
     pub name: String,
     /// The server's own description of what the tool does.
     pub description: String,
+    /// The tool's JSON-schema input shape, as the server advertised it. The
+    /// function-calling face passes it through verbatim: a schema copied or
+    /// invented here would drift from the server's contract, and the contract
+    /// is the server's, not ours.
+    #[serde(default, skip_serializing)]
+    pub input_schema: Option<serde_json::Value>,
 }
 
 /// Why an MCP connection could not be established.
@@ -461,7 +467,15 @@ fn parse_tools(result: &serde_json::Value) -> Result<Vec<ToolInfo>, McpError> {
                 .and_then(|d| d.as_str())
                 .unwrap_or_default()
                 .to_string();
-            Some(ToolInfo { name, description })
+            let input_schema = tool
+                .get("inputSchema")
+                .cloned()
+                .filter(|schema| schema.is_object());
+            Some(ToolInfo {
+                name,
+                description,
+                input_schema,
+            })
         })
         .collect())
 }

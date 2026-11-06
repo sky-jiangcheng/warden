@@ -174,10 +174,8 @@ function renderMemory(status: ShellStatus) {
   const chip = pick<HTMLElement>("#memory-chip");
   const path = pick<HTMLElement>("#memory-path");
   const error = pick<HTMLElement>("#memory-error");
-  const tools = pick<HTMLElement>("#memory-tools");
   const retry = pick<HTMLButtonElement>("#memory-retry");
 
-  tools.replaceChildren();
   error.textContent = "";
   retry.hidden = true;
 
@@ -199,25 +197,10 @@ function renderMemory(status: ShellStatus) {
     return;
   }
 
+  // The count is the card's whole tool story now: the names the model can
+  // call are the server's business, and the conversation itself shows which
+  // one answered a question.
   setChip(chip, `已连接 · ${status.memory.tools.length} 个工具`, "ok");
-  for (const tool of status.memory.tools) {
-    const item = document.createElement("li");
-    item.className = "tool";
-
-    const name = document.createElement("span");
-    name.className = "tool__name";
-    name.textContent = tool.name;
-
-    const description = document.createElement("span");
-    description.className = "tool__desc";
-    description.textContent = tool.description;
-    // The card clamps the description to three lines; the title keeps the
-    // server's full wording one hover away.
-    description.title = tool.description;
-
-    item.append(name, description);
-    tools.appendChild(item);
-  }
 }
 
 /// Repositories the user has not answered for yet.

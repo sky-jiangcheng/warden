@@ -97,9 +97,10 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 - **流式聊天**：`tauri::ipc::Channel` 把增量推给前端，回答边写边显示；
 - **代理规则**：loopback 直连，其余走 `HTTPS_PROXY` / `HTTP_PROXY`（尊重 `NO_PROXY`）。
 
-**还没做的那一圈**：「附加仓库路径 / git diff / Cinder 上下文」与「回答写回
-`repotory_handoff`」还没接上。「当前仓库」这个概念 Phase 2.5 已经做出来了，
-所以这两件现在是**可以直接接线**的事（不再是前置阻塞）。
+**还没做的那一圈**：「git diff 注入」与「回答写回
+`repotory_handoff`」还没接上；仓库路径已经进了 system 提示词，只读工具面
+（`repotory_metrics` 等八个）也已在对话里接通——「当前仓库」这个概念 Phase 2.5 已经做出来了，
+所以剩下这两件仍是**可以直接接线**的事（不再是前置阻塞）。
 写回侧的分层策略**已定**（见 [product.md](product.md) 的「待确认」第 5 条）：
 `handoff` / `scan` 自动写，**长期知识（`notes_create` / `notes_update` / `notes_organize`）过一次人确认**。
 
@@ -180,7 +181,7 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 |---|---|---|
 | M1 | 能调用 Cinder MCP | 已完成（Phase 1） |
 | M1.5 | **能自己认仓库，并让用户判断关注谁** | **已完成（Phase 2.5）** |
-| M2 | 能和模型聊当前仓库 | 进行中（Phase 2：聊天链路已通，仓库上下文未接） |
+| M2 | 能和模型聊当前仓库 | 进行中（Phase 2：聊天链路已通；仓库路径已进 system 提示、只读工具面已接；diff 注入与 handoff 写回未接） |
 | M3 | 能安全执行 Git / Shell 命令 | 未开始 |
 | M4 | 能看到并管理跨会话记忆 | 未开始 |
 | M5 | 能一键安装、一键初始化 | 未开始 |

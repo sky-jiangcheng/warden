@@ -89,13 +89,17 @@ async fn the_answer_arrives_piece_by_piece_in_order() {
 
     let mut seen: Vec<String> = Vec::new();
     let answer = client
-        .chat_stream("fake-model-1", &[ChatMessage::user("hello")], |delta| {
-            seen.push(delta.to_string())
-        })
+        .chat_stream(
+            "fake-model-1",
+            &[ChatMessage::user("hello")],
+            &[],
+            |delta: &str| seen.push(delta.to_string()),
+        )
         .await
         .expect("the answer");
 
-    assert_eq!(answer, "Hello, world");
+    assert_eq!(answer.content, "Hello, world");
+    assert!(answer.tool_calls.is_empty());
     // The deltas are what the UI renders, and they must arrive as separate
     // pieces — a client that buffered the whole stream would show nothing
     // until the end, which defeats the point of streaming.

@@ -54,9 +54,15 @@ fn serve_chat() {
             "initialize" => Ok(
                 json!({"protocolVersion":"2024-11-05", "capabilities":{"tools":{}}, "serverInfo":{"name":"fake-mcp", "version":"0.0.0"}}),
             ),
-            "tools/list" => Ok(
-                json!({"tools":[{"name":"repotory_chat","description":"shared chat"},{"name":"repotory_metrics","description":"workspace metrics"}]}),
-            ),
+            "tools/list" => Ok(json!({
+                "tools": [
+                    {"name":"repotory_chat","description":"shared chat"},
+                    {"name":"repotory_metrics","description":"workspace metrics",
+                     "inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"Optional repository path"}}}},
+                    {"name":"repotory_notes_create","description":"create a note",
+                     "inputSchema":{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}}
+                ]
+            })),
             "tools/call" => {
                 let name = request["params"]["name"].as_str().unwrap_or("");
                 let args = &request["params"]["arguments"];
@@ -67,6 +73,13 @@ fn serve_chat() {
                         .map(|value| text(&value.to_string()))
                 } else if name == "repotory_metrics" {
                     Ok(text(&json!({"repositoryCount":2,"totalLines":null,"commitsToday":3,"additionsToday":40,"deletionsToday":5,"notesCount":6,"pendingReviewCount":1,"refreshedAt":null}).to_string()))
+                } else if name == "repotory_notes_create" {
+                    // The marker the whitelist test watches for: it must NEVER
+                    // appear in a reply — Warden refuses write tools client-side
+                    // before the wire.
+                    Ok(text(
+                        &json!({"created":true,"tool":"repotory_notes_create"}).to_string(),
+                    ))
                 } else {
                     Err("unknown tool".into())
                 }

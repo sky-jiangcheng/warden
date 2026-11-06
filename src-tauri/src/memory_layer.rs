@@ -184,6 +184,7 @@ mod tests {
             tools: vec![ToolInfo {
                 name: "repotory_context".to_string(),
                 description: "ctx".to_string(),
+                input_schema: None,
             }],
             error: None,
         })

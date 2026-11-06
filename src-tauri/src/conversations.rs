@@ -7,9 +7,11 @@ use std::sync::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::llm::{ChatMessage, LlmClient};
+use crate::llm::{
+    ChatMessage, LlmClient, ToolCallFunction, ToolCallOut, ToolFunctionSpec, ToolSpec,
+};
 use crate::mcp_client::McpSession;
-pub use crate::provider_commands::ChatChunk;
+pub use crate::provider_commands::{ChatChunk, ToolEvent};
 use crate::providers::{ProviderStore, load_api_key};
 
 // Capability bindings, not a substitute for the server's tools/list.
@@ -22,6 +24,68 @@ const CONTEXT_MESSAGES: usize = 32;
 // server's is worse than none: the title looks valid here and then fails there
 // with a message the user cannot act on.
 const MAX_TITLE_CHARS: usize = 160;
+
+// The tools the model may call: the memory layer's read-only face, filtered
+// from the server's own tools/list at call time. A whitelist is a capability
+// GRANT, not a contract copy — it names what Warden is willing to let the
+// model drive, while the schemas still come verbatim from the server. Writes
+// (notes_create/update, chat) are excluded on purpose: the reply path appends
+// the assistant message itself, so a model that could append would double-
+// write the very conversation it is answering; handoff and audit are the
+// memory layer's governance, not the copilot's. A write-capable face comes
+// later, behind a confirmation step.
+const MODEL_TOOLS: &[&str] = &[
+    "repotory_metrics",
+    "repotory_context",
+    "repotory_projects_list",
+    "repotory_projects_stats",
+    "repotory_notes_search",
+    "repotory_notes_read",
+    "repotory_wiki_search",
+    "repotory_wiki_read",
+];
+
+/// How many model→tool→model rounds one reply may spend before the next call
+/// is forced text-only. The same bound the Cinder desktop loop applies.
+const MAX_TOOL_ROUNDS: usize = 5;
+
+/// The model-facing tool set: the server's own tools, filtered to the
+/// whitelist. Schemas pass through verbatim — a schema copied here would
+/// drift from the server's contract.
+async fn model_tools(session: &McpSession) -> Result<Vec<ToolSpec>, String> {
+    let (_, tools) = session
+        .ensure()
+        .await
+        .map_err(|e| format!("Cinder MCP unavailable: {e}"))?;
+    Ok(tools
+        .iter()
+        .filter(|tool| MODEL_TOOLS.contains(&tool.name.as_str()))
+        .map(|tool| ToolSpec {
+            kind: "function".to_string(),
+            function: ToolFunctionSpec {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.input_schema.clone(),
+            },
+        })
+        .collect())
+}
+
+/// The system prompt for a tool-enabled conversation. Short on purpose: the
+/// context budget is small and the tools describe themselves.
+fn system_prompt(repository: Option<&str>) -> String {
+    let mut prompt = String::from(
+        "You are Warden, a local copilot. Cinder, the memory layer, offers \
+         read-only tools: use them for repository facts (metrics, notes, \
+         wiki, project stats) instead of guessing. Report what a tool \
+         returned; when it returns nothing, say so — never invent numbers. \
+         Answer in the user's language.",
+    );
+    if let Some(path) = repository.filter(|path| !path.is_empty()) {
+        prompt.push_str(&format!("\nCurrent repository: {path}"));
+    }
+    prompt
+}
 
 async fn call(session: &McpSession, name: &str, mut arguments: Value) -> Result<Value, String> {
     // Optional MCP strings must be omitted, not sent as JSON null: an older
@@ -221,6 +285,8 @@ fn context(messages: &[Message], message_id: &str) -> Result<Vec<ChatMessage>, S
         result.push(ChatMessage {
             role: message.role.clone(),
             content: message.content.clone(),
+            tool_call_id: None,
+            tool_calls: None,
         });
     }
     result.reverse();
@@ -342,6 +408,7 @@ pub async fn send(
         text,
         done: true,
         error: outcome.as_ref().err().cloned(),
+        tool_call: None,
     });
     outcome
 }
@@ -421,7 +488,7 @@ async fn send_inner(
         let (client, model) = tauri::async_runtime::spawn_blocking(move || prepare(&store, &input))
             .await
             .map_err(|e| format!("provider configuration task failed: {e}"))??;
-        let messages = if let Some(thread) = &request.thread_id {
+        let (mut messages, tools) = if let Some(thread) = &request.thread_id {
             append(
                 session,
                 thread,
@@ -436,9 +503,20 @@ async fn send_inner(
             let value = read(session, thread.clone()).await?;
             let history: Vec<Message> = serde_json::from_value(value["messages"].clone())
                 .map_err(|e| format!("invalid Cinder history: {e}"))?;
-            context(&history, &request.message_id)?
+            let mut context = context(&history, &request.message_id)?;
+            // Function Calling is a Cinder-thread capability: the tools are
+            // the memory layer's, so a temporary conversation has none, and
+            // the system prompt exists only when tools do — the no-Cinder
+            // contract (no server-injected anything) stays intact. The
+            // thread's path is the conversation's repository scope.
+            let tools = model_tools(session).await.unwrap_or_default();
+            if !tools.is_empty() {
+                let repository = value["thread"]["path"].as_str().map(|p| p.to_string());
+                context.insert(0, ChatMessage::system(system_prompt(repository.as_deref())));
+            }
+            (context, tools)
         } else {
-            vec![ChatMessage::user(&request.message)]
+            (vec![ChatMessage::user(&request.message)], Vec::new())
         };
         // Record the attempt before the first network await. If its task is
         // interrupted, replay cannot silently issue a second paid request.
@@ -453,25 +531,117 @@ async fn send_inner(
                     outcome: Err("generation was interrupted; use a new messageId to retry".into()),
                 },
             );
-        let outcome = client
-            .chat_stream(&model, &messages, |delta| {
-                text.push_str(delta);
+        // The generation loop: model → (tool calls → execute → feed back)×,
+        // each round streamed. The final round's text is the answer — a tool
+        // round's preamble restarts the visible text via the tool event's
+        // empty `text`.
+        let mut round: usize = 0;
+        let outcome = loop {
+            round += 1;
+            // The round cap: once spent, the next call is text-only, so the
+            // answer arrives in words instead of the cap silently turning
+            // into an empty reply.
+            let round_tools: &[ToolSpec] = if round > MAX_TOOL_ROUNDS { &[] } else { &tools };
+            let streamed = match client
+                .chat_stream(&model, &messages, round_tools, |delta| {
+                    text.push_str(delta);
+                    emit(ChatChunk {
+                        delta: delta.to_string(),
+                        text: text.clone(),
+                        done: false,
+                        error: None,
+                        tool_call: None,
+                    });
+                })
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(error) => break Err(error.to_string()),
+            };
+            if streamed.tool_calls.is_empty() {
+                break if streamed.content.trim().is_empty() {
+                    Err("the provider returned no answer".to_string())
+                } else {
+                    Ok(streamed.content)
+                };
+            }
+            if tools.is_empty() {
+                break Err("the model requested tools but none were offered".to_string());
+            }
+            if round > MAX_TOOL_ROUNDS {
+                break Err("the model kept requesting tools after the final round".to_string());
+            }
+            // The preamble was not the answer: the visible text restarts, and
+            // the UI learns what is being called.
+            text.clear();
+            for call in &streamed.tool_calls {
                 emit(ChatChunk {
-                    delta: delta.to_string(),
-                    text: text.clone(),
+                    delta: String::new(),
+                    text: String::new(),
                     done: false,
                     error: None,
+                    tool_call: Some(ToolEvent {
+                        name: call.name.clone(),
+                        done: false,
+                    }),
                 });
-            })
-            .await
-            .map_err(|e| e.to_string())
-            .and_then(|answer| {
-                if answer.trim().is_empty() {
-                    Err("the provider returned no answer".into())
+            }
+            // Echo the assistant turn WITH its calls — the protocol pairs every
+            // tool result with the preceding assistant tool_calls — then
+            // execute each. A model that names a tool outside the whitelist
+            // gets a refusal as its result, never an execution.
+            let echo: Vec<ToolCallOut> = streamed
+                .tool_calls
+                .iter()
+                .map(|call| ToolCallOut {
+                    id: call.id.clone(),
+                    kind: "function".to_string(),
+                    function: ToolCallFunction {
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    },
+                })
+                .collect();
+            messages.push(ChatMessage::assistant_with_tool_calls(
+                streamed.content.clone(),
+                echo,
+            ));
+            for tool_call in &streamed.tool_calls {
+                let allowed = MODEL_TOOLS.contains(&tool_call.name.as_str());
+                let arguments = if tool_call.arguments.trim().is_empty() {
+                    json!({})
                 } else {
-                    Ok(answer)
-                }
-            });
+                    serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| json!({}))
+                };
+                let content = if !allowed {
+                    json!({"error": format!("tool {} is not available to the model", tool_call.name)})
+                        .to_string()
+                } else {
+                    match call(session, &tool_call.name, arguments).await {
+                        Ok(value) => value.to_string(),
+                        Err(error) => json!({"error": error}).to_string(),
+                    }
+                };
+                messages.push(ChatMessage::tool_result(tool_call.id.clone(), content));
+                emit(ChatChunk {
+                    delta: String::new(),
+                    text: String::new(),
+                    done: false,
+                    error: None,
+                    tool_call: Some(ToolEvent {
+                        name: tool_call.name.clone(),
+                        done: true,
+                    }),
+                });
+            }
+        };
+        let outcome = outcome.and_then(|answer| {
+            if answer.trim().is_empty() {
+                Err("the provider returned no answer".into())
+            } else {
+                Ok(answer)
+            }
+        });
         state
             .attempts
             .lock()

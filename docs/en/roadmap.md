@@ -101,9 +101,10 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
 - **The proxy rule**: loopback is reached directly, everything else goes through `HTTPS_PROXY` /
   `HTTP_PROXY` (and `NO_PROXY` is honoured).
 
-**Still not done**: attaching the repository path / git diff / Cinder context, and writing the answer
-back with `repotory_handoff`. The notion of "the current repository" landed in Phase 2.5, so these two
-are **wiring, not a blocked prerequisite** any more.
+**Still not done**: injecting the git diff, and writing the answer back with `repotory_handoff`; the
+repository path is already in the system prompt and the read-only tool face (`repotory_metrics` and
+its seven siblings) is already wired into the conversation. The notion of "the current repository"
+landed in Phase 2.5, so these two remain **wiring, not a blocked prerequisite**.
 The layered policy for what may be written is **settled** (see "Open questions" item 5 in
 [product.md](product.md)): `handoff` / `scan` are written automatically, while **durable knowledge
 (`notes_create` / `notes_update` / `notes_organize`) needs a human confirmation first**.
@@ -195,7 +196,7 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 |---|---|---|
 | M1 | It can call Cinder MCP | done (Phase 1) |
 | M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
-| M2 | It can talk to a model about the current repository | in progress (Phase 2: the chat loop works, the repository context is not wired) |
+| M2 | It can talk to a model about the current repository | in progress (Phase 2: the chat loop works; the repository path is in the system prompt and the read-only tool face is wired; diff injection and the handoff write-back are not) |
 | M3 | It can safely run Git / Shell commands | not started |
 | M4 | It can see and manage cross-session memory | not started |
 | M5 | It installs and initializes in one step | not started |

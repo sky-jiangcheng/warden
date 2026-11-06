@@ -253,52 +253,6 @@ body {
   color: var(--warning);
 }
 
-/* ----------------------------------------------------------------- tools */
-
-/* The server's tool list, as it arrived over the wire. The list scrolls:
-   a server can advertise a lot, and the card must not push the rest of the
-   screen off the window. */
-.tools {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-  max-height: 230px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.tool {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 0;
-}
-
-.tool + .tool {
-  border-top: 1px solid var(--border-subtle);
-}
-
-.tool__name {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  word-break: break-all;
-}
-
-.tool__desc {
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-tertiary);
-  /* The server's descriptions are paragraphs, and 18 of them turn the card
-     into a wall of prose. Three lines plus the native tooltip carries the
-     full text without costing the reader a scroll per tool. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-}
-
 /* ------------------------------------------------------------------ btn */
 
 .btn {
@@ -853,19 +807,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .text-btn:hover { text-decoration: underline; }
 .text-btn:active { background: var(--accent-soft); }
 .text-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.metrics { margin: 0 24px; border-block: 1px solid var(--border-subtle); flex-shrink: 0; }
-.metrics summary { cursor: pointer; display: flex; gap: 12px; align-items: center; min-height: 37px; font-size: 10px; color: var(--text-tertiary); list-style: none; }
-.metrics summary::-webkit-details-marker { display: none; }
-.metric-heading { color: var(--text-secondary); font-size: 11px; }
-#metrics-summary { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chevron { font-size: 16px; transition: transform 140ms; }
-.metrics[open] .chevron { transform: rotate(180deg); }
-.metrics__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 12px; padding: 12px 0 16px; }
-.metrics__grid > div { display: flex; flex-direction: column; gap: 2px; }
-.metrics__grid strong { font-family: var(--font-mono); font-size: 16px; letter-spacing: -.04em; font-weight: 500; overflow-wrap: anywhere; }
-.metrics__grid span { font-size: 10px; color: var(--text-tertiary); }
-.metrics__foot { display: flex; gap: 8px; justify-content: space-between; align-items: center; padding-bottom: 9px; font-size: 10px; color: var(--text-tertiary); }
-.metrics__foot > span { overflow-wrap: anywhere; }
 .environment-note { margin: 12px 24px 0; padding-left: 10px; border-left: 2px solid var(--border-subtle); color: var(--text-tertiary); font-size: 11px; line-height: 1.65; flex-shrink: 0; }
 .chat__log { flex: 1; min-height: 0; max-height: none; padding: 24px; border: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; overflow-anchor: none; }
 .chat__empty { margin: auto 0; padding: 16px 5px 22px; color: var(--text-primary); }
@@ -963,9 +904,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .toast__path { max-width: 180px; font-size: 9px; }
 .toast__label { font-size: 9px; }
 .toast__actions { gap: 4px; }
-.tools-details summary { font-size: 11px; color: var(--text-secondary); cursor: pointer; margin: 12px 0; }
-.tools { max-height: 200px; }
-.tool__name, .tool__desc { font-size: 10px; }
 .boundary__note { font-size: 11px; }
 .boundary__name { font-size: 12px; }
 .topic-sheet { height: min(78dvh, 640px); }
@@ -1005,7 +943,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .companion__actions button { height: 27px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border-subtle); color: var(--text-primary); background: var(--bg-card); font-size: 10px; box-shadow: var(--shadow-sm); }
 .companion__actions button:last-child { padding: 3px 7px; }
 .companion__actions svg { width: 15px; height: 15px; vertical-align: middle; }
-.companion__actions button:hover, .companion__metric:hover { background: var(--accent-soft); }
+.companion__actions button:hover { background: var(--accent-soft); }
 .companion__status { margin: 2px 0 0; max-width: 150px; border-radius: 4px; padding: 0 3px; color: var(--text-secondary); background: var(--bg-card); font-size: 8px; line-height: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .companion__status:empty { display: none; }
 @keyframes lantern-blink { 0%, 43%, 47%, 100% { transform: scaleY(1); } 45% { transform: scaleY(.12); } }
@@ -1022,7 +960,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   .brand__actions { gap: 0; }
   .icon-btn { width: 31px; height: 31px; padding: 5px; }
   .topic-bar { padding-inline: 18px; }
-  .metrics { margin-inline: 18px; }
   .chat__log { padding-inline: 18px; }
   .composer-area { padding-inline: 12px; }
   .chat__empty h2 { font-size: 27px; }

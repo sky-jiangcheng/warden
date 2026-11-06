@@ -81,7 +81,8 @@ fn handle(mut stream: TcpStream, served: usize) {
     }
 
     if path == "/v1/chat/completions" {
-        match request["model"].as_str().unwrap_or("") {
+        let model = request["model"].as_str().unwrap_or("");
+        match model {
             "fail" => {
                 respond(
                     &mut stream,
@@ -118,6 +119,47 @@ fn handle(mut stream: TcpStream, served: usize) {
                     "text/event-stream",
                     b"data: {\"error\":{\"message\":\"fixture stream failed\"}}\n\n",
                 );
+                return;
+            }
+            // The function-calling fixture. `tools` asks for repotory_metrics;
+            // `tools:<name>` asks for any tool by name (the whitelist test
+            // uses this to name a write tool the model must be refused).
+            // The first request is answered with a tool_call; every later one
+            // echoes the request's messages and tools, so the test can assert
+            // exactly what the caller sent back up the wire.
+            m if m == "tools" || m.starts_with("tools:") => {
+                let tool = m.strip_prefix("tools:").unwrap_or("repotory_metrics");
+                if served == 1 {
+                    let arguments = if tool == "repotory_metrics" {
+                        r#"{\"path\":\"/repo/one\"}"#
+                    } else {
+                        "{}"
+                    };
+                    let chunk = serde_json::json!({
+                        "choices": [{
+                            "delta": {"tool_calls": [{
+                                "index": 0,
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": tool, "arguments": arguments},
+                            }]},
+                            "finish_reason": "tool_calls",
+                        }]
+                    });
+                    let body = format!("data: {chunk}\n\ndata: [DONE]\n\n");
+                    respond(&mut stream, "200 OK", "text/event-stream", body.as_bytes());
+                } else {
+                    let answer = serde_json::json!({
+                        "messages": request["messages"],
+                        "tools": request["tools"],
+                    })
+                    .to_string();
+                    let body = format!(
+                        "data: {}\n\ndata: [DONE]\n\n",
+                        serde_json::json!({"choices":[{"delta":{"content":answer}}]})
+                    );
+                    respond(&mut stream, "200 OK", "text/event-stream", body.as_bytes());
+                }
                 return;
             }
             _ => {}

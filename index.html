@@ -55,15 +55,7 @@
       </header>
       <main class="conversation" aria-label="Warden 对话">
         <div class="topic-bar"><button class="topic-title" id="topic-title" type="button" aria-haspopup="dialog" aria-controls="topics-sheet">新对话</button><span class="sync-label" id="sync-status" role="status">连接中</span><button class="text-btn" id="sync-retry" type="button" hidden>重试</button></div>
-        <details class="metrics" id="metrics-panel">
-          <summary><span class="metric-heading">工作一览</span><span id="metrics-summary">代码量 · 今日活动</span><span class="chevron" aria-hidden="true">⌄</span></summary>
-          <div class="metrics__grid">
-            <div><strong id="metric-lines">—</strong><span>代码行</span></div><div><strong id="metric-commits">—</strong><span>今日提交</span></div><div><strong id="metric-changes">—</strong><span>今日增 / 删</span></div>
-            <div><strong id="metric-repos">—</strong><span>仓库</span></div><div><strong id="metric-notes">—</strong><span>记忆笔记</span></div><div><strong id="metric-reviews">—</strong><span>待人工审批</span></div>
-          </div>
-          <div class="metrics__foot"><span id="metrics-status" role="status">尚未读取</span><button class="text-btn" id="metrics-refresh" type="button">刷新</button></div>
-        </details>
-        <p class="environment-note" id="environment-note" hidden>浏览器预览 · 未连接本机服务。对话、指标与同步需在 Warden 桌面端使用。</p>
+        <p class="environment-note" id="environment-note" hidden>浏览器预览 · 未连接本机服务。对话与同步需在 Warden 桌面端使用。</p>
         <div class="chat__log" id="chat-log" tabindex="0" role="region" aria-label="对话记录">
           <section class="chat__empty" id="chat-empty">
             <span class="empty__eyebrow">YOUR QUIET COPILOT</span><h2>留一点空间，<br />想清楚再出发。</h2><p>关于代码，关于接下来的工作。<br />从一个问题开始，我在这里。</p>
@@ -197,11 +189,11 @@
           </div>
           <p class="card__hint">
             copilot 不自建记忆：项目上下文与会话交接都走 Cinder 的 MCP 工具。
-            工具清单在连接时由服务端给出，本仓不抄一份。
+            工具清单在连接时由服务端给出，本仓不抄一份；对话中的工具调用
+            也直接来自这份清单。
           </p>
           <p class="meta" id="memory-path"></p>
           <p class="meta meta--error" id="memory-error"></p>
-          <details class="tools-details"><summary>服务端工具清单</summary><ul class="tools" id="memory-tools"></ul></details>
           <button class="btn" id="memory-retry" type="button" hidden>
             重试连接
           </button>
@@ -243,11 +235,11 @@
       </div>
     </dialog>
     <main class="companion" id="companion-surface" aria-label="Warden 提灯伙伴">
-      <button class="companion__metric" id="companion-metric" type="button" title="打开工作指标">工作一览 · —</button>
+      <p class="companion__metric" id="companion-metric" role="status" title="工作一览">工作一览 · —</p>
       <div class="lantern" id="companion-drag" title="拖动提灯伙伴" role="img" aria-label="Warden 提灯机器人，可用鼠标拖动身体移动窗口">
         <svg viewBox="0 0 140 126" aria-hidden="true"><ellipse class="lantern__shadow" cx="70" cy="119" rx="39" ry="4" /><path class="lantern__handle" d="M54 27V17a16 16 0 0 1 32 0v10" /><path class="lantern__arm" d="M33 66 21 78m86-12 12 12" /><path class="lantern__feet" d="M51 105v9h-9m47-9v9h9" /><rect class="lantern__body" x="33" y="28" width="74" height="79" rx="26" /><path class="lantern__cap" d="M42 31q28-13 56 0" /><rect class="lantern__face" x="43" y="44" width="54" height="34" rx="14" /><g class="lantern__eyes"><path d="M58 57v6m24-6v6" /><path class="lantern__smile" d="M66 68q4 3 8 0" /></g><path class="lantern__light" d="M61 87h18m-14 5h10" /><circle class="lantern__signal" cx="70" cy="22" r="3" /></svg>
       </div>
-      <div class="companion__actions"><button id="companion-open" type="button">打开对话 <span aria-hidden="true">↗</span></button><button id="companion-stats" type="button" aria-label="查看工作指标" title="查看指标"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11m7 8V5m7 14v-6" /></svg></button></div><p id="companion-status" class="companion__status" role="status"></p>
+      <div class="companion__actions"><button id="companion-open" type="button">打开对话 <span aria-hidden="true">↗</span></button></div><p id="companion-status" class="companion__status" role="status"></p>
     </main>
   </body>
 </html>

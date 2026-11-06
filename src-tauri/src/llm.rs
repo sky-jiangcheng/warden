@@ -82,6 +82,68 @@ impl std::error::Error for LlmError {}
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// The tool result's id, on a `tool` role message. The explicit rename
+    /// overrides the struct's camelCase: the wire field is `tool_call_id`.
+    #[serde(rename = "tool_call_id", skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// The calls a tool-calling assistant turn made. The echo of that turn
+    /// must carry them — a tool message is only defined as the response to
+    /// its preceding assistant tool_calls, and strict providers reject the
+    /// pairing when the assistant half is missing. The explicit rename keeps
+    /// the struct's camelCase rule from turning it into "toolCalls".
+    #[serde(rename = "tool_calls", skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallOut>>,
+}
+
+/// One tool call, in the wire shape an assistant message echoes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCallOut {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ToolCallFunction,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    #[serde(default)]
+    pub arguments: String,
+}
+
+/// One function the model may call, in the OpenAI-compatible wire shape.
+#[derive(Clone, Debug, Serialize)]
+pub struct ToolSpec {
+    /// Always "function".
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ToolFunctionSpec,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ToolFunctionSpec {
+    pub name: String,
+    pub description: String,
+    /// The JSON-schema parameters, verbatim from the server's tools/list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
+}
+
+/// One tool call the model asked for, reassembled from the stream.
+#[derive(Clone, Debug)]
+pub struct ToolCallRequest {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// What one streaming model call produced.
+#[derive(Clone, Debug)]
+pub struct StreamOutcome {
+    /// The text this call wrote. Empty when the call only asked for tools.
+    pub content: String,
+    /// The tool calls this call asked for, in request order.
+    pub tool_calls: Vec<ToolCallRequest>,
 }
 
 impl ChatMessage {
@@ -89,6 +151,8 @@ impl ChatMessage {
         Self {
             role: "user".to_string(),
             content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -96,6 +160,28 @@ impl ChatMessage {
         Self {
             role: "system".to_string(),
             content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    /// The assistant turn that asked for tool calls, echoed verbatim.
+    pub fn assistant_with_tool_calls(content: impl Into<String>, calls: Vec<ToolCallOut>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: Some(calls),
+        }
+    }
+
+    /// The result of one executed tool call.
+    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            tool_call_id: Some(call_id.into()),
+            tool_calls: None,
         }
     }
 }
@@ -348,6 +434,11 @@ impl LlmClient {
     /// The callback is called with each text delta as it arrives. This is the
     /// shape a UI wants: the answer appears while it is being written.
     ///
+    /// When `tools` is non-empty the request offers them for function
+    /// calling; the returned outcome separates the text from any tool calls
+    /// the model asked for, so the caller runs the tool loop and keeps
+    /// streaming only the final round's text.
+    ///
     /// The stream format is Server-Sent Events: lines starting with `data:`,
     /// each holding one JSON chunk, and the literal `data: [DONE]` ending it.
     /// A comment line (`: keep-alive`) is not data and is skipped.
@@ -355,14 +446,19 @@ impl LlmClient {
         &self,
         model: &str,
         messages: &[ChatMessage],
+        tools: &[ToolSpec],
         mut on_delta: impl FnMut(&str),
-    ) -> Result<String, LlmError> {
+    ) -> Result<StreamOutcome, LlmError> {
         let url = format!("{}/chat/completions", self.base_url);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": model,
             "messages": messages,
             "stream": true,
         });
+        if !tools.is_empty() {
+            body["tools"] =
+                serde_json::to_value(tools).map_err(|e| LlmError::Protocol(e.to_string()))?;
+        }
         let request = self
             .request(self.http.post(&url))
             .header("Content-Type", "application/json")
@@ -395,6 +491,7 @@ impl LlmClient {
         let mut buffer = Vec::new();
         let mut answer = String::new();
         let mut finished = false;
+        let mut calls: Vec<StreamCallAcc> = Vec::new();
 
         loop {
             let chunk = tokio::time::timeout(
@@ -429,11 +526,26 @@ impl LlmClient {
                         return Err(LlmError::Protocol(error_message(data)));
                     }
                     finished |= value["choices"][0]["finish_reason"].is_string();
+                    // Tool-call deltas accumulate across chunks: the id and
+                    // name arrive first, the arguments in fragments.
+                    for fragment in parse_stream_tool_fragments(&line) {
+                        while calls.len() <= fragment.index {
+                            calls.push(StreamCallAcc::default());
+                        }
+                        let slot = &mut calls[fragment.index];
+                        if !fragment.id.is_empty() {
+                            slot.id = fragment.id;
+                        }
+                        if !fragment.function.name.is_empty() {
+                            slot.name = fragment.function.name;
+                        }
+                        slot.arguments.push_str(&fragment.function.arguments);
+                    }
                 }
                 if let Some(delta) = parse_stream_line(&line) {
                     if delta.is_empty() {
                         // `[DONE]` — the stream ended.
-                        return Ok(answer);
+                        return Ok(finish_stream(answer, calls));
                     }
                     answer.push_str(&delta);
                     on_delta(&delta);
@@ -444,7 +556,7 @@ impl LlmClient {
         // A disconnected stream is not a completed answer to persist in the
         // shared history. Accept providers that send finish_reason but no DONE.
         if finished && buffer.iter().all(u8::is_ascii_whitespace) {
-            Ok(answer)
+            Ok(finish_stream(answer, calls))
         } else {
             Err(LlmError::Protocol(
                 "the answer stream ended before completion".into(),
@@ -575,6 +687,88 @@ pub fn parse_stream_line(line: &str) -> Option<String> {
     delta.map(|d| d.to_string())
 }
 
+/// One tool_call fragment inside a streaming delta chunk, wire shape.
+#[derive(Debug, Deserialize)]
+struct StreamToolFragment {
+    #[serde(default)]
+    index: usize,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    function: StreamToolFunction,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamToolFunction {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    arguments: String,
+}
+
+/// Accumulates one tool_call across multiple SSE chunks.
+#[derive(Default)]
+struct StreamCallAcc {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// Extracts the tool_call fragments of one SSE data line. A line without
+/// tool_calls (plain content, `[DONE]`, a comment, malformed JSON) yields an
+/// empty vec — the same tolerance `parse_stream_line` applies to content.
+fn parse_stream_tool_fragments(line: &str) -> Vec<StreamToolFragment> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with(':') {
+        return Vec::new();
+    }
+    let Some(payload) = line.strip_prefix("data:").map(str::trim) else {
+        return Vec::new();
+    };
+    if payload.is_empty() || payload == "[DONE]" {
+        return Vec::new();
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return Vec::new();
+    };
+    let Some(delta) = value
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("delta"))
+    else {
+        return Vec::new();
+    };
+    let Some(calls) = delta.get("tool_calls") else {
+        return Vec::new();
+    };
+    serde_json::from_value(calls.clone()).unwrap_or_default()
+}
+
+/// Builds the stream outcome: content plus reassembled tool calls. A fragment
+/// slot with no function name is stream noise and is dropped; a call whose id
+/// never arrived gets a stable synthetic one — the pairing only has to agree
+/// within this conversation.
+fn finish_stream(content: String, calls: Vec<StreamCallAcc>) -> StreamOutcome {
+    let tool_calls = calls
+        .into_iter()
+        .enumerate()
+        .filter(|(_, call)| !call.name.is_empty())
+        .map(|(index, call)| ToolCallRequest {
+            id: if call.id.is_empty() {
+                format!("call_{index}")
+            } else {
+                call.id
+            },
+            name: call.name,
+            arguments: call.arguments,
+        })
+        .collect();
+    StreamOutcome {
+        content,
+        tool_calls,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,6 +834,81 @@ mod tests {
     #[test]
     fn a_malformed_data_line_is_skipped_rather_than_fatal() {
         assert!(parse_stream_line("data: {not json").is_none());
+    }
+
+    #[test]
+    fn tool_call_fragments_are_read_from_a_stream_line() {
+        let line = r##"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"repotory_metrics","arguments":"{\"pa"}}]}}]}"##;
+        let fragments = parse_stream_tool_fragments(line);
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].index, 0);
+        assert_eq!(fragments[0].id, "call_1");
+        assert_eq!(fragments[0].function.name, "repotory_metrics");
+        assert_eq!(fragments[0].function.arguments, "{\"pa");
+    }
+
+    #[test]
+    fn a_line_without_tool_calls_yields_no_fragments() {
+        assert!(
+            parse_stream_tool_fragments(r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#)
+                .is_empty()
+        );
+        assert!(parse_stream_tool_fragments("data: [DONE]").is_empty());
+        assert!(parse_stream_tool_fragments(": keep-alive").is_empty());
+        assert!(parse_stream_tool_fragments("data: {not json").is_empty());
+    }
+
+    /// The echo must serialize as the protocol spells it: tool_call_id in
+    /// snake_case, tool_calls with a lowercase "type". A camelCase leak here
+    /// reads fine in Rust and is rejected by every strict provider.
+    #[test]
+    fn the_tool_message_wire_shape_matches_the_openai_contract() {
+        let message = ChatMessage::tool_result("call_1", "{}");
+        let json = serde_json::to_value(&message).expect("serialize");
+        assert_eq!(json["role"], "tool");
+        assert_eq!(json["tool_call_id"], "call_1");
+        assert!(json.get("toolCalls").is_none());
+
+        let assistant = ChatMessage::assistant_with_tool_calls(
+            "",
+            vec![ToolCallOut {
+                id: "call_1".into(),
+                kind: "function".into(),
+                function: ToolCallFunction {
+                    name: "repotory_metrics".into(),
+                    arguments: "{}".into(),
+                },
+            }],
+        );
+        let json = serde_json::to_value(&assistant).expect("serialize");
+        assert_eq!(json["tool_calls"][0]["id"], "call_1");
+        assert_eq!(json["tool_calls"][0]["type"], "function");
+        assert!(json.get("toolCallId").is_none());
+    }
+
+    /// A tool_call reassembled from fragments carries every part; a nameless
+    /// slot is dropped and an id-less call gets a stable synthetic id.
+    #[test]
+    fn finish_stream_reassembles_and_sanitizes_calls() {
+        let mut calls = vec![
+            StreamCallAcc {
+                id: "call_1".into(),
+                name: "repotory_metrics".into(),
+                arguments: "{\"path\":".into(),
+            },
+            StreamCallAcc::default(),
+            StreamCallAcc {
+                id: String::new(),
+                name: "repotory_wiki_search".into(),
+                arguments: "{}".into(),
+            },
+        ];
+        calls[1].name = String::new();
+        let outcome = finish_stream(String::new(), calls);
+        assert_eq!(outcome.tool_calls.len(), 2);
+        assert_eq!(outcome.tool_calls[0].id, "call_1");
+        assert_eq!(outcome.tool_calls[0].arguments, "{\"path\":");
+        assert_eq!(outcome.tool_calls[1].id, "call_2");
     }
 
     #[test]

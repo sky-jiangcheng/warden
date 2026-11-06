@@ -1,5 +1,5 @@
 import { Channel } from "@tauri-apps/api/core";
-import { browserNote, count, desktop, errorText, invoke, openSheet, pick, poll, type WorkspaceMetrics } from "./ui";
+import { browserNote, desktop, errorText, invoke, openSheet, pick, poll } from "./ui";
 
 type Thread = { id: string; title: string; path: string | null; createdAt: string; updatedAt: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; source: string; replyTo: string | null; createdAt: string; pending?: boolean; failed?: boolean };
@@ -11,7 +11,7 @@ type Topic = {
 type Provider = { id: string; name: string; defaultModel: string | null; active: boolean };
 type Repo = { path: string; name: string; missing: boolean };
 type Model = { id: string; name: string | null };
-type ChatChunk = { delta: string; text: string; done: boolean; error: string | null };
+type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean } | null };
 
 export function initChat() {
   const input = pick<HTMLTextAreaElement>("#chat-input");
@@ -34,6 +34,10 @@ export function initChat() {
   let composing = false;
   let compositionEnded = 0;
   let renameBusy = false;
+  // The tool call the model is waiting on right now, if any. Shown in the
+  // pending reply's meta line — the visible text restarts on each tool round
+  // (the chunk's `text` resets), so the preamble never accumulates.
+  let activeTool: string | null = null;
   const modelCache = new Map<string, Model[]>();
 
   function makeTopic(thread?: Thread): Topic {
@@ -99,7 +103,8 @@ export function initChat() {
       // calling those "Warden" would claim another client's answer.
       const label = message.role === "user" ? "你" : message.source === "warden" ? "Warden" : "助手";
       const source = message.source && message.source !== "warden" ? ` · ${message.source}` : "";
-      const meta = `${label}${source}${message.failed ? " · 未完成" : ""}`;
+      const tooling = message.pending && message.role === "assistant" && activeTool ? ` · 调用 ${activeTool}` : "";
+      const meta = `${label}${source}${message.failed ? " · 未完成" : tooling}`;
       if (node.firstElementChild!.textContent !== meta) node.firstElementChild!.textContent = meta;
       // Plain text is deliberate: model output, titles, paths and sources are
       // untrusted. Never interpolate them into markup, selectors, or URLs.
@@ -160,9 +165,7 @@ export function initChat() {
     pick<HTMLDialogElement>("#topics-sheet").close();
     render();
     renderTopics();
-    resetMetrics();
     readPoll.refresh();
-    metricsPoll.refresh();
     input.focus({ preventScroll: true });
   }
 
@@ -225,35 +228,6 @@ export function initChat() {
     }
   }
 
-  function resetMetrics(): void {
-    for (const id of ["lines", "commits", "changes", "repos", "notes", "reviews"]) pick<HTMLElement>(`#metric-${id}`).textContent = "—";
-    pick<HTMLElement>("#metrics-summary").textContent = "代码量 · 今日活动";
-    pick<HTMLElement>("#metrics-status").textContent = desktop ? "正在读取…" : "浏览器预览 · 无真实指标";
-  }
-
-  async function fetchMetrics(): Promise<void> {
-    const path = active.path;
-    try {
-      const metric = await invoke<WorkspaceMetrics>("workspace_metrics", { path });
-      if (path !== active.path) return;
-      pick<HTMLElement>("#metric-lines").textContent = count(metric.totalLines);
-      pick<HTMLElement>("#metric-lines").title = metric.totalLines === null ? "代码量暂不可用" : `${metric.totalLines.toLocaleString()} 行`;
-      pick<HTMLElement>("#metric-commits").textContent = count(metric.commitsToday);
-      pick<HTMLElement>("#metric-changes").textContent = `+${count(metric.additionsToday)} / −${count(metric.deletionsToday)}`;
-      pick<HTMLElement>("#metric-repos").textContent = count(metric.repositoryCount);
-      pick<HTMLElement>("#metric-notes").textContent = count(metric.notesCount);
-      pick<HTMLElement>("#metric-reviews").textContent = count(metric.pendingReviewCount);
-      pick<HTMLElement>("#metrics-summary").textContent = `${count(metric.totalLines)} 行 · ${metric.commitsToday} 次今日提交`;
-      const date = metric.refreshedAt ? new Date(metric.refreshedAt) : null;
-      pick<HTMLElement>("#metrics-status").textContent = date && !Number.isNaN(date.getTime()) ? `${path ? "当前仓库" : "全部仓库"} · ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} 更新` : "刷新时间未提供";
-    } catch (error) {
-      if (path === active.path) {
-        pick<HTMLElement>("#metrics-status").textContent = `指标暂不可用 · 显示上次结果，将自动重试。${errorText(error)}`;
-      }
-      throw error;
-    }
-  }
-
   function fillModels(models: Model[], preferred: string): void {
     modelSelect.replaceChildren(new Option("选择模型", ""));
     for (const model of models) modelSelect.add(new Option(model.name || model.id, model.id));
@@ -311,6 +285,7 @@ export function initChat() {
     topic.error = "";
     topic.draft = draft;
     topic.revision += 1;
+    activeTool = null;
     updateStatus();
     renderTopics();
     const messageId = crypto.randomUUID();
@@ -340,6 +315,7 @@ export function initChat() {
         if (!accepting || streamDone) return;
         if (typeof chunk.text === "string") answer.content = chunk.text;
         else answer.content += chunk.delta || "";
+        if (chunk.toolCall) activeTool = chunk.toolCall.done ? null : chunk.toolCall.name;
         if (chunk.error) streamError = chunk.error;
         if (chunk.done || chunk.error) streamDone = true;
         // Captured topic, not whichever topic is visible when a late chunk arrives.
@@ -361,6 +337,7 @@ export function initChat() {
       // unsynced send; the user gets to retry the intended operation.
     } finally {
       accepting = false;
+      activeTool = null;
       if (user) user.pending = false;
       if (assistant) assistant.pending = false;
       topic.busy = false;
@@ -401,8 +378,6 @@ export function initChat() {
   contextSelect.addEventListener("change", () => {
     active.path = contextSelect.value || null;
     contextSelect.title = active.path ?? "对话仓库，发送后固定";
-    resetMetrics();
-    metricsPoll.refresh();
   });
   log.addEventListener("scroll", () => {
     active.pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
@@ -456,29 +431,14 @@ export function initChat() {
   providerSelect.disabled = true;
   modelSelect.disabled = true;
   render();
-  resetMetrics();
   const listPoll = poll(fetchThreads, 2500);
   const readPoll = poll(readActive, 2500);
-  const metricsPoll = poll(fetchMetrics, 15000);
-  pick<HTMLButtonElement>("#metrics-refresh").addEventListener("click", () => { if (desktop) metricsPoll.refresh(); });
   pick<HTMLButtonElement>("#sync-retry").addEventListener("click", () => { listPoll.refresh(); readPoll.refresh(); });
-  window.addEventListener("pagehide", () => { listPoll.stop(); readPoll.stop(); metricsPoll.stop(); }, { once: true });
-
-  // Storage events cross Tauri webviews without coupling to a new IPC
-  // contract. A missing storage bridge simply opens the main chat instead.
-  const openMetrics = (): void => {
-    pick<HTMLDetailsElement>("#metrics-panel").open = true;
-    metricsPoll.refresh();
-  };
-  window.addEventListener("storage", (event) => { if (event.key === "warden-open-metrics" && event.newValue) openMetrics(); });
-  try {
-    const timestamp = Number(localStorage.getItem("warden-open-metrics"));
-    if (Date.now() - timestamp < 15000) openMetrics();
-  } catch { /* Storage is optional, including in private previews. */ }
+  window.addEventListener("pagehide", () => { listPoll.stop(); readPoll.stop(); }, { once: true });
 
   return {
     setProviders,
     setRepos(next: Repo[]) { repos = next; syncContext(); },
-    retrySync() { listPoll.refresh(); readPoll.refresh(); metricsPoll.refresh(); },
+    retrySync() { listPoll.refresh(); readPoll.refresh(); },
   };
 }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use repotory_agent_lib::conversations::{self, ChatChunk, ChatRequest, GenerationState};
+use repotory_agent_lib::conversations::{self, ChatChunk, ChatRequest, GenerationState, ToolEvent};
 use repotory_agent_lib::mcp_client::{McpClient, McpSession};
 use repotory_agent_lib::providers::{Provider, ProviderConfig, ProviderStore};
 use serde_json::{Value, json};
@@ -168,16 +168,24 @@ async fn real_provider_receives_ordered_multiturn_history_not_another_topic() {
     result.unwrap();
     let payload = answer(&second);
     assert_eq!(payload["requestNumber"], 2);
-    assert_eq!(payload["messages"].as_array().unwrap().len(), 3);
-    assert_eq!(
-        payload["messages"][0],
-        json!({"role":"user","content":"记住蓝色"})
+    let sent = payload["messages"].as_array().unwrap();
+    // When tools are offered, Warden's OWN system prompt leads — assembled
+    // here, never accepted from the server (the no-injection rule), and it
+    // carries the thread's repository scope.
+    assert_eq!(sent.len(), 4);
+    assert_eq!(sent[0]["role"], "system");
+    assert!(
+        sent[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Current repository: /one")
     );
+    assert_eq!(sent[1], json!({"role":"user","content":"记住蓝色"}));
     assert_eq!(
-        payload["messages"][1],
+        sent[2],
         json!({"role":"assistant","content":first.last().unwrap().text})
     );
-    assert_eq!(payload["messages"][2]["content"], "是什么颜色？");
+    assert_eq!(sent[3]["content"], "是什么颜色？");
     assert!(!payload.to_string().contains("unrelated secret"));
     let messages = f.messages().await;
     assert_eq!(messages.len(), 4);
@@ -394,4 +402,128 @@ async fn same_thread_parallel_requests_do_not_issue_parallel_generations() {
     first.0.unwrap();
     assert!(second.0.unwrap_err().contains("already generating"));
     assert_eq!(f.messages().await.len(), 2);
+}
+
+/// Function Calling over the real pipes: the model asks for a memory tool,
+/// Warden executes it on the MCP session, feeds the result back, and the
+/// final answer is the second round's text. Everything asserted here is the
+/// protocol shape a strict provider validates: the assistant echo carries its
+/// tool_calls, the tool result names the same id, and the offered tools carry
+/// the server's own schema.
+#[tokio::test]
+async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "/repo/one").await;
+    let mut req = request("m1", "how much code today?");
+    req.model = Some("tools".into());
+    let (result, chunks) = f.send(req).await;
+    result.expect("send");
+
+    // The events the UI renders: one started chip and one finished chip for
+    // the call the model made.
+    let events: Vec<&ToolEvent> = chunks.iter().filter_map(|c| c.tool_call.as_ref()).collect();
+    assert_eq!(events.len(), 2, "expected one start and one finish event");
+    assert_eq!(events[0].name, "repotory_metrics");
+    assert!(!events[0].done);
+    assert_eq!(events[1].name, "repotory_metrics");
+    assert!(events[1].done);
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    // The system prompt is Warden's own assembly, and it carries the thread's
+    // repository scope (the M2 "context wiring" debt).
+    let system = messages
+        .iter()
+        .find(|m| m["role"] == "system")
+        .expect("system prompt");
+    assert!(system["content"].as_str().unwrap().contains("/repo/one"));
+    // The assistant echo carries the calls it made; the tool result names the
+    // same id and holds what the fake MCP answered.
+    let echo = messages
+        .iter()
+        .find(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+        .expect("assistant echo");
+    assert_eq!(echo["tool_calls"][0]["id"], "call_1");
+    assert_eq!(echo["tool_calls"][0]["type"], "function");
+    assert!(
+        echo["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .unwrap()
+            .contains("/repo/one")
+    );
+    let tool_message = messages
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool result message");
+    assert_eq!(tool_message["tool_call_id"], "call_1");
+    assert!(
+        tool_message["content"]
+            .as_str()
+            .unwrap()
+            .contains("repositoryCount")
+    );
+    // The offered tools carried the server's schema through verbatim, and the
+    // whitelist offered exactly the read-only face.
+    let tools = reply["tools"].as_array().unwrap();
+    assert_eq!(
+        tools.len(),
+        1,
+        "only whitelisted read-only tools are offered"
+    );
+    assert_eq!(tools[0]["function"]["name"], "repotory_metrics");
+    assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
+
+    // The persisted reply is that same second-round text.
+    let saved = f.messages().await;
+    assert_eq!(saved.last().unwrap()["role"], "assistant");
+    assert!(
+        saved.last().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .contains("repositoryCount")
+    );
+}
+
+/// A write tool the server advertises is never offered to the model, and a
+/// model that names one anyway gets a client-side refusal as its result —
+/// never an execution on the wire.
+#[tokio::test]
+async fn a_write_tool_is_never_offered_and_a_refusal_is_its_result() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "/repo/one").await;
+    let mut req = request("m2", "write a note");
+    req.model = Some("tools:repotory_notes_create".into());
+    let (result, chunks) = f.send(req).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let tools = reply["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|t| t["function"]["name"] == "repotory_metrics")
+    );
+    assert!(
+        !tools
+            .iter()
+            .any(|t| t["function"]["name"] == "repotory_notes_create")
+    );
+
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool result message");
+    let content = tool_message["content"].as_str().unwrap();
+    assert!(content.contains("not available to the model"), "{content}");
+    assert!(
+        !content.contains("created"),
+        "the write tool must not have executed: {content}"
+    );
+
+    let events: Vec<&ToolEvent> = chunks.iter().filter_map(|c| c.tool_call.as_ref()).collect();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].name, "repotory_notes_create");
+    assert!(!events[0].done);
+    assert!(events[1].done);
 }

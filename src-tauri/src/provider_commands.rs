@@ -125,6 +125,20 @@ pub struct ChatChunk {
     pub done: bool,
     /// The error, when the stream failed.
     pub error: Option<String>,
+    /// A tool call the model made mid-answer, when there was one. `done`
+    /// marks the call finished; a fresh answer round follows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<ToolEvent>,
+}
+
+/// One function-calling event, for the UI's tool chip.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolEvent {
+    /// The tool's name, as the model called it.
+    pub name: String,
+    /// False while the call executes, true once its result came back.
+    pub done: bool,
 }
 
 /// Turns a client error into something a person can act on.
