@@ -1,0 +1,140 @@
+# Release — build and publish the Tauri bundle
+#
+# Tag-triggered only. `ci.yml` already gates every push, so this file does not
+# repeat the tests: it waits for that run to be green and then builds. The
+# Cinder main repo learned this the hard way (v2.14.0 shipped from a red
+# commit), so the gate is a real job here too.
+#
+# What this does NOT do: sign or notarise. There is no Apple Developer ID in
+# this repository, so the macOS bundle is ad-hoc signed at best. The release
+# body says how to open it; pretending it is notarised would be worse than
+# saying it plainly.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Least privilege: only `publish` may write, and only to releases.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The release must not ship a commit whose CI was red.
+  ci-gate:
+    name: Require a green CI run on the tagged commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Poll the CI run for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 80); do
+            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+                     --workflow CI --json status,conclusion --limit 10)
+            if echo "$runs" | jq -e 'any(.[]; .status == "completed" and .conclusion == "success")' >/dev/null; then
+              echo "CI is green on $GITHUB_SHA."
+              exit 0
+            fi
+            if echo "$runs" | jq -e 'any(.[]; .status == "completed" and .conclusion != "success")' >/dev/null; then
+              echo "::error::CI on $GITHUB_SHA did not succeed — refusing to publish."
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "::error::Timed out waiting for CI on $GITHUB_SHA."
+          exit 1
+
+  publish:
+    name: Publish (${{ matrix.platform }})
+    needs: ci-gate
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - platform: ubuntu-22.04
+            rust-targets: ''
+            args: ''
+          - platform: windows-latest
+            rust-targets: ''
+            args: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # The version comes from rust-toolchain.toml — one truth, one place.
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          target: ${{ matrix.rust-targets }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: src-tauri
+
+      # Same list as ci.yml: without the -dev packages the build fails inside
+      # webkit2gtk-sys/gtk-sys build scripts, which reads like a Rust error.
+      - name: Install the Tauri system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            build-essential \
+            file \
+            curl \
+            wget
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Warden ${{ github.ref_name }}
+          releaseBody: |
+            Warden 的第一个公开版本：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
+
+            **macOS 未签名**（本仓没有 Apple Developer ID）。首次打开若提示「已损坏」或「无法验证开发者」，用任意一种方式放行：
+
+            ```
+            xattr -dr com.apple.quarantine "/Applications/Warden.app"
+            ```
+
+            或在 Finder 里右键 → 打开。Windows / Linux 的产物未签名，SmartScreen 可能提示。
+
+            Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
