@@ -106,6 +106,34 @@ async fn the_answer_arrives_piece_by_piece_in_order() {
     assert_eq!(seen, vec!["Hello", ", ", "world"]);
 }
 
+/// A reasoning model emits empty `content` deltas before its first token.
+/// Those frames are NOT the `[DONE]` sentinel: the stream must keep going
+/// and the answer must contain the text that arrives later. Regression for
+/// "connection test passes, chat reports no answer" — the test uses a
+/// non-streaming request, chat uses the stream, so only chat hit this.
+#[tokio::test]
+async fn empty_reasoning_frames_do_not_end_the_stream() {
+    let server = FakeServer::start();
+    let client = LlmClient::new(&provider_for(&server), None).expect("client");
+
+    let mut seen: Vec<String> = Vec::new();
+    let answer = client
+        .chat_stream(
+            "reasoning",
+            &[ChatMessage::user("hello")],
+            &[],
+            |delta: &str| {
+                seen.push(delta.to_string());
+            },
+        )
+        .await
+        .expect("the answer");
+
+    assert_eq!(answer.content, "\nready");
+    assert_eq!(seen, vec!["\nready"]);
+    assert!(answer.tool_calls.is_empty());
+}
+
 #[tokio::test]
 async fn a_non_streaming_request_gets_the_whole_answer() {
     let server = FakeServer::start();

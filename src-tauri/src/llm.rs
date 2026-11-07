@@ -516,8 +516,17 @@ impl LlmClient {
                     .trim_end_matches('\r')
                     .to_string();
                 buffer.drain(..=at);
+                // The literal `data: [DONE]` is the ONLY end-of-stream signal.
+                // An empty `content` delta is a normal frame: reasoning models
+                // emit a run of them before the first token, and tool-call
+                // frames carry no text at all. Treating an empty delta as the
+                // sentinel ended the stream on its very first frame, so chat
+                // returned "the provider returned no answer" while the
+                // non-streaming connection test succeeded.
+                if is_done_line(&line) {
+                    return Ok(finish_stream(answer, calls));
+                }
                 if let Some(data) = line.strip_prefix("data:").map(str::trim)
-                    && data != "[DONE]"
                     && !data.is_empty()
                 {
                     let value: serde_json::Value = serde_json::from_str(data)
@@ -542,11 +551,9 @@ impl LlmClient {
                         slot.arguments.push_str(&fragment.function.arguments);
                     }
                 }
-                if let Some(delta) = parse_stream_line(&line) {
-                    if delta.is_empty() {
-                        // `[DONE]` — the stream ended.
-                        return Ok(finish_stream(answer, calls));
-                    }
+                if let Some(delta) = parse_stream_line(&line)
+                    && !delta.is_empty()
+                {
                     answer.push_str(&delta);
                     on_delta(&delta);
                 }
@@ -648,22 +655,31 @@ pub fn parse_chat(body: &str) -> Result<String, LlmError> {
     Ok(content.to_string())
 }
 
-/// Parses one SSE line.
+/// Whether an SSE line is the literal end-of-stream sentinel.
 ///
-/// Returns `None` for a line that carries no data (a comment, a field other
-/// than `data`, an empty line) and `Some(delta)` for a data line. An empty
-/// delta means the stream is over (`data: [DONE]`).
+/// `data: [DONE]` is a sentinel, not a frame. It must be distinguished from
+/// a data frame whose `content` happens to be empty — reasoning models and
+/// tool-call rounds produce many of those before any text arrives.
+pub fn is_done_line(line: &str) -> bool {
+    line.trim()
+        .strip_prefix("data:")
+        .is_some_and(|payload| payload.trim() == "[DONE]")
+}
+
+/// Parses one SSE line into its text delta.
+///
+/// Returns `None` for anything that carries no text: comments, non-`data`
+/// fields, empty lines, malformed JSON, the `[DONE]` sentinel, and frames
+/// without a `content` (or `text`) field. An empty string is a real, valid
+/// delta that simply adds no text — it never signals the end of the stream.
 pub fn parse_stream_line(line: &str) -> Option<String> {
     let line = line.trim();
     if line.is_empty() || line.starts_with(':') {
         return None;
     }
     let payload = line.strip_prefix("data:")?.trim();
-    if payload.is_empty() {
+    if payload.is_empty() || payload == "[DONE]" {
         return None;
-    }
-    if payload == "[DONE]" {
-        return Some(String::new());
     }
     let value: serde_json::Value = serde_json::from_str(payload).ok()?;
     let delta = value
@@ -815,11 +831,49 @@ mod tests {
         assert_eq!(parse_stream_line(line).as_deref(), Some("Hel"));
     }
 
-    /// The stream's end is a sentinel, not an empty line, and it must not be
-    /// mistaken for content.
+    /// The stream's end is a literal sentinel, not an empty delta. The two
+    /// used to share one representation (`Some("")`), which ended the stream
+    /// on the first frame of any reasoning model.
     #[test]
     fn the_done_sentinel_is_recognized() {
-        assert_eq!(parse_stream_line("data: [DONE]").as_deref(), Some(""));
+        assert!(is_done_line("data: [DONE]"));
+        assert!(is_done_line("data:[DONE]"));
+        assert!(is_done_line("  data: [DONE]  "));
+        assert!(!is_done_line("data: [done]"));
+        assert!(!is_done_line(
+            r#"data: {"choices":[{"delta":{"content":""}}]}"#
+        ));
+        assert!(parse_stream_line("data: [DONE]").is_none());
+    }
+
+    /// An empty `content` delta is a real frame, not the end of the stream.
+    /// Reasoning models emit a run of them (with `reasoning` text) before the
+    /// first token, and a final empty frame carrying `finish_reason`. Ending
+    /// on any of them returned an empty answer with "no answer" while the
+    /// non-streaming connection test passed — the exact test-pass/chat-fail
+    /// split. These are the frames OpenRouter sends for a reasoning model.
+    #[test]
+    fn empty_content_deltas_do_not_end_the_stream() {
+        let frames = [
+            r#"data: {"choices":[{"delta":{"content":"","reasoning":"\n"},"finish_reason":null}]}"#,
+            r#"data: {"choices":[{"delta":{"content":"","reasoning":"thinking"},"finish_reason":null}]}"#,
+            r#"data: {"choices":[{"delta":{"content":"\nready"},"finish_reason":null}]}"#,
+            r#"data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}"#,
+            "data: [DONE]",
+        ];
+        let mut answer = String::new();
+        let mut ended = false;
+        for line in frames {
+            if is_done_line(line) {
+                ended = true;
+                break;
+            }
+            if let Some(delta) = parse_stream_line(line) {
+                answer.push_str(&delta);
+            }
+        }
+        assert!(ended, "the sentinel must end the stream");
+        assert_eq!(answer, "\nready");
     }
 
     /// SSE keep-alive comments are not data. Feeding one to the JSON parser

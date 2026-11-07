@@ -112,6 +112,27 @@ fn handle(mut stream: TcpStream, served: usize) {
                 );
                 return;
             }
+            // A reasoning model: empty `content` frames carrying `reasoning`
+            // arrive before any token, and another empty one carries
+            // `finish_reason`. Only the literal `data: [DONE]` ends the
+            // stream. This is the shape OpenRouter sends for a reasoning
+            // model, and it used to make chat return an empty answer on the
+            // very first frame while the connection test passed.
+            "reasoning" => {
+                let frames = [
+                    r#"{"choices":[{"delta":{"content":"","reasoning":"\n"},"finish_reason":null}]}"#,
+                    r#"{"choices":[{"delta":{"content":"","reasoning":"thinking"},"finish_reason":null}]}"#,
+                    r#"{"choices":[{"delta":{"content":"\nready"},"finish_reason":null}]}"#,
+                    r#"{"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}"#,
+                ];
+                let mut body = String::new();
+                for frame in frames {
+                    body.push_str(&format!("data: {frame}\n\n"));
+                }
+                body.push_str("data: [DONE]\n\n");
+                respond(&mut stream, "200 OK", "text/event-stream", body.as_bytes());
+                return;
+            }
             "sse-error" => {
                 respond(
                     &mut stream,
