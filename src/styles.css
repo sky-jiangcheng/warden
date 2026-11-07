@@ -919,26 +919,16 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .rename-form > label { display: block; font-size: 11px; color: var(--text-tertiary); margin-bottom: 8px; }
 .rename-form .btn { white-space: nowrap; }
 
-/* Original lantern companion. Only this surface is transparent, never the
-   main chat. Its controls stay outside the draggable illustration. */
+/* Companion surface. Only this surface is transparent, never the main
+   chat. Its controls stay outside the draggable mark. */
 .companion { display: none; }
 [data-surface="companion"], [data-surface="companion"] body { background: transparent !important; color-scheme: normal; }
 [data-surface="companion"] #main-surface, [data-surface="companion"] .sheet, [data-surface="companion"] #repo-toast { display: none !important; }
 [data-surface="companion"] .companion { width: 168px; height: 196px; display: flex; flex-direction: column; align-items: center; padding: 6px 8px 0; user-select: none; }
 .companion__metric { max-width: 148px; min-height: 25px; padding: 4px 10px; border: 1px solid var(--border-subtle); border-radius: 99px; background: var(--bg-card); color: var(--text-secondary); font-size: 10px; box-shadow: var(--shadow-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lantern { width: 140px; height: 126px; cursor: grab; touch-action: none; }
+.lantern { width: 108px; height: 108px; cursor: grab; touch-action: none; }
 .lantern:active { cursor: grabbing; }
-.lantern svg { width: 100%; height: 100%; stroke-width: 3; }
-.lantern__shadow { fill: rgba(52,50,45,.1); stroke: none; }
-.lantern__handle { stroke: var(--border-default); stroke-width: 5; }
-.lantern__body { fill: var(--brand-field); stroke: var(--brand-ink-soft); stroke-width: 1; }
-.lantern__cap { stroke: var(--brand-ink-soft); stroke-width: 2; }
-.lantern__face { fill: var(--accent-soft); stroke: none; }
-.lantern__eyes { stroke: var(--accent); stroke-width: 4; transform-origin: 70px 60px; animation: lantern-blink 8s infinite; }
-.lantern__smile { stroke-width: 1.6; }
-.lantern__light { stroke: var(--brand-ink-soft); stroke-width: 2; }
-.lantern__signal { fill: var(--accent); stroke: none; }
-.lantern__feet, .lantern__arm { stroke: var(--border-default); stroke-width: 5; }
+.lantern img { width: 100%; height: 100%; display: block; user-select: none; }
 .companion__actions { display: flex; gap: 5px; }
 .companion__actions button { height: 27px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border-subtle); color: var(--text-primary); background: var(--bg-card); font-size: 10px; box-shadow: var(--shadow-sm); }
 .companion__actions button:last-child { padding: 3px 7px; }
@@ -946,7 +936,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .companion__actions button:hover { background: var(--accent-soft); }
 .companion__status { margin: 2px 0 0; max-width: 150px; border-radius: 4px; padding: 0 3px; color: var(--text-secondary); background: var(--bg-card); font-size: 8px; line-height: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .companion__status:empty { display: none; }
-@keyframes lantern-blink { 0%, 43%, 47%, 100% { transform: scaleY(1); } 45% { transform: scaleY(.12); } }
 @media (min-width: 700px) {
   .app { border-inline: 1px solid var(--border-subtle); }
   .conversation { padding-inline: clamp(0px, 3vw, 28px); }

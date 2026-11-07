@@ -124,7 +124,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Warden ${{ github.ref_name }}
           releaseBody: |
-            Warden 的第一个公开版本：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
+            Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。本版落地 The Knot 品牌标识（Cinder 三叶结 / Warden 8 字），应用图标、托盘与伙伴窗口全部换新。
 
             **macOS 未签名**（本仓没有 Apple Developer ID）。首次打开若提示「已损坏」或「无法验证开发者」，用任意一种方式放行：
 

@@ -234,10 +234,10 @@
         <form class="rename-form" id="topic-rename-form"><label for="topic-rename">当前主题名称</label><div class="form__row"><input class="field" id="topic-rename" maxlength="120" required /><button class="btn" id="topic-rename-save" type="submit">重命名</button></div><p class="meta meta--error" id="topic-error" role="alert"></p></form>
       </div>
     </dialog>
-    <main class="companion" id="companion-surface" aria-label="Warden 提灯伙伴">
+    <main class="companion" id="companion-surface" aria-label="Warden 伙伴">
       <p class="companion__metric" id="companion-metric" role="status" title="工作一览">工作一览 · —</p>
-      <div class="lantern" id="companion-drag" title="拖动提灯伙伴" role="img" aria-label="Warden 提灯机器人，可用鼠标拖动身体移动窗口">
-        <svg viewBox="0 0 140 126" aria-hidden="true"><ellipse class="lantern__shadow" cx="70" cy="119" rx="39" ry="4" /><path class="lantern__handle" d="M54 27V17a16 16 0 0 1 32 0v10" /><path class="lantern__arm" d="M33 66 21 78m86-12 12 12" /><path class="lantern__feet" d="M51 105v9h-9m47-9v9h9" /><rect class="lantern__body" x="33" y="28" width="74" height="79" rx="26" /><path class="lantern__cap" d="M42 31q28-13 56 0" /><rect class="lantern__face" x="43" y="44" width="54" height="34" rx="14" /><g class="lantern__eyes"><path d="M58 57v6m24-6v6" /><path class="lantern__smile" d="M66 68q4 3 8 0" /></g><path class="lantern__light" d="M61 87h18m-14 5h10" /><circle class="lantern__signal" cx="70" cy="22" r="3" /></svg>
+      <div class="lantern" id="companion-drag" title="拖动 Warden 标记" role="img" aria-label="Warden 标记，可用鼠标拖动移动窗口">
+        <img src="/src/assets/warden.png" width="108" height="108" alt="" draggable="false" />
       </div>
       <div class="companion__actions"><button id="companion-open" type="button">打开对话 <span aria-hidden="true">↗</span></button></div><p id="companion-status" class="companion__status" role="status"></p>
     </main>

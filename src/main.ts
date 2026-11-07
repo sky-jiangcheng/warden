@@ -601,11 +601,11 @@ function renderTray(status: ShellStatus) {
 
   if (status.tray.installed) {
     setChip(chip, "已就位", "ok");
-    note.textContent = "点菜单栏的提灯图标唤回窗口，右键打开菜单。";
+    note.textContent = "点菜单栏的 Warden 标记唤回窗口，右键打开菜单。";
   } else {
     setChip(chip, "不可用", "warn");
     note.textContent =
-      "托盘未就位。仍可通过提灯伙伴打开对话；日志中可查看 [tray] 错误。";
+      "托盘未就位。仍可通过 Warden 伙伴打开对话；日志中可查看 [tray] 错误。";
   }
 }
 

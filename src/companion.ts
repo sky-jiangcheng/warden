@@ -28,7 +28,7 @@ export function initCompanion(): void {
     } finally { opening = false; }
   }
   pick<HTMLButtonElement>("#companion-open").addEventListener("click", () => { void showChat(); });
-  // No data-tauri-drag-region on controls: only the lantern body initiates a
+  // No data-tauri-drag-region on controls: only the brand mark initiates a
   // native window drag. The illustration itself is not a fake voice button.
   pick<HTMLElement>("#companion-drag").addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || !desktop || dragging) return;
