@@ -16,7 +16,6 @@ use crate::providers::{ProviderStore, load_api_key};
 
 // Capability bindings, not a substitute for the server's tools/list.
 const CHAT_TOOL: &str = "repotory_chat";
-const METRICS_TOOL: &str = "repotory_metrics";
 const MAX_INPUT_CHARS: usize = 12_000;
 const CONTEXT_CHARS: usize = 24_000;
 const CONTEXT_MESSAGES: usize = 32;
@@ -199,32 +198,6 @@ pub async fn rename(
     )
     .await?;
     check_thread(&value, &thread_id)?;
-    Ok(value)
-}
-
-pub async fn metrics(session: &McpSession, path: Option<String>) -> Result<Value, String> {
-    let value = call(session, METRICS_TOOL, json!({"path":path})).await?;
-    for field in [
-        "repositoryCount",
-        "commitsToday",
-        "additionsToday",
-        "deletionsToday",
-        "notesCount",
-        "pendingReviewCount",
-    ] {
-        if !value[field].is_number() {
-            return Err(format!("Cinder metrics is missing numeric {field}"));
-        }
-    }
-    if !value
-        .get("totalLines")
-        .is_some_and(|v| v.is_null() || v.is_number())
-        || !value
-            .get("refreshedAt")
-            .is_some_and(|v| v.is_null() || v.is_string())
-    {
-        return Err("Cinder metrics is missing totalLines or refreshedAt".into());
-    }
     Ok(value)
 }
 

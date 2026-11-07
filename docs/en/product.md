@@ -144,8 +144,11 @@ numbers like lines of code**, and **a topic-switching chat panel that stays in s
 plugins**. All three are landed; each has its own boundary.
 
 **① Resident = the companion window + the tray, not "the window is always on screen"**. The companion
-window is 168×196 (`index.html?surface=companion`), the main window 480×760; clicking the companion
-opens the chat; its metric line is a glanceable status now, not a button. **Only the lantern body starts a
+window is 132×150 (`index.html?surface=companion`), the main window 480×760; clicking the companion
+opens the chat. **The window holds the lantern and one speech bubble, nothing else**: the metric line,
+the status line and the "chat" button are gone — numbers belong to the conversation (see ②), and the
+entrances are click / `⌥Space` / the tray, so a few lines of text on top of a character were just another
+layer of interface. **Only the lantern body starts a
 native window drag** (`window_drag`); no control carries `data-tauri-drag-region` — an illustration made
 into a button is a button the user cannot press, and they will blame the program. **Closing the window
 hides it; only the tray's Quit exits**: `on_window_event` answers `CloseRequested` with `prevent_close`
@@ -168,9 +171,9 @@ A tool call shows in the conversation as a "calling / done" status line only, **
 `repotory_chat`** — it is a UI-layer event, not a conversation artifact. A temporary conversation
 without Cinder carries no tools and no system prompt; its single-turn contract is unchanged.
 
-**③ The numbers still read what memory already stores; nothing is computed on the spot**. In the
-conversation, `repotory_metrics` and the "N lines · N commits" line on the companion window take the
-same road (`workspace_metrics` → MCP, 15 seconds). **That reading is deliberate**: the tool **does not
+**③ The numbers are still asked for in the conversation, never computed on the spot, and they no longer
+hang on the companion window**. To see lines of code or commits, let the model call `repotory_metrics` —
+one tool call, with no resident metric line polled every 15 seconds. **That reading is deliberate**: the tool **does not
 scan disk, run git or refresh caches**, so the numbers come fast and a question cannot change anything
 stored. `totalLines` is a number only when the cached language LOC covers the whole unambiguous scope —
 **otherwise it is null: better to show "there is no such number" than show a guessed one**.
@@ -312,7 +315,7 @@ retrievable the moment it is written** (`SearchAll` covers notes), so the copilo
 ("model writes into the store with no gate"). **A session output and durable knowledge are not the
 same kind of write**: the former is automatic, the latter goes through the gate.
 ④ **When it lands**: the copilot's own by-name bindings are still two — `repotory_chat` (the shared
-conversation transport) and `repotory_metrics` (the companion metric line); **the model**, in
+conversation transport) and `repotory_metrics` (the numbers the chat asks for); **the model**, in
 conversation, can call the eight read-only whitelisted tools (see "the resident shape" ②), all
 read-only, so none of this touches the gate; the three durable-knowledge writes are **refused
 client-side** for the model and will never execute. This applies when M2

@@ -946,28 +946,25 @@ body { background: transparent; }
 [data-surface="companion"] .sheet { display: none !important; }
 [data-surface="companion"] .app { box-shadow: none; background: transparent; }
 [data-surface="companion"] .companion {
-  width: 168px; height: 196px; display: flex; flex-direction: column;
-  align-items: center; justify-content: flex-end; gap: 2px;
-  padding: 4px 8px 6px; user-select: none; position: relative;
+  width: 132px; height: 150px; display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-end;
+  padding: 2px 6px 6px; user-select: none; position: relative;
 }
 
 .companion__bubble {
   position: absolute; top: 0; left: 50%; transform: translate(-50%, -6px);
-  max-width: 158px; margin: 0; padding: 5px 9px;
+  max-width: 121px; margin: 0; padding: 4px 8px;
   border: 1px solid var(--border-subtle); border-radius: 10px;
   background: var(--bg-card); color: var(--text-secondary);
-  font-size: 10px; line-height: 1.45; text-align: center;
-  box-shadow: var(--shadow-sm); white-space: nowrap;
+  font-size: 10px; line-height: 1.4; text-align: center;
+  box-shadow: var(--shadow-sm);
   opacity: 0; pointer-events: none;
   transition: opacity 180ms ease, transform 180ms ease;
 }
 .companion__bubble[data-visible="true"] { opacity: 1; transform: translate(-50%, 0); }
 .companion__bubble:empty { display: none; }
 
-.companion__metric { max-width: 148px; min-height: 25px; padding: 4px 10px; border: 1px solid var(--border-subtle); border-radius: 99px; background: var(--bg-card); color: var(--text-secondary); font-size: 10px; box-shadow: var(--shadow-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; transition: opacity 180ms ease; }
-[data-mood="thinking"] .companion__metric { opacity: .55; }
-
-.lantern { position: relative; width: 108px; height: 108px; cursor: grab; touch-action: none; animation: pet-float 3.6s ease-in-out infinite; }
+.lantern { position: relative; width: 100px; height: 100px; cursor: grab; touch-action: none; animation: pet-float 3.6s ease-in-out infinite; }
 .lantern:active { cursor: grabbing; }
 .lantern img { position: relative; z-index: 1; width: 100%; height: 100%; display: block; user-select: none; animation: pet-breathe 4.2s ease-in-out infinite; transform-origin: 50% 72%; }
 .lantern__glow { position: absolute; inset: 22%; border-radius: 50%; background: var(--accent); opacity: 0; filter: blur(14px); transition: opacity 240ms ease; }
@@ -989,14 +986,6 @@ body { background: transparent; }
 [data-mood="thinking"] .lantern__glow { opacity: .3; animation: pet-float 1.6s ease-in-out infinite; }
 [data-mood="error"] .lantern img { animation: pet-tilt 320ms ease-in-out 2; }
 [data-mood="error"] .lantern__glow { opacity: .22; }
-
-.companion__actions { display: flex; gap: 5px; }
-.companion__actions button { height: 27px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border-subtle); color: var(--text-primary); background: var(--bg-card); font-size: 10px; box-shadow: var(--shadow-sm); }
-.companion__actions button:last-child { padding: 3px 7px; }
-.companion__actions svg { width: 15px; height: 15px; vertical-align: middle; }
-.companion__actions button:hover { background: var(--accent-soft); }
-.companion__status { margin: 2px 0 0; max-width: 150px; border-radius: 4px; padding: 0 3px; color: var(--text-secondary); background: var(--bg-card); font-size: 8px; line-height: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.companion__status:empty { display: none; }
 
 @media (min-width: 700px) {
   .app { border-inline: 1px solid var(--border-subtle); }

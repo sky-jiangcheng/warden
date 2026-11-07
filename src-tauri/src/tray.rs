@@ -427,8 +427,10 @@ mod tests {
         let pet = &windows[1];
         assert_eq!(pet["label"], "companion");
         assert_eq!(pet["url"], "index.html?surface=companion");
-        assert_eq!(pet["width"], 168);
-        assert_eq!(pet["height"], 196);
+        // Just the lantern and its one-line bubble: a transparent window still
+        // swallows clicks on whatever sits behind it, so its box is the art.
+        assert_eq!(pet["width"], 132);
+        assert_eq!(pet["height"], 150);
         for flag in ["alwaysOnTop", "transparent", "skipTaskbar"] {
             assert_eq!(pet[flag], true);
         }

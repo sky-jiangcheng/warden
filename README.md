@@ -66,13 +66,14 @@ pretending.
   `source` — **calling a plugin's reply "Warden" is claiming another client's answer**. A conversation
   with no shared topic is a **temporary chat**: it stays in this window, and the status line says it
   is not synced
-- **A small resident companion window**: 168×196 — click it to open the chat, click its metric line to
-  open the numbers panel, and only the lantern body drags the window. **Closing a window hides it
-  rather than quitting** (the red button must not cut off an answer being generated); **Quit in the tray
-  is what exits**
-- **The numbers, fast**: `repotory_metrics` reads what memory **already stores** — **it does not scan
-  disk, run git or refresh caches** — every 15 seconds, with a manual refresh; a scope it cannot cover
-  shows null, **never a guessed number**
+- **A small resident companion window**: 132×150 with nothing in it but the lantern and a one-line
+  bubble — click it (or press `⌥Space`) to open the chat, and only the lantern body drags the window.
+  **Closing a window hides it rather than quitting** (the red button must not cut off an answer being
+  generated); **Quit in the tray is what exits**
+- **The numbers, on demand**: ask in the chat and the model calls `repotory_metrics`, which reads what
+  memory **already stores** — **it does not scan disk, run git or refresh caches**, so nothing polls and
+  nothing is recomputed just because you asked; a scope it cannot cover shows null, **never a guessed
+  number**
 - **Actually reaches the memory layer**: it launches the `repotory-mcp` child process over stdio by
   itself, does one MCP handshake, then fetches the **real tool list** with `tools/list` and shows it on
   the first screen (**20 tools** on this machine — **this repository keeps no copy of the list**; it

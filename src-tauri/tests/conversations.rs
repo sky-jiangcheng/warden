@@ -114,7 +114,7 @@ fn answer(chunks: &[ChatChunk]) -> Value {
 }
 
 #[tokio::test]
-async fn shared_operations_preserve_json_shapes_and_nullable_metrics() {
+async fn shared_operations_preserve_json_shapes() {
     let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
     f.create(THREAD, "/repo/one").await;
     f.create(OTHER, "/repo/two").await;
@@ -129,12 +129,6 @@ async fn shared_operations_preserve_json_shapes_and_nullable_metrics() {
         .unwrap();
     assert_eq!(renamed["thread"]["title"], "Renamed");
     assert!(f.messages().await.is_empty());
-    let metrics = conversations::metrics(&f.session, None).await.unwrap();
-    assert_eq!(metrics["repositoryCount"], 2);
-    assert_eq!(metrics["commitsToday"], 3);
-    assert!(metrics["totalLines"].is_null());
-    assert!(metrics["refreshedAt"].is_null());
-    assert!(metrics.get("result").is_none());
 }
 
 #[tokio::test]
@@ -288,12 +282,6 @@ async fn missing_capabilities_and_invalid_json_are_explicit_errors() {
             .await
             .unwrap_err()
             .contains("does not provide repotory_chat")
-    );
-    assert!(
-        conversations::metrics(&missing, None)
-            .await
-            .unwrap_err()
-            .contains("does not provide repotory_metrics")
     );
     let malformed = session("REPOTORY_AGENT_FAKE_CHAT_BAD_JSON").await;
     assert!(

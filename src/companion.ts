@@ -1,9 +1,14 @@
 import { listen } from "@tauri-apps/api/event";
-import { count, desktop, errorText, invoke, pick, poll, type WorkspaceMetrics } from "./ui";
+import { desktop, invoke, pick } from "./ui";
 
-/// The desk pet is a resident surface, not a miniature chat window. It
+/// The desk pet is a resident surface, not a miniature app window. It
 /// breathes while idle, reacts to hover / click / drag, and shows a thinking
 /// state while the model is answering. Clicking it opens the chat overlay.
+///
+/// Nothing else belongs here: numbers live in the chat (the model reads them
+/// through the memory layer's tools), and every entry point — click, ⌥Space,
+/// the tray menu — already opens the same window, so a button that repeats
+/// one of them is just chrome on a character.
 ///
 /// The mood lives on `data-mood` so CSS owns every animation; this file only
 /// decides WHEN. No timers for idle motion (CSS loops), one timer for the
@@ -11,27 +16,20 @@ import { count, desktop, errorText, invoke, pick, poll, type WorkspaceMetrics } 
 type Mood = "idle" | "curious" | "happy" | "dragging" | "thinking" | "error";
 
 const REACTIONS: Record<Exclude<Mood, "idle" | "thinking">, string> = {
-  curious: "有什么想一起想一想？",
-  happy: "我在，点我就能聊。",
-  dragging: "放这儿就好。",
-  error: "稍等，我再试试。",
+  curious: "想聊点什么？",
+  happy: "这就来。",
+  dragging: "放这儿。",
+  error: "打不开，再点一次。",
 };
 
 export function initCompanion(): void {
   const surface = pick<HTMLElement>("#companion-surface");
-  const status = pick<HTMLElement>("#companion-status");
-  const metric = pick<HTMLElement>("#companion-metric");
   const bubble = pick<HTMLElement>("#companion-bubble");
   const mark = pick<HTMLElement>("#companion-drag");
   let opening = false;
   let dragging = false;
   let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
   let moodTimer: ReturnType<typeof setTimeout> | undefined;
-
-  if (!desktop) {
-    status.textContent = "浏览器预览 · 未连接";
-    metric.textContent = "工作一览 · 未连接";
-  }
 
   function setMood(mood: Mood, ms = 0): void {
     surface.dataset.mood = mood;
@@ -43,11 +41,16 @@ export function initCompanion(): void {
     }
   }
 
-  function say(text: string): void {
+  function say(text: string, ms = 2600): void {
     bubble.textContent = text;
     bubble.dataset.visible = "true";
     if (bubbleTimer) clearTimeout(bubbleTimer);
-    bubbleTimer = setTimeout(() => { bubble.dataset.visible = "false"; }, 2600);
+    bubbleTimer = setTimeout(() => { bubble.dataset.visible = "false"; }, ms);
+  }
+
+  function fail(): void {
+    setMood("error", 1600);
+    say(REACTIONS.error, 3200);
   }
 
   async function showChat(): Promise<void> {
@@ -64,15 +67,11 @@ export function initCompanion(): void {
     say(REACTIONS.happy);
     try {
       await invoke("companion_show_chat");
-      status.textContent = "";
-    } catch (error) {
-      setMood("error", 1600);
-      status.textContent = "打开失败，点击重试";
-      status.title = errorText(error);
+    } catch {
+      fail();
     } finally { opening = false; }
   }
 
-  pick<HTMLButtonElement>("#companion-open").addEventListener("click", () => { void showChat(); });
   // The mark itself is the conversation entry. Dragging starts from the same
   // element, so a drag must not be mistaken for a click.
   mark.addEventListener("click", () => { if (!dragging) void showChat(); });
@@ -95,11 +94,7 @@ export function initCompanion(): void {
     dragging = true;
     setMood("dragging");
     say(REACTIONS.dragging);
-    void invoke("window_drag").catch((error) => {
-      setMood("error", 1600);
-      status.textContent = "暂时无法移动";
-      status.title = errorText(error);
-    }).finally(() => {
+    void invoke("window_drag").catch(() => { fail(); }).finally(() => {
       dragging = false;
       setMood("idle");
     });
@@ -112,18 +107,4 @@ export function initCompanion(): void {
     if (event.payload) setMood("thinking");
     else setMood("idle");
   }).catch(() => { /* plain browser: no backend events */ });
-
-  const metricsPoll = poll(async () => {
-    try {
-      const result = await invoke<WorkspaceMetrics>("workspace_metrics", { path: null });
-      metric.textContent = `${count(result.totalLines)} 行 · ${count(result.commitsToday)} 次提交`;
-      metric.title = "工作一览";
-      if (status.textContent === "指标未同步 · 自动重试") status.textContent = "";
-    } catch (error) {
-      metric.title = errorText(error);
-      status.textContent = "指标未同步 · 自动重试";
-      throw error;
-    }
-  }, 15000);
-  window.addEventListener("pagehide", () => metricsPoll.stop(), { once: true });
 }

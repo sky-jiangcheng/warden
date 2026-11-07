@@ -84,18 +84,3 @@ export function poll(job: () => Promise<void>, interval: number): { refresh: () 
     stop() { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", visibility); },
   };
 }
-
-export type WorkspaceMetrics = {
-  repositoryCount: number;
-  totalLines: number | null;
-  commitsToday: number;
-  additionsToday: number;
-  deletionsToday: number;
-  notesCount: number;
-  pendingReviewCount: number;
-  refreshedAt: string | null;
-};
-
-export function count(value: number | null): string {
-  return value === null ? "—" : new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(value);
-}

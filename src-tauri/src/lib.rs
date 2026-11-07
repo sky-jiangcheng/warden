@@ -545,14 +545,6 @@ async fn conversation_rename<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-async fn workspace_metrics<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    path: Option<String>,
-) -> Result<serde_json::Value, String> {
-    conversations::metrics(&app.state::<mcp_client::McpSession>(), path).await
-}
-
-#[tauri::command]
 fn companion_show_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     // The pet is a conversation entry: opening from it goes to the chat
     // page and makes the window key, so typing works immediately.
@@ -701,7 +693,6 @@ pub fn run() {
             conversation_create,
             conversation_read,
             conversation_rename,
-            workspace_metrics,
             companion_show_chat,
             companion_hide_chat,
             companion_hide,
