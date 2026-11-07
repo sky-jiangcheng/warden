@@ -124,7 +124,9 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Warden ${{ github.ref_name }}
           releaseBody: |
-            Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。本版落地 The Knot 品牌标识（Cinder 三叶结 / Warden 8 字），应用图标、托盘与伙伴窗口全部换新。
+            Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
+
+            **本版修复**：编辑或添加 provider 时，「拉取模型列表 / 测试连接」现在按**你表单里填的 Base URL** 去请求。此前它会忽略草稿、仍去探测已保存的那个 provider——把本地 Ollama 改成 OpenRouter，测的却还是 127.0.0.1。
 
             **macOS 未签名**（本仓没有 Apple Developer ID）。首次打开若提示「已损坏」或「无法验证开发者」，用任意一种方式放行：
 
