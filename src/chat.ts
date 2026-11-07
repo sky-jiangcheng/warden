@@ -397,11 +397,21 @@ export function initChat() {
   pick<HTMLButtonElement>("#topics-open").addEventListener("click", showTopics);
   pick<HTMLButtonElement>("#topic-title").addEventListener("click", showTopics);
   for (const id of ["#topic-new", "#topic-new-in-sheet"]) pick<HTMLButtonElement>(id).addEventListener("click", () => selectTopic(makeTopic()));
-  pick<HTMLButtonElement>("#settings-open").addEventListener("click", () => openSheet("#settings-sheet"));
+  // Settings are a page owned by main.ts; this button only exists as the
+  // quiet in-window entry point, so no dialog is opened here.
   pick<HTMLButtonElement>("#chat-hide").addEventListener("click", () => {
     if (!desktop) { active.error = "浏览器预览无法收起桌面窗口。"; updateStatus(); return; }
     void invoke("companion_hide_chat").catch((error) => { active.error = `暂时无法收起。${errorText(error)}`; updateStatus(); });
   });
+  // The window is borderless, so its header is the drag handle. Controls
+  // inside the header keep their own clicks: only empty space drags.
+  for (const id of ["#main-drag", "#settings-drag"]) {
+    pick<HTMLElement>(id).addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !desktop) return;
+      if ((event.target as HTMLElement).closest("button, input, select, textarea, a, label")) return;
+      void invoke("window_drag").catch(() => { /* drag is best effort */ });
+    });
+  }
   pick<HTMLFormElement>("#topic-rename-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const title = pick<HTMLInputElement>("#topic-rename").value.trim();

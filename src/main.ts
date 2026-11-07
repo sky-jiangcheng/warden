@@ -54,12 +54,14 @@ type TrayStatus = {
   installed: boolean;
 };
 
-/// One repository the copilot found on this machine.
-type RepoEntry = {
+/// One thing the user can adopt as a project. A project may be a single
+/// checkout or the folder directly above one — both are just a path here.
+type ProjectCandidate = {
   path: string;
   name: string;
+  kind: "repo" | "parent" | "missing";
+  children: number;
   favorite: boolean;
-  missing: boolean;
 };
 
 /// Everything the repository screen draws, in one payload.
@@ -67,8 +69,16 @@ type RepoScan = {
   roots: string[];
   repos: RepoEntry[];
   newRepos: RepoEntry[];
+  projects: ProjectCandidate[];
   truncated: boolean;
   problem: string | null;
+};
+
+type RepoEntry = {
+  path: string;
+  name: string;
+  favorite: boolean;
+  missing: boolean;
 };
 
 type ShellStatus = {
@@ -203,23 +213,44 @@ function renderMemory(status: ShellStatus) {
   setChip(chip, `已连接 · ${status.memory.tools.length} 个工具`, "ok");
 }
 
-/// Repositories the user has not answered for yet.
-///
-/// The queue is what keeps the toast honest: one repository at a time, and
-/// a repository that is already waiting is never announced twice.
-let pendingRepos: RepoEntry[] = [];
+/// The scan as last drawn. The checkbox list is rebuilt from this payload
+/// on every render; saving reads the DOM, which is the user's current answer.
+let lastScan: RepoScan | null = null;
 
-/// The repository the toast is asking about right now.
-let currentRepo: RepoEntry | null = null;
+/// Show one page of the main window. The window itself never changes; only
+/// which surface is visible. Used by the quiet header button, the settings
+/// back button and the tray's navigation event — one switch, no drift.
+type View = "chat" | "settings";
+function showView(view: View): void {
+  document.documentElement.dataset.view = view;
+  pick<HTMLElement>("#main-surface").hidden = view !== "chat";
+  pick<HTMLElement>("#settings-view").hidden = view !== "settings";
+  if (view === "chat") {
+    pick<HTMLTextAreaElement>("#chat-input").focus();
+  } else if (lastScan) {
+    // A background scan may have published a result while the chat page
+    // was up. Show it now rather than making the user press "重新扫描".
+    renderRepos(lastScan);
+  }
+}
 
-/// Render the scan roots and the repository list.
+/// Render the scan roots and the selectable project list.
 function renderRepos(scan: RepoScan) {
-  chat?.setRepos(scan.repos);
+  lastScan = scan;
+  // The chat context picker offers the projects the user adopted, not every
+  // checkout the scanner happened to walk past.
+  chat?.setRepos(scan.projects.map((project) => ({
+    path: project.path,
+    name: project.name,
+    missing: project.kind === "missing",
+  })));
   const chip = pick<HTMLElement>("#repo-chip");
-  const list = pick<HTMLElement>("#repos");
+  const list = pick<HTMLElement>("#projects");
   const roots = pick<HTMLElement>("#roots");
   const detail = pick<HTMLElement>("#repo-detail");
   const error = pick<HTMLElement>("#repo-error");
+  const note = pick<HTMLElement>("#projects-note");
+  const save = pick<HTMLButtonElement>("#repo-save-projects");
 
   list.replaceChildren();
   roots.replaceChildren();
@@ -235,216 +266,131 @@ function renderRepos(scan: RepoScan) {
   if (scan.roots.length === 0) {
     const hint = document.createElement("li");
     hint.className = "roots__empty";
-    hint.textContent =
-      "还没加目录 —— 填一个你放代码的路径，比如 ~/work。";
+    hint.textContent = "还没加目录 —— 填一个你放代码的路径，比如 ~/work。";
     roots.appendChild(hint);
   } else {
     for (const root of scan.roots) {
       const item = document.createElement("li");
       item.className = "root";
-
       const path = document.createElement("span");
       path.className = "root__path";
       path.textContent = root;
-
       const actions = document.createElement("div");
       actions.className = "root__actions";
-      actions.appendChild(
-        makeButton("移除", () => {
-          void invoke<RepoScan>("repo_roots_remove", { path: root }).then(
-            (scan: RepoScan) => renderRepos(scan),
-            (err: unknown) => {
-              pick<HTMLElement>("#repo-error").textContent = String(err);
-            },
-          );
-        }),
-      );
-
+      actions.appendChild(makeButton("移除", () => {
+        void invoke<RepoScan>("repo_roots_remove", { path: root }).then(
+          (next) => renderRepos(next),
+          (err: unknown) => { pick<HTMLElement>("#repo-error").textContent = String(err); },
+        );
+      }));
       item.append(path, actions);
       roots.appendChild(item);
     }
   }
 
-  // --- the repositories ------------------------------------------------
+  // --- the selectable projects ---------------------------------------
 
-  // Followed repositories first: they are the ones the user has already
-  // answered for, and they are what the copilot will act on.
-  const followed = scan.repos.filter((repo) => repo.favorite);
-  const others = scan.repos.filter((repo) => !repo.favorite);
-
-  if (scan.repos.length === 0) {
+  // Nothing is announced. The result of a scan IS this list: repositories
+  // and their parent folders side by side, each with one checkbox.
+  if (scan.roots.length === 0) {
     const empty = document.createElement("li");
-    empty.className = "repos__empty";
-    empty.textContent =
-      scan.roots.length === 0
-        ? "先加一个目录，copilot 才知道去哪儿找。"
-        : "这些目录里没有 git 仓库。";
+    empty.className = "roots__empty";
+    empty.textContent = "先加一个目录，扫描结果会在这里出现。";
+    list.appendChild(empty);
+  } else if (scan.projects.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "roots__empty";
+    empty.textContent = "这些目录里没有 git 仓库。";
     list.appendChild(empty);
   } else {
-    for (const repo of [...followed, ...others]) {
-      list.appendChild(renderRepoRow(repo));
-    }
+    for (const project of scan.projects) list.appendChild(renderProjectRow(project));
   }
 
-  setChip(
-    chip,
-    followed.length > 0
-      ? `${scan.repos.length} 个仓库 · ${followed.length} 个已收藏`
-      : `${scan.repos.length} 个仓库`,
-    followed.length > 0 ? "ok" : "quiet",
-  );
-
-  detail.textContent = scan.truncated
-    ? "扫到的仓库太多，只列了前一批 —— 把目录指得更准一点。"
-    : "";
+  const selected = scan.projects.filter((project) => project.favorite).length;
+  save.disabled = scan.projects.length === 0;
+  note.textContent = selected > 0
+    ? `已选 ${selected} 个项目 · 聊天时可附加为上下文。`
+    : "选中的项目会成为聊天时可附加的上下文。";
+  setChip(chip, `${scan.projects.length} 个候选 · ${selected} 个已选`, selected > 0 ? "ok" : "quiet");
+  detail.textContent = scan.truncated ? "扫到的仓库太多，只列了前一批 —— 把目录指得更准一点。" : "";
 }
 
-/// One row of the repository list.
-function renderRepoRow(repo: RepoEntry): HTMLLIElement {
+/// One checkbox row. A parent folder is labelled with how many checkouts it
+/// holds, so "单仓库" and "仓库的上一级" are distinguishable at a glance.
+function renderProjectRow(project: ProjectCandidate): HTMLLIElement {
   const item = document.createElement("li");
-  item.className = "repo";
+  item.className = "project";
+  item.dataset.path = project.path;
+
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.className = "project__box";
+  box.id = `project-${project.path.replace(/[^a-zA-Z0-9]/g, "-")}`;
+  box.checked = project.favorite;
+  box.dataset.path = project.path;
 
   const main = document.createElement("div");
-  main.className = "repo__main";
-
-  const name = document.createElement("span");
-  name.className = "repo__name";
-  name.textContent = repo.name;
-
+  main.className = "project__main";
+  const name = document.createElement("label");
+  name.className = "project__name";
+  name.htmlFor = box.id;
+  name.textContent = project.name;
   const path = document.createElement("span");
-  path.className = "repo__path";
-  path.textContent = repo.path;
-  path.title = repo.path;
-
+  path.className = "project__path";
+  path.textContent = project.path;
+  path.title = project.path;
   main.append(name, path);
 
   const tags = document.createElement("div");
-  tags.className = "repo__tags";
+  tags.className = "project__tags";
+  const kind = document.createElement("span");
+  kind.className = `chip ${project.kind === "parent" ? "chip--ok" : "chip--quiet"}`;
+  kind.textContent = project.kind === "parent"
+    ? `目录 · ${project.children} 个仓库`
+    : project.kind === "missing" ? "找不到" : "单仓库";
+  tags.appendChild(kind);
 
-  if (repo.favorite) {
-    const tag = document.createElement("span");
-    tag.className = "chip chip--ok";
-    tag.textContent = "已收藏";
-    tags.appendChild(tag);
-  }
-  if (repo.missing) {
-    const tag = document.createElement("span");
-    tag.className = "chip chip--warn";
-    tag.textContent = "找不到";
-    tags.appendChild(tag);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "repo__actions";
-  actions.appendChild(
-    makeButton(repo.favorite ? "取消收藏" : "收藏", () => {
-      void invoke<RepoScan>("repo_set_favorite", {
-        path: repo.path,
-        favorite: !repo.favorite,
-      }).then(
-        (scan: RepoScan) => renderRepos(scan),
-        (err: unknown) => {
-          pick<HTMLElement>("#repo-error").textContent = String(err);
-        },
-      );
-    }),
-  );
-
-  item.append(main, tags, actions);
+  item.append(box, main, tags);
   return item;
 }
 
-/// Ask about the next repository the user has not answered for.
-///
-/// One at a time. Five "is this yours?" cards stacked at once is a form,
-/// not a question — and the answer only means something when it is about
-/// one repository.
-function showNextRepoToast() {
-  if (currentRepo || pendingRepos.length === 0) return;
-
-  const repo = pendingRepos.shift();
-  if (!repo) return;
-  currentRepo = repo;
-
-  pick<HTMLElement>("#toast-name").textContent = repo.name;
-  const path = pick<HTMLElement>("#toast-path");
-  path.textContent = repo.path;
-  // The path is clipped to keep the bubble narrow, so the full one has to
-  // be one hover away.
-  path.title = repo.path;
-
-  const toast = pick<HTMLElement>("#repo-toast");
-  toast.hidden = false;
-  // The browser has to paint the un-hidden state before the transition
-  // runs, otherwise the slide-in has nothing to animate from.
-  requestAnimationFrame(() => toast.classList.add("toast--in"));
+/// Save the whole selection in one command. There is no one-at-a-time
+/// question, no queue and no pop-up: the list is the configuration surface.
+function saveProjects(): void {
+  const paths = [...document.querySelectorAll<HTMLInputElement>("#projects .project__box")]
+    .filter((box) => box.checked)
+    .map((box) => box.dataset.path ?? "");
+  void invoke<RepoScan>("repo_set_projects", { paths }).then(
+    (scan) => {
+      renderRepos(scan);
+      pick<HTMLElement>("#repo-error").textContent = "";
+    },
+    (err: unknown) => { pick<HTMLElement>("#repo-error").textContent = String(err); },
+  );
 }
 
-/// Put the toast away and let the next one in.
-function hideRepoToast() {
-  const toast = pick<HTMLElement>("#repo-toast");
-  toast.classList.remove("toast--in");
-  toast.hidden = true;
-  currentRepo = null;
-}
-
-/// Answer the question the toast asks.
-function answerToast(favorite: boolean) {
-  const repo = currentRepo;
-  if (!repo) return;
-  hideRepoToast();
-
-  const done = (scan: RepoScan) => {
-    renderRepos(scan);
-    showNextRepoToast();
-  };
-  const failed = (err: unknown) => {
-    pick<HTMLElement>("#repo-error").textContent = String(err);
-  };
-
-  if (favorite) {
-    void invoke<RepoScan>("repo_set_favorite", {
-      path: repo.path,
-      favorite: true,
-    }).then(done, failed);
-  } else {
-    void invoke<RepoScan>("repo_dismiss", { path: repo.path }).then(done, failed);
-  }
-}
-
-/// Queue the repositories the user has not dealt with, and ask about the
-/// first one.
-function queueNewRepos(repos: RepoEntry[]) {
-  for (const repo of repos) {
-    const waiting = pendingRepos.some((queued) => queued.path === repo.path);
-    if (!waiting && currentRepo?.path !== repo.path) {
-      pendingRepos.push(repo);
-    }
-  }
-  showNextRepoToast();
-}
-
-/// Load the repository screen.
+/// Load the repository screen. Never announces anything.
 async function loadRepos() {
   try {
-    const scan = await invoke<RepoScan>("repo_scan");
-    renderRepos(scan);
-    queueNewRepos(scan.newRepos);
+    renderRepos(await invoke<RepoScan>("repo_scan"));
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    pick<HTMLElement>("#repo-error").textContent = detail;
+    pick<HTMLElement>("#repo-error").textContent =
+      error instanceof Error ? error.message : String(error);
   }
 }
 
-/// Watch for repositories found while the window is open.
-async function watchForNewRepos() {
+/// A background scan publishes its result as data. The settings list is
+/// rebuilt silently — the user is never interrupted by a discovery.
+async function watchForRepoChanges() {
   try {
-    await listen<RepoEntry[]>("repos:new", (event) => {
-      queueNewRepos(event.payload);
+    await listen<RepoScan>("repos:changed", (event) => {
+      // Only redraw while the user is looking at settings; a rebuild under
+      // an open checkbox list would discard un-saved selections.
+      if (document.documentElement.dataset.view === "settings") renderRepos(event.payload);
+      else lastScan = event.payload;
     });
   } catch {
-    // No backend (the frontend also runs in a plain browser). There is
-    // nothing to listen to, and that is not a failure worth reporting.
+    // No backend (the frontend also runs in a plain browser).
   }
 }
 
@@ -615,11 +561,11 @@ function renderTray(status: ShellStatus) {
 
   if (status.tray.installed) {
     setChip(chip, "已就位", "ok");
-    note.textContent = "点菜单栏的 Warden 标记唤回窗口，右键打开菜单。";
+    note.textContent = "⌥ Space 或点菜单栏标记唤起聊天；右键可进设置、显隐桌宠、退出 Warden。";
   } else {
     setChip(chip, "不可用", "warn");
     note.textContent =
-      "托盘未就位。仍可通过 Warden 伙伴打开对话；日志中可查看 [tray] 错误。";
+      "托盘未就位。桌宠仍可点开对话；日志中可查看 [tray] 错误。";
   }
 }
 
@@ -672,14 +618,28 @@ function main() {
   if (desktop) {
     void refresh();
     void loadProviders();
-    void watchForNewRepos();
+    void watchForRepoChanges();
     void loadRepos();
   } else {
     for (const id of ["#memory-chip", "#provider-chip", "#repo-chip", "#tray-chip"]) setChip(pick<HTMLElement>(id), "未连接", "quiet");
     pick<HTMLElement>("#memory-path").textContent = browserNote;
-    pick<HTMLElement>("#tray-path").textContent = "浏览器中没有桌面托盘与常驻窗口。";
-    for (const id of ["#root-add", "#repo-scan", "#provider-save", "#provider-fetch-models", "#provider-test", "#provider-retry", "#memory-retry"]) pick<HTMLButtonElement>(id).disabled = true;
+    pick<HTMLElement>("#tray-path").textContent = "浏览器预览没有托盘与快捷键；设置页仍可切换。";
+    for (const id of ["#root-add", "#repo-scan", "#repo-save-projects", "#provider-save", "#provider-fetch-models", "#provider-test", "#provider-retry", "#memory-retry"]) pick<HTMLButtonElement>(id).disabled = true;
   }
+
+  // --- page switching --------------------------------------------------
+
+  showView("chat");
+  pick<HTMLButtonElement>("#settings-open").addEventListener("click", () => showView("settings"));
+  pick<HTMLButtonElement>("#settings-back").addEventListener("click", () => showView("chat"));
+  pick<HTMLElement>("#settings-view").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") showView("chat");
+  });
+  // The tray's Settings item asks the backend to show this window; the
+  // backend emits the view to display. One switch, two entry points.
+  void listen<string>("warden:navigate", (event) => {
+    showView(event.payload === "settings" ? "settings" : "chat");
+  }).catch(() => { /* plain browser: no backend events */ });
 
   pick<HTMLFormElement>("#root-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -688,35 +648,19 @@ function main() {
     const path = input.value.trim();
     if (!path || button.disabled) return;
     button.disabled = true;
+    // Configuring a root IS the first scan. Its result appears as the
+    // selectable project list right here — no pop-up, no question queue.
     void invoke<RepoScan>("repo_roots_add", { path }).then(
       (scan: RepoScan) => {
         if (input.value.trim() === path) input.value = "";
         renderRepos(scan);
-        queueNewRepos(scan.newRepos);
       },
       (err: unknown) => { pick<HTMLElement>("#repo-error").textContent = errorText(err); },
     ).finally(() => { button.disabled = false; });
   });
 
-  pick<HTMLButtonElement>("#repo-scan").addEventListener("click", () => {
-    void invoke<RepoScan>("repo_scan").then(
-      (scan: RepoScan) => {
-        renderRepos(scan);
-        queueNewRepos(scan.newRepos);
-      },
-      (err: unknown) => {
-        pick<HTMLElement>("#repo-error").textContent = String(err);
-      },
-    );
-  });
-
-  pick<HTMLButtonElement>("#toast-favorite").addEventListener("click", () => {
-    answerToast(true);
-  });
-
-  pick<HTMLButtonElement>("#toast-dismiss").addEventListener("click", () => {
-    answerToast(false);
-  });
+  pick<HTMLButtonElement>("#repo-scan").addEventListener("click", () => { void loadRepos(); });
+  pick<HTMLButtonElement>("#repo-save-projects").addEventListener("click", saveProjects);
 
   // A failed connection is worth one more try: the server may have been
   // installed since the window opened. The retry re-runs the same status

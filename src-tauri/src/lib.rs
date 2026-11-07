@@ -30,8 +30,7 @@ use crate::provider_commands::{
 use crate::providers::{
     Provider, ProviderStore, delete_api_key, load_api_key, slugify, store_api_key,
 };
-use crate::repos::{RepoEntry, RepoScan, RepoStore};
-use tauri_plugin_notification::NotificationExt;
+use crate::repos::{RepoScan, RepoStore};
 
 /// What the first screen needs: which model providers are configured, whether
 /// the memory layer is installed AND answering, and whether the wake-up path
@@ -177,87 +176,32 @@ fn repo_dismiss(store: tauri::State<'_, RepoStore>, path: String) -> Result<Repo
     repos::dismiss_and_scan(&store, &path)
 }
 
+/// Saves the projects the user selected in the settings list.
+#[tauri::command]
+fn repo_set_projects(
+    store: tauri::State<'_, RepoStore>,
+    paths: Vec<String>,
+) -> Result<RepoScan, String> {
+    repos::set_projects_and_scan(&store, &paths)
+}
+
 /// How often the background scan looks for new repositories.
 const RESCAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// The notification action that brings the window back.
-const ACTION_NEW_REPOS: &str = "repos-new";
-
-/// Avoid re-announcing unchanged discoveries every five minutes. This is
-/// session-local presentation state; favourites/dismissals stay in RepoStore.
-#[derive(Default)]
-struct AnnouncementState(std::sync::Mutex<std::collections::HashSet<String>>);
-
-impl AnnouncementState {
-    fn unseen(&self, repos: &[RepoEntry]) -> Vec<RepoEntry> {
-        let mut seen = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        repos
-            .iter()
-            .filter(|repo| seen.insert(repo.path.clone()))
-            .cloned()
-            .collect()
-    }
+/// Tells the settings screen that a scan finished, without interrupting the
+/// user. Discoveries are never announced: no system notification, no pop-up.
+/// A new repository simply appears in the selectable project list the next
+/// time the user opens settings (or immediately, if settings are open).
+fn publish_scan<R: tauri::Runtime>(app: &tauri::AppHandle<R>, scan: &RepoScan) {
+    let _ = app.emit("repos:changed", scan);
 }
 
-/// Announces repositories the user has not dealt with yet.
-///
-/// Two channels, one per situation. When the window is in front, the
-/// window asks — a system notification on top of a screen the user is
-/// already reading is noise. When the copilot is in the background, a
-/// system notification is the only thing that can reach the user at all.
-fn announce_new_repos<R: tauri::Runtime>(app: &tauri::AppHandle<R>, new_repos: &[RepoEntry]) {
-    let new_repos = app.state::<AnnouncementState>().unseen(new_repos);
-    if new_repos.is_empty() {
-        return;
-    }
-
-    let foreground = app
-        .get_webview_window("main")
-        .and_then(|window| window.is_focused().ok())
-        .unwrap_or(false);
-
-    if foreground {
-        eprintln!(
-            "[repos] {} new repositor{} in the foreground",
-            new_repos.len(),
-            if new_repos.len() == 1 { "y" } else { "ies" }
-        );
-        let _ = app.emit("repos:new", new_repos);
-        return;
-    }
-
-    let title = if new_repos.len() == 1 {
-        "发现一个新仓库".to_string()
-    } else {
-        format!("发现 {} 个新仓库", new_repos.len())
-    };
-    let body = new_repos
-        .iter()
-        .map(|repo| repo.name.as_str())
-        .collect::<Vec<_>>()
-        .join("、");
-
-    // A failed notification is logged rather than swallowed: the user
-    // would otherwise see "nothing happened" and have no way to tell that
-    // the copilot found a repository and failed to say so.
-    if let Err(err) = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .action_type_id(ACTION_NEW_REPOS)
-        .show()
-    {
-        eprintln!("[notify] the notification could not be shown: {err}");
-    }
-}
-
-/// Keeps looking for repositories while nobody is looking at the screen.
+/// Keeps the project list current while nobody is looking at the screen.
 ///
 /// This is what makes the copilot a resident rather than a screen: the
-/// window can be closed for hours and the scan still runs. The first scan
-/// is not here — the window asks for it when it opens, because a window
-/// that is not listening yet cannot be told about a new repository.
+/// window can be hidden for hours and the scan still runs. Results are
+/// published silently — the user decides what to adopt, in the settings
+/// list, after configuring a root.
 fn spawn_background_scan<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     store_path: std::path::PathBuf,
@@ -273,7 +217,7 @@ fn spawn_background_scan<R: tauri::Runtime>(
             })
             .await
             {
-                Ok(scan) => announce_new_repos(&app, &scan.new_repos),
+                Ok(scan) => publish_scan(&app, &scan),
                 Err(error) => eprintln!("[repos] background scan failed: {error}"),
             }
         }
@@ -542,7 +486,10 @@ async fn chat_send<R: tauri::Runtime>(
     thread_id: Option<String>,
     message_id: String,
 ) -> Result<(), String> {
-    conversations::send(
+    // The desk pet shows a thinking state even when the chat overlay has
+    // been put away mid-answer. The event is broadcast, not tied to a window.
+    let _ = app.emit("warden:thinking", true);
+    let outcome = conversations::send(
         &app.state::<mcp_client::McpSession>(),
         &app.state::<conversations::GenerationState>(),
         &app.state::<ProviderStore>(),
@@ -557,7 +504,9 @@ async fn chat_send<R: tauri::Runtime>(
             let _ = channel.send(chunk);
         },
     )
-    .await
+    .await;
+    let _ = app.emit("warden:thinking", false);
+    outcome
 }
 
 #[tauri::command]
@@ -605,12 +554,16 @@ async fn workspace_metrics<R: tauri::Runtime>(
 
 #[tauri::command]
 fn companion_show_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    tray::show_surface(&app, "main", false)
+    // The pet is a conversation entry: opening from it goes to the chat
+    // page and makes the window key, so typing works immediately.
+    tray::show_chat(&app);
+    Ok(())
 }
 
 #[tauri::command]
 fn companion_hide_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    tray::hide_surface(&app, "main")
+    tray::hide_chat(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -637,13 +590,11 @@ fn builder<R: tauri::Runtime>() -> tauri::Builder<R> {
     // `Builder::<R>::new()` is the generic constructor.
     tauri::Builder::<R>::new()
         .plugin(tauri_plugin_opener::init())
-        // The notification plugin has to be registered here, not merely
-        // depended on: `app.notification()` reads the plugin's managed
-        // state, and calling it without the plugin panics with "state()
-        // called before manage()". A dependency in Cargo.toml and a
-        // permission in the capability file are not the same thing as a
-        // registered plugin.
-        .plugin(tauri_plugin_notification::init())
+        // A global shortcut is registered from Rust, never from the webview:
+        // the webview has no business deciding which keys belong to the whole
+        // machine. The plugin is initialised here so `setup` can register
+        // ⌥ Space before the first frame is shown.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // The page load is logged because a window that shows nothing is
         // indistinguishable from a window that failed to load. In a debug
         // build the window points at the dev server, not at the built
@@ -654,17 +605,29 @@ fn builder<R: tauri::Runtime>() -> tauri::Builder<R> {
         })
         .manage(mcp_client::McpSession::default())
         .manage(conversations::GenerationState::default())
-        .manage(AnnouncementState::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
                 && tray::check_surface(window.label()).is_ok()
             {
                 // Keep both webviews and their in-flight chat tasks alive.
                 api.prevent_close();
-                if let Err(error) = tray::hide_surface(window.app_handle(), window.label()) {
+                if window.label() == "main" {
+                    tray::hide_chat(window.app_handle());
+                } else if let Err(error) = tray::hide_surface(window.app_handle(), window.label()) {
                     eprintln!("[window] {error}");
                     let _ = window.emit("window:error", error);
                 }
+            }
+            // The chat window is a headless overlay: clicking anywhere else
+            // on the screen puts it away. The desk pet is not an overlay and
+            // deliberately ignores focus changes — it is the thing that
+            // stays on screen. A native modal dialog inside the window keeps
+            // focus, so settings and topics are not dismissed by this.
+            if let tauri::WindowEvent::Focused(false) = event
+                && window.label() == "main"
+                && window.is_visible().unwrap_or(false)
+            {
+                tray::hide_chat(window.app_handle());
             }
         })
 }
@@ -673,11 +636,34 @@ fn builder<R: tauri::Runtime>() -> tauri::Builder<R> {
 pub fn run() {
     builder::<tauri::Wry>()
         .setup(|app| {
+            // A status-bar application, not a Dock application: no icon in
+            // the Dock, and closing the last window no longer ends the
+            // process. macOS-only; the other platforms keep the tray as the
+            // resident entry without an activation policy to change.
+            #[cfg(target_os = "macos")]
+            app.handle()
+                .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+
             // The tray is the copilot's wake-up entry (ADR-0047 decision 5).
             // It is installed here, in the setup hook, so it exists from the
             // first frame — a tray that shows up a moment late reads as a
             // broken feature.
             tray::install(app)?;
+
+            // ⌥ Space toggles the chat overlay from anywhere. A failure is
+            // logged rather than fatal: the tray and the desk pet remain, and
+            // a shortcut another app already owns must not stop Warden.
+            use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+            if let Err(error) =
+                app.global_shortcut()
+                    .on_shortcut(tray::SHORTCUT, |app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            tray::toggle_chat(app);
+                        }
+                    })
+            {
+                eprintln!("[shortcut] ⌥ Space could not be registered: {error}");
+            }
 
             // The provider configuration lives in the app config directory.
             // The store is managed so the commands can reach it through the
@@ -693,16 +679,9 @@ pub fn run() {
             let repo_path = config_dir.join("repos.json");
             app.manage(RepoStore::new(repo_path.clone()));
 
-            // Clicking the "a new repository appeared" notification brings
-            // the window back: the notification is a door into the app, not
-            // just a message about it.
-            let handle = app.handle().clone();
-            app.notification().register_action_types(vec![
-                tauri_plugin_notification::ActionType::builder(ACTION_NEW_REPOS).build(),
-            ])?;
-            app.notification().on_action(move |_performed| {
-                tray::show_window(&handle);
-            })?;
+            // Only the desk pet is visible at startup; the chat overlay stays
+            // hidden until the tray, the shortcut or the pet opens it.
+            tray::apply_companion_preference(app.handle());
 
             spawn_background_scan(app.handle().clone(), repo_path);
 
@@ -732,6 +711,7 @@ pub fn run() {
             repo_roots_remove,
             repo_set_favorite,
             repo_dismiss,
+            repo_set_projects,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Warden");
@@ -741,24 +721,31 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    /// Discoveries are published as data, never as an interruption. A scan
+    /// payload must be self-describing so the settings screen can rebuild
+    /// the selectable list without asking for a second scan.
     #[test]
-    fn unchanged_scan_results_are_announced_only_once() {
-        let state = AnnouncementState::default();
+    fn a_scan_payload_is_the_only_channel_for_discoveries() {
+        use crate::repos::RepoEntry;
         let repo = RepoEntry {
-            path: "/repo/one".into(),
-            name: "one".into(),
+            path: "/work/team/alpha".into(),
+            name: "alpha".into(),
             favorite: false,
             missing: false,
         };
-        assert_eq!(state.unseen(std::slice::from_ref(&repo)).len(), 1);
-        assert!(state.unseen(&[repo]).is_empty());
-        let next = RepoEntry {
-            path: "/repo/two".into(),
-            name: "two".into(),
-            favorite: false,
-            missing: false,
+        let scan = RepoScan {
+            roots: vec!["/work".into()],
+            repos: vec![repo.clone()],
+            new_repos: vec![repo],
+            projects: Vec::new(),
+            truncated: false,
+            problem: None,
         };
-        assert_eq!(state.unseen(&[next]).len(), 1);
+        let value = serde_json::to_value(&scan).expect("serialize");
+        assert!(value.get("projects").is_some());
+        assert!(value.get("newRepos").is_some());
+        // No announcement channel: no notification action id, no prompt.
+        assert!(value.get("announcement").is_none());
     }
 
     /// The frontend reads camelCase keys; a rename on the Rust side would
@@ -800,33 +787,22 @@ mod tests {
         println!("{payload}");
     }
 
-    /// The notification channel has to be registered, not merely depended on.
-    ///
-    /// `app.notification()` reads the plugin's managed state, and calling
-    /// it without the plugin registered panics with "state() called before
-    /// manage()". That panic used to happen only in the running app: the
-    /// unit tests built their app with `mock_app`, which never runs the
-    /// setup hook where the notification channel is wired.
-    ///
-    /// Building the app through the same `builder()` the production code
-    /// uses, and then asking for the notification API, makes that failure
-    /// a test failure instead of a crash on the user's screen.
+    /// The global-shortcut plugin has to be registered, not merely depended
+    /// on. `app.global_shortcut()` reads its managed state and panics with
+    /// "state() called before manage()" if the plugin is missing — a panic
+    /// that used to happen only in the running app, because `mock_app` never
+    /// runs the setup hook. Building through the production `builder()` turns
+    /// that into a test failure.
     #[test]
-    fn the_notification_channel_is_registered() {
+    fn the_global_shortcut_plugin_is_registered() {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
         let app = builder::<tauri::test::MockRuntime>()
-            // The macOS default menu is built on the main thread only, and a
-            // test runs on a worker thread, so it is turned off here. It has
-            // nothing to do with the notification channel.
             .enable_macos_default_menu(false)
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .expect("the app builds");
-
-        // Asking for the notification API reads the plugin's managed state.
-        // Without the plugin registered this panics with "state() called
-        // before manage()", which is exactly the failure the test guards.
-        // The notification is not shown: a test has no business popping a
-        // banner on the machine that runs it.
-        let _channel = app.handle().notification();
+        // Registering in the test runtime is a no-op; asking for the API is
+        // the part that would panic without the plugin.
+        let _shortcuts = app.handle().global_shortcut();
     }
 
     /// The tray is the copilot's only wake-up path (ADR-0047 decision 5), and

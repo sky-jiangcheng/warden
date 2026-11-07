@@ -11,14 +11,21 @@
 // the bare-ubuntu `go build ./...` in the main repository's CI.
 //
 // What the tray does here is deliberately small:
-//   · left click  → show and focus the window (this is the whole point)
-//   · right click → Show Chat / Show Companion / Quit
+//   · left click  → show and focus the chat window (this is the whole point)
+//   · right click → Show Chat / Settings / Show-Hide Companion / Quit
+//   · ⌥ Space     → the same toggle, from anywhere on the machine
 //
-// Closing either surface hides it, preserving background chat. Only Quit
-// exits. If the tray failed, another visible surface must remain reachable.
+// Warden is a status-bar resident, not a windowed application: on macOS it
+// runs as an Accessory so closing the last surface does not end the process
+// and does not leave a Dock icon behind. The chat window is headless — a
+// borderless overlay that hides itself when it loses focus. The desk pet is
+// optional: the tray can hide it while the app stays resident.
+//
+// Only Quit exits. If the tray failed, another visible surface must remain
+// reachable (see `hide_surface`).
 
 use tauri::{
-    AppHandle, Manager, Runtime,
+    AppHandle, Emitter, Manager, Runtime,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -29,8 +36,51 @@ const TRAY_ID: &str = "main";
 /// Menu item ids. They are matched by string in the event handler, so they
 /// are declared as constants rather than spelled out at the call sites.
 const MENU_SHOW: &str = "show";
-const MENU_COMPANION: &str = "show-companion";
+const MENU_SETTINGS: &str = "settings";
+const MENU_COMPANION: &str = "toggle-companion";
 const MENU_QUIT: &str = "quit";
+
+/// The global wake-up shortcut. ⌥ Space is free on macOS (Spotlight uses
+/// ⌘ Space) and does not collide with common editor bindings.
+pub const SHORTCUT: &str = "Alt+Space";
+
+/// The event that tells the main window which page to show.
+pub const NAVIGATE_EVENT: &str = "warden:navigate";
+
+/// Whether the desk pet is visible. Stored next to the other configuration;
+/// a missing or unreadable file means the default — visible.
+const PREFS_FILE: &str = "preferences.json";
+
+fn prefs_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join(PREFS_FILE))
+}
+
+pub fn companion_visible<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let Some(path) = prefs_path(app) else {
+        return true;
+    };
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value["companionVisible"].as_bool())
+        .unwrap_or(true)
+}
+
+fn set_companion_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
+    let Some(path) = prefs_path(app) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(
+        path,
+        serde_json::json!({ "companionVisible": visible }).to_string(),
+    );
+}
 
 /// The macOS tray icon: a template image.
 ///
@@ -100,10 +150,16 @@ fn install_on_main_thread<R: Runtime>(
     icon: tauri::image::Image<'static>,
 ) -> tauri::Result<()> {
     let show = MenuItem::with_id(handle, MENU_SHOW, "Show Chat", true, None::<&str>)?;
-    let companion =
-        MenuItem::with_id(handle, MENU_COMPANION, "Show Companion", true, None::<&str>)?;
+    let settings = MenuItem::with_id(handle, MENU_SETTINGS, "Settings", true, None::<&str>)?;
+    let companion = MenuItem::with_id(
+        handle,
+        MENU_COMPANION,
+        "Show / Hide Companion",
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(handle, MENU_QUIT, "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(handle, &[&show, &companion, &quit])?;
+    let menu = Menu::with_items(handle, &[&show, &settings, &companion, &quit])?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
@@ -112,12 +168,9 @@ fn install_on_main_thread<R: Runtime>(
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            MENU_SHOW => show_window(app),
-            MENU_COMPANION => {
-                if let Err(error) = show_surface(app, "companion", false) {
-                    eprintln!("[window] {error}");
-                }
-            }
+            MENU_SHOW => show_chat(app),
+            MENU_SETTINGS => show_settings(app),
+            MENU_COMPANION => toggle_companion(app),
             MENU_QUIT => app.exit(0),
             _ => {}
         })
@@ -130,7 +183,7 @@ fn install_on_main_thread<R: Runtime>(
                 ..
             } = event
             {
-                show_window(tray.app_handle());
+                show_chat(tray.app_handle());
             }
         })
         .build(handle)?;
@@ -154,18 +207,88 @@ pub fn is_installed<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.tray_by_id(TRAY_ID).is_some()
 }
 
-/// Bring the copilot's window back.
-///
-/// The notification that says "a new repository appeared" lands here too:
-/// clicking it must bring the window up, or the message is a dead end.
+/// Bring the chat window back, on the chat page.
 ///
 /// `show` alone is not enough: the window may still be minimized from an
 /// earlier hide, and a shown-but-minimized window reads as "the app did
 /// nothing". `unminimize` first, then `set_focus`, so the keystroke lands
 /// where the user is looking.
-pub fn show_window<R: Runtime>(app: &AppHandle<R>) {
-    // Focusing is reserved for an explicit tray/notification click, never a scan.
+pub fn show_chat<R: Runtime>(app: &AppHandle<R>) {
+    set_policy(app, false);
     if let Err(error) = show_surface(app, "main", true) {
+        eprintln!("[window] {error}");
+        return;
+    }
+    let _ = app.emit(NAVIGATE_EVENT, "chat");
+}
+
+/// Open the same window on its settings page. The tray's right-click menu
+/// is one of the two ways in; the quiet button in the chat header is the
+/// other. Both go through one view switch, so the two cannot disagree.
+pub fn show_settings<R: Runtime>(app: &AppHandle<R>) {
+    set_policy(app, false);
+    if let Err(error) = show_surface(app, "main", true) {
+        eprintln!("[window] {error}");
+        return;
+    }
+    let _ = app.emit(NAVIGATE_EVENT, "settings");
+}
+
+/// Toggle the chat window from the global shortcut.
+///
+/// A shortcut that only ever shows is awkward: half the time the reason to
+/// press it is to put the overlay away. Focus is the state to test, not
+/// visibility — a visible but unfocused window still needs bringing forward.
+pub fn toggle_chat<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_focused().unwrap_or(false) {
+        hide_chat(app);
+    } else {
+        show_chat(app);
+    }
+}
+
+/// Put the chat overlay away and return to a pure status-bar presence.
+pub fn hide_chat<R: Runtime>(app: &AppHandle<R>) {
+    if let Err(error) = hide_surface(app, "main") {
+        eprintln!("[window] {error}");
+        return;
+    }
+    set_policy(app, true);
+}
+
+/// Show or hide the desk pet, remembering the choice.
+///
+/// The tray is the resident surface; the pet is decoration the user may not
+/// want on screen. Hiding it must not end the app or disable ⌥ Space.
+pub fn toggle_companion<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window("companion") else {
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    let result = if visible {
+        window.hide().map_err(|e| e.to_string())
+    } else {
+        show_surface(app, "companion", false)
+    };
+    if let Err(error) = result {
+        eprintln!("[window] {error}");
+        return;
+    }
+    set_companion_visible(app, !visible);
+}
+
+/// Apply the saved desk-pet preference at startup. The window is created
+/// visible by the config; this is the one place that can override it.
+pub fn apply_companion_preference<R: Runtime>(app: &AppHandle<R>) {
+    if companion_visible(app) {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("companion")
+        && let Err(error) = window.hide()
+    {
         eprintln!("[window] {error}");
     }
 }
@@ -176,6 +299,27 @@ pub fn check_surface(label: &str) -> Result<(), String> {
     } else {
         Err("only Warden's main and companion windows may be controlled".into())
     }
+}
+
+/// macOS: a pure Accessory app cannot become the active application, so a
+/// borderless window shown under that policy would not receive keystrokes.
+/// Becoming Regular while the chat overlay is up fixes that; going back to
+/// Accessory when it is put away removes the Dock icon again. Other platforms
+/// have no activation policy to change.
+fn set_policy<R: Runtime>(app: &AppHandle<R>, accessory: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let policy = if accessory {
+            tauri::ActivationPolicy::Accessory
+        } else {
+            tauri::ActivationPolicy::Regular
+        };
+        if let Err(error) = app.set_activation_policy(policy) {
+            eprintln!("[window] activation policy: {error}");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, accessory);
 }
 
 pub fn show_surface<R: Runtime>(
@@ -272,6 +416,14 @@ mod tests {
             (main["minWidth"].as_u64(), main["minHeight"].as_u64()),
             (Some(380), Some(520))
         );
+        // The chat window is a headless overlay: hidden at startup, borderless,
+        // transparent and out of the taskbar. Only the desk pet is visible.
+        for flag in ["visible", "decorations", "focus"] {
+            assert_eq!(main[flag], false, "main.{flag}");
+        }
+        for flag in ["transparent", "skipTaskbar", "shadow"] {
+            assert_eq!(main[flag], true, "main.{flag}");
+        }
         let pet = &windows[1];
         assert_eq!(pet["label"], "companion");
         assert_eq!(pet["url"], "index.html?surface=companion");
@@ -301,7 +453,11 @@ mod tests {
     fn tray_ids_are_the_documented_ones() {
         assert_eq!(TRAY_ID, "main");
         assert_eq!(MENU_SHOW, "show");
+        assert_eq!(MENU_SETTINGS, "settings");
+        assert_eq!(MENU_COMPANION, "toggle-companion");
         assert_eq!(MENU_QUIT, "quit");
+        assert_eq!(SHORTCUT, "Alt+Space");
+        assert_eq!(NAVIGATE_EVENT, "warden:navigate");
     }
 
     /// The tray icon must be a real PNG of the size the platform expects.

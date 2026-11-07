@@ -11,7 +11,7 @@
 //! this test exists to catch.
 use repotory_agent_lib::repos::{
     RepoStore, add_root_and_scan, dismiss_and_scan, remove_root_and_scan, scan_now,
-    set_favorite_and_scan,
+    set_favorite_and_scan, set_projects_and_scan,
 };
 use std::path::{Path, PathBuf};
 
@@ -167,4 +167,85 @@ fn unfollowing_a_repository_brings_it_back_to_the_announced_list() {
 
     let scan = set_favorite_and_scan(&store, &path, false).expect("unfollow");
     assert_eq!(scan.new_repos.len(), 1, "{:?}", scan.new_repos);
+}
+
+/// A scan offers the repository AND its direct parent as separate, equally
+/// selectable projects. Nothing is announced: the list is the whole answer.
+#[test]
+fn a_scan_offers_repos_and_their_parents_without_prompting() {
+    let root = temp_dir("projects");
+    make_repo(&root.join("team").join("alpha"));
+    make_repo(&root.join("team").join("beta"));
+    let store = store(&root);
+
+    let scan = add_root_and_scan(&store, &root.to_string_lossy()).expect("root");
+
+    let parent = root.join("team").to_string_lossy().into_owned();
+    let parents: Vec<_> = scan
+        .projects
+        .iter()
+        .filter(|candidate| candidate.kind == "parent")
+        .collect();
+    assert_eq!(parents.len(), 1, "{:?}", scan.projects);
+    assert_eq!(parents[0].path, parent);
+    assert_eq!(parents[0].children, 2, "both checkouts are under it");
+
+    let repos = scan
+        .projects
+        .iter()
+        .filter(|candidate| candidate.kind == "repo")
+        .count();
+    assert_eq!(repos, 2);
+    // The scan root itself is where to look, not a thing to adopt.
+    assert!(
+        !scan
+            .projects
+            .iter()
+            .any(|candidate| candidate.path == root.to_string_lossy())
+    );
+}
+
+/// Selecting projects is one write over the whole list: a parent folder is
+/// as valid a project as a single checkout, and a selection that later
+/// disappears stays visible so it can be removed.
+#[test]
+fn selecting_projects_is_one_atomic_write() {
+    let root = temp_dir("select-projects");
+    make_repo(&root.join("team").join("alpha"));
+    make_repo(&root.join("team").join("beta"));
+    let store = store(&root);
+    let first = add_root_and_scan(&store, &root.to_string_lossy()).expect("root");
+    assert!(!first.projects.is_empty(), "the root scan found candidates");
+    let parent = root.join("team").to_string_lossy().into_owned();
+    let alpha = root
+        .join("team")
+        .join("alpha")
+        .to_string_lossy()
+        .into_owned();
+
+    let scan = set_projects_and_scan(&store, &[parent.clone(), alpha.clone()]).expect("save");
+    let selected: Vec<&str> = scan
+        .projects
+        .iter()
+        .filter(|candidate| candidate.favorite)
+        .map(|candidate| candidate.path.as_str())
+        .collect();
+    assert_eq!(selected.len(), 2);
+    assert!(selected.contains(&parent.as_str()));
+    assert!(selected.contains(&alpha.as_str()));
+    // An unselected candidate stays in the list; nothing asks about it.
+    assert!(
+        scan.projects
+            .iter()
+            .any(|candidate| candidate.path.ends_with("beta") && !candidate.favorite)
+    );
+
+    // A fresh store sees the same selection; a vanished path is still listed.
+    std::fs::remove_dir_all(root.join("team").join("alpha")).expect("remove checkout");
+    let scan = scan_now(&store);
+    assert!(
+        scan.projects
+            .iter()
+            .any(|candidate| candidate.path == alpha && candidate.kind == "missing")
+    );
 }

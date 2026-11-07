@@ -138,11 +138,36 @@ impl RepoWatchlist {
     }
 }
 
+/// One thing the user can adopt as a project.
+///
+/// A project is not necessarily a repository. A monorepo-like folder holding
+/// several checkouts is a better unit of work than any single checkout in it,
+/// so the scan offers both the repository and its direct parent as separate,
+/// equally selectable candidates. `kind` tells the UI which is which; it is
+/// presentation, not a second storage concept — both are stored as a path in
+/// `favorites`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectCandidate {
+    /// The absolute path, and the identity of the selection.
+    pub path: String,
+    /// The directory's name, shown as the row title.
+    pub name: String,
+    /// `"repo"` for a single checkout, `"parent"` for a folder of checkouts.
+    pub kind: String,
+    /// How many found repositories live under this path. Zero means the
+    /// directory has drifted out of the scan but is still selected.
+    pub children: usize,
+    /// Whether the user has selected this project.
+    pub favorite: bool,
+}
+
 /// Everything the repository screen needs, in one payload.
 ///
 /// One command returns one of these so the screen cannot show a list that
 /// disagrees with the roots it is showing: the roots, the repositories, the
-/// newly found ones and the problems all come from the same scan.
+/// newly found ones, the selectable projects and the problems all come from
+/// the same scan.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoScan {
@@ -152,6 +177,9 @@ pub struct RepoScan {
     pub repos: Vec<RepoEntry>,
     /// The repositories the user has not dealt with yet.
     pub new_repos: Vec<RepoEntry>,
+    /// Repositories and their direct parents, offered for selection together.
+    /// This is the list the settings screen renders; nothing is announced.
+    pub projects: Vec<ProjectCandidate>,
     /// The scan stopped early because it hit the repository limit.
     pub truncated: bool,
     /// Why the scan could not be read or run.
@@ -286,6 +314,27 @@ pub fn dismiss_and_scan(store: &RepoStore, path: &str) -> Result<RepoScan, Strin
     Ok(scan_into(&list.roots, &list, None))
 }
 
+/// Applies the user's project selection in one write.
+///
+/// The settings screen shows the scan result as a checkbox list; saving is a
+/// single action over the WHOLE selection, not one prompt per repository.
+/// A candidate may be a single checkout or its parent folder — both are just
+/// a path here, and the caller already got them from a scan.
+pub fn set_projects_and_scan(store: &RepoStore, paths: &[String]) -> Result<RepoScan, String> {
+    let (mut list, _) = store.load();
+    list.favorites = paths
+        .iter()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .collect();
+    // The user has answered for every candidate in this scan. A leftover
+    // dismissal from the old one-at-a-time flow would otherwise hide a
+    // repository they just selected.
+    list.dismissed.clear();
+    store.save(&list)?;
+    Ok(scan_into(&list.roots, &list, None))
+}
+
 /// Walks the roots and reports the repositories it finds.
 ///
 /// Returns the repositories and whether the scan was cut short by the
@@ -360,13 +409,76 @@ pub fn scan_into(roots: &[String], list: &RepoWatchlist, problem: Option<String>
         .cloned()
         .collect();
 
+    let projects = project_candidates(&repos, list);
+
     RepoScan {
         roots: list.roots.clone(),
         repos,
         new_repos,
+        projects,
         truncated,
         problem,
     }
+}
+
+/// Builds the selectable project list: every found repository, plus every
+/// directory that directly contains one.
+///
+/// Both appear in ONE list, sorted by path, so the choice is made in the
+/// scan result itself rather than in a sequence of pop-ups. A parent is
+/// offered even when it holds a single repository — the user may still want
+/// the folder as the unit of work. Scan roots themselves are not offered as
+/// projects: a root is where to LOOK, not a thing to work on.
+fn project_candidates(repos: &[RepoEntry], list: &RepoWatchlist) -> Vec<ProjectCandidate> {
+    use std::collections::BTreeMap;
+
+    let mut parents: BTreeMap<String, usize> = BTreeMap::new();
+    let mut found: Vec<ProjectCandidate> = Vec::new();
+    for repo in repos.iter().filter(|repo| !repo.missing) {
+        found.push(ProjectCandidate {
+            favorite: list.is_favorite(&repo.path),
+            path: repo.path.clone(),
+            name: repo.name.clone(),
+            kind: "repo".to_string(),
+            children: 1,
+        });
+        if let Some(parent) = Path::new(&repo.path).parent()
+            && !list
+                .roots
+                .iter()
+                .any(|root| root == &parent.to_string_lossy())
+        {
+            *parents
+                .entry(parent.to_string_lossy().into_owned())
+                .or_insert(0) += 1;
+        }
+    }
+    for (path, children) in parents {
+        found.push(ProjectCandidate {
+            favorite: list.is_favorite(&path),
+            name: dir_name(Path::new(&path)),
+            path,
+            kind: "parent".to_string(),
+            children,
+        });
+    }
+
+    // A selection whose directory has disappeared must stay visible and
+    // removable; silently dropping it would look like lost configuration.
+    for path in &list.favorites {
+        if !found.iter().any(|candidate| &candidate.path == path) {
+            found.push(ProjectCandidate {
+                favorite: true,
+                name: dir_name(Path::new(path)),
+                path: path.clone(),
+                kind: "missing".to_string(),
+                children: 0,
+            });
+        }
+    }
+
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found
 }
 
 /// Collects the repositories under one directory.

@@ -76,6 +76,7 @@ tokio = { version = "1", features = ["time", "macros"] }
 # The model client consumes the HTTP response as a byte stream, so the answer
 # arrives in pieces as it is written rather than all at once at the end.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tauri-plugin-global-shortcut = "2"
 
 [features]
 # The test fixtures — the fake MCP server the end-to-end test drives.

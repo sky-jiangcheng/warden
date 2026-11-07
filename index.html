@@ -28,28 +28,18 @@
   </head>
 
   <body>
-    <div class="toast" id="repo-toast" hidden>
-      <div class="toast__body">
-        <span class="toast__label">发现新仓库</span>
-        <span class="toast__name" id="toast-name"></span>
-        <span class="toast__path" id="toast-path"></span>
-      </div>
-      <div class="toast__actions">
-        <button class="btn btn--tight btn--primary" id="toast-favorite" type="button">
-          收藏
-        </button>
-        <button class="btn btn--tight" id="toast-dismiss" type="button">忽略</button>
-      </div>
-    </div>
-
+    <!-- Discoveries are never announced. A scan updates the selectable
+         project list inside settings; there is no toast and no notification. -->
     <div class="app" id="main-surface">
-      <header class="brand">
+      <header class="brand" id="main-drag">
         <img class="brand__mark" src="/src/assets/warden.png" alt="" width="36" height="36" />
         <div class="brand__text"><h1 class="brand__name">Warden</h1><span class="brand__status" id="brand-chip" role="status">正在连接</span></div>
         <nav class="brand__actions" aria-label="窗口操作">
           <button class="icon-btn" id="topics-open" type="button" aria-label="切换对话主题" title="对话历史" aria-haspopup="dialog" aria-controls="topics-sheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h12M4 19h8" /></svg></button>
           <button class="icon-btn" id="topic-new" type="button" aria-label="新建对话主题" title="新建对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
-          <button class="icon-btn" id="settings-open" type="button" aria-label="打开设置" title="设置" aria-haspopup="dialog" aria-controls="settings-sheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M12 4v16M19 4v16M2 9h6M9 15h6M16 8h6" /></svg></button>
+          <!-- Deliberately quiet: settings are a page, not a modal. The tray's
+               right-click menu and ⌥ Space reach the same page. -->
+          <button class="icon-btn icon-btn--quiet" id="settings-open" type="button" aria-label="切换到设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM19.4 13a7.7 7.7 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.7 7.7 0 0 0-1.7-1L15 3.4h-4l-.3 2.6a7.7 7.7 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.7 7.7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.7 7.7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7.7 7.7 0 0 0 1.7-1l2.4 1 2-3.4z" /></svg></button>
           <button class="icon-btn" id="chat-hide" type="button" aria-label="收起到桌面伙伴" title="收起到桌面伙伴"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg></button>
         </nav>
       </header>
@@ -78,18 +68,20 @@
         </div>
       </main>
     </div>
-    <dialog class="sheet" id="settings-sheet" aria-labelledby="settings-heading">
-      <header class="sheet__head"><div><span class="eyebrow">MAKE IT YOURS</span><h2 id="settings-heading">设置与连接</h2></div><button class="icon-btn" type="button" data-close="settings-sheet" aria-label="关闭设置">×</button></header>
-      <div class="sheet__body">
+    <!-- Settings are a PAGE in the same window, not a modal dialog. Both the
+         tray's right-click menu and the quiet header button land here. -->
+    <section class="view view--settings" id="settings-view" aria-labelledby="settings-heading" hidden>
+      <header class="sheet__head"><div><span class="eyebrow">MAKE IT YOURS</span><h2 id="settings-heading">设置与连接</h2></div><button class="icon-btn" id="settings-back" type="button" aria-label="返回对话" title="返回对话">×</button></header>
+      <div class="sheet__body" id="settings-drag">
         <section class="appearance-row"><div><h3>外观</h3><p>沿用 Cinder 家族的纸与墨</p></div><button class="btn" id="theme-toggle" type="button">跟随系统</button></section>
         <section class="card card--repos">
           <div class="card__head">
-            <h2 class="card__title">仓库</h2>
+            <h2 class="card__title">项目</h2>
             <span class="chip" id="repo-chip">检测中</span>
           </div>
           <p class="card__hint">
-            copilot 自己扫盘，不经过 Cinder。给它几个要看的目录，它把里面的
-            git 仓库列出来，由你决定哪些是你在做的。
+            先加一个要查看的目录，扫描结果会在这里列出来。仓库本身和它的上一级
+            都在同一份列表里，勾选你要用的项目后一次保存；不会弹窗打扰。
           </p>
           <ul class="roots" id="roots"></ul>
           <form class="roots__add" id="root-form">
@@ -107,7 +99,11 @@
             <button class="btn" id="repo-scan" type="button">重新扫描</button>
             <span class="meta" id="repo-detail"></span>
           </div>
-          <ul class="repos" id="repos"></ul>
+          <ul class="projects" id="projects" aria-label="可收藏的项目"></ul>
+          <div class="projects__bar">
+            <button class="btn btn--primary" id="repo-save-projects" type="button">保存所选</button>
+            <span class="meta" id="projects-note">选中的项目会成为聊天时可附加的上下文。</span>
+          </div>
           <p class="meta meta--error" id="repo-error"></p>
         </section>
 
@@ -205,8 +201,9 @@
             <span class="chip" id="tray-chip">检测中</span>
           </div>
           <p class="card__hint">
-            托盘图标是 copilot 的唤回入口：点它把窗口叫回来，右键是菜单。
-            关窗口仍然结束应用——托盘是给「已经在跑」的进程用的入口。
+            Warden 常驻顶部状态栏。⌥ Space 或点托盘图标唤起聊天窗口；
+            点窗口外任意位置自动收起。右键托盘可进设置、显示或隐藏桌宠，
+            退出 Warden 也只在这里。
           </p>
           <p class="meta" id="tray-path"></p>
         </section>
@@ -225,7 +222,7 @@
           </ul>
         </section>
       </div>
-    </dialog>
+    </section>
     <dialog class="sheet topic-sheet" id="topics-sheet" aria-labelledby="topics-heading">
       <header class="sheet__head"><div><span class="eyebrow">CONVERSATIONS</span><h2 id="topics-heading">对话主题</h2></div><button class="icon-btn" type="button" data-close="topics-sheet" aria-label="关闭对话历史">×</button></header>
       <div class="sheet__body">
@@ -234,12 +231,14 @@
         <form class="rename-form" id="topic-rename-form"><label for="topic-rename">当前主题名称</label><div class="form__row"><input class="field" id="topic-rename" maxlength="120" required /><button class="btn" id="topic-rename-save" type="submit">重命名</button></div><p class="meta meta--error" id="topic-error" role="alert"></p></form>
       </div>
     </dialog>
-    <main class="companion" id="companion-surface" aria-label="Warden 伙伴">
+    <main class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="idle">
+      <p class="companion__bubble" id="companion-bubble" role="status" aria-live="polite"></p>
       <p class="companion__metric" id="companion-metric" role="status" title="工作一览">工作一览 · —</p>
-      <div class="lantern" id="companion-drag" title="拖动 Warden 标记" role="img" aria-label="Warden 标记，可用鼠标拖动移动窗口">
+      <div class="lantern" id="companion-drag" title="点我对话 · 拖动可移动" role="button" tabindex="0" aria-label="Warden 桌宠，点击打开对话，拖动可移动窗口">
         <img src="/src/assets/warden.png" width="108" height="108" alt="" draggable="false" />
+        <span class="lantern__glow" aria-hidden="true"></span>
       </div>
-      <div class="companion__actions"><button id="companion-open" type="button">打开对话 <span aria-hidden="true">↗</span></button></div><p id="companion-status" class="companion__status" role="status"></p>
+      <div class="companion__actions"><button id="companion-open" type="button">对话 <span aria-hidden="true">↗</span></button></div><p id="companion-status" class="companion__status" role="status"></p>
     </main>
   </body>
 </html>

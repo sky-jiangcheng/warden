@@ -691,77 +691,76 @@ body {
   flex-shrink: 0;
 }
 
-/* ---------------------------------------------------------------------- toast */
+/* ------------------------------------------------------- selectable projects */
+/* A scan result is a checkbox list, not a sequence of pop-ups. Repositories
+   and their parent folders share one list; the chip distinguishes them. */
+.projects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
 
-/* The bubble that asks "is this repository yours?".
-   It slides down from the top of the window: the question is the copilot's
-   way of saying it found something, and it should not be possible to miss
-   while the window is open. */
-.toast {
-  position: fixed;
-  /* Below the 73px brand band: at 16px the bubble covered the product name and
-     the window buttons, which are the two things a user reaches for first. */
-  top: 84px;
-  left: 50%;
-  transform: translate(-50%, -160%);
-  z-index: 50;
+.project {
   display: flex;
   align-items: center;
-  gap: 18px;
-  max-width: min(560px, calc(100vw - 32px));
-  padding: 12px 14px 12px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  opacity: 0;
-  transition: transform 220ms ease, opacity 220ms ease;
+  background: var(--bg-card);
+  transition: border-color 140ms ease, background 140ms ease;
 }
 
-/* `hidden` has to win over the flex display above: the UA rule for the
-   attribute is weaker than any author rule, so without this the bubble
-   would never be hidden at all. */
-.toast[hidden] {
-  display: none;
+.project:hover { border-color: var(--border-default); }
+.project:has(.project__box:checked) { border-color: var(--accent); background: var(--accent-soft); }
+
+.project__box {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
-.toast--in {
-  transform: translate(-50%, 0);
-  opacity: 1;
-}
-
-.toast__body {
+.project__main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  min-width: 0;
 }
 
-.toast__label {
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.toast__name {
+.project__name {
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.toast__path {
+.project__path {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 10.5px;
   color: var(--text-tertiary);
-  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.toast__actions {
+.project__tags { flex-shrink: 0; }
+
+.projects__bar {
   display: flex;
-  gap: 8px;
-  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
 }
 
 /* Conversation-first shell. Family tokens and self-hosted faces above stay
@@ -876,7 +875,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .appearance-row h3 { margin: 0; font-size: 13px; font-weight: 500; }
 .appearance-row p { margin: 4px 0 0; font-size: 11px; color: var(--text-tertiary); }
 .appearance-row .btn { margin: 0; }
-.sheet .card { padding: 22px 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none; background: transparent; }
+.sheet .card, .view--settings .card { padding: 22px 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none; background: transparent; }
 .card__head { flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .card__title { font-size: 16px; }
 .card__hint { font-size: 11px; line-height: 1.8; }
@@ -899,11 +898,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .repo__path, .root__path { font-size: 10px; }
 .roots__empty, .repos__empty { font-size: 11px; }
 .repos__bar { margin-top: 14px; }
-.toast__body { flex: 1; }
-.toast__name { font-size: 12px; }
-.toast__path { max-width: 180px; font-size: 9px; }
-.toast__label { font-size: 9px; }
-.toast__actions { gap: 4px; }
 .boundary__note { font-size: 11px; }
 .boundary__name { font-size: 12px; }
 .topic-sheet { height: min(78dvh, 640px); }
@@ -919,16 +913,83 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .rename-form > label { display: block; font-size: 11px; color: var(--text-tertiary); margin-bottom: 8px; }
 .rename-form .btn { white-space: nowrap; }
 
-/* Companion surface. Only this surface is transparent, never the main
-   chat. Its controls stay outside the draggable mark. */
+/* ------------------------------------------------------- window views */
+/* The chat window is borderless and transparent; the paper surface carries
+   its own rounded edge. Settings is a PAGE in the same window, so it fills
+   the whole surface instead of floating as a modal. */
+body { background: transparent; }
+.app { border-radius: 16px; overflow: hidden; box-shadow: 0 18px 48px rgba(26,23,18,.24); }
+.app[hidden] { display: none !important; }
+.view--settings {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.view--settings[hidden] { display: none !important; }
+.view--settings .sheet__head { background: var(--bg-page); }
+.view--settings .sheet__body { flex: 1; min-height: 0; padding-top: 18px; }
+.view--settings .sheet::backdrop { display: none; }
+.icon-btn--quiet { opacity: .55; }
+.icon-btn--quiet:hover, .icon-btn--quiet:focus-visible { opacity: 1; }
+
+/* ------------------------------------------------------- desk pet */
+/* The pet is a resident character, not a miniature app window. Motion is
+   CSS-only (idle loops + mood overrides); TS just sets `data-mood`. */
 .companion { display: none; }
 [data-surface="companion"], [data-surface="companion"] body { background: transparent !important; color-scheme: normal; }
-[data-surface="companion"] #main-surface, [data-surface="companion"] .sheet, [data-surface="companion"] #repo-toast { display: none !important; }
-[data-surface="companion"] .companion { width: 168px; height: 196px; display: flex; flex-direction: column; align-items: center; padding: 6px 8px 0; user-select: none; }
-.companion__metric { max-width: 148px; min-height: 25px; padding: 4px 10px; border: 1px solid var(--border-subtle); border-radius: 99px; background: var(--bg-card); color: var(--text-secondary); font-size: 10px; box-shadow: var(--shadow-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lantern { width: 108px; height: 108px; cursor: grab; touch-action: none; }
+[data-surface="companion"] #main-surface,
+[data-surface="companion"] .view--settings,
+[data-surface="companion"] .sheet { display: none !important; }
+[data-surface="companion"] .app { box-shadow: none; background: transparent; }
+[data-surface="companion"] .companion {
+  width: 168px; height: 196px; display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-end; gap: 2px;
+  padding: 4px 8px 6px; user-select: none; position: relative;
+}
+
+.companion__bubble {
+  position: absolute; top: 0; left: 50%; transform: translate(-50%, -6px);
+  max-width: 158px; margin: 0; padding: 5px 9px;
+  border: 1px solid var(--border-subtle); border-radius: 10px;
+  background: var(--bg-card); color: var(--text-secondary);
+  font-size: 10px; line-height: 1.45; text-align: center;
+  box-shadow: var(--shadow-sm); white-space: nowrap;
+  opacity: 0; pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.companion__bubble[data-visible="true"] { opacity: 1; transform: translate(-50%, 0); }
+.companion__bubble:empty { display: none; }
+
+.companion__metric { max-width: 148px; min-height: 25px; padding: 4px 10px; border: 1px solid var(--border-subtle); border-radius: 99px; background: var(--bg-card); color: var(--text-secondary); font-size: 10px; box-shadow: var(--shadow-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; transition: opacity 180ms ease; }
+[data-mood="thinking"] .companion__metric { opacity: .55; }
+
+.lantern { position: relative; width: 108px; height: 108px; cursor: grab; touch-action: none; animation: pet-float 3.6s ease-in-out infinite; }
 .lantern:active { cursor: grabbing; }
-.lantern img { width: 100%; height: 100%; display: block; user-select: none; }
+.lantern img { position: relative; z-index: 1; width: 100%; height: 100%; display: block; user-select: none; animation: pet-breathe 4.2s ease-in-out infinite; transform-origin: 50% 72%; }
+.lantern__glow { position: absolute; inset: 22%; border-radius: 50%; background: var(--accent); opacity: 0; filter: blur(14px); transition: opacity 240ms ease; }
+
+/* Idle motion: a slow float and a gentle breath. */
+@keyframes pet-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes pet-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+@keyframes pet-tilt { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+@keyframes pet-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.82); } }
+@keyframes pet-bounce { 0% { transform: scale(1); } 40% { transform: scale(1.1) translateY(-4px); } 100% { transform: scale(1); } }
+
+/* Mood overrides — one state at a time, no competing animations. */
+[data-mood="curious"] .lantern { animation: pet-tilt 1.1s ease-in-out infinite; }
+[data-mood="curious"] .lantern__glow, [data-mood="happy"] .lantern__glow { opacity: .18; }
+[data-mood="happy"] .lantern img { animation: pet-bounce 480ms ease-out; }
+[data-mood="dragging"] .lantern { animation: none; transform: rotate(-5deg) scale(1.04); }
+[data-mood="dragging"] .lantern img { animation: none; }
+[data-mood="thinking"] .lantern img { animation: pet-blink 1.7s ease-in-out infinite; }
+[data-mood="thinking"] .lantern__glow { opacity: .3; animation: pet-float 1.6s ease-in-out infinite; }
+[data-mood="error"] .lantern img { animation: pet-tilt 320ms ease-in-out 2; }
+[data-mood="error"] .lantern__glow { opacity: .22; }
+
 .companion__actions { display: flex; gap: 5px; }
 .companion__actions button { height: 27px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border-subtle); color: var(--text-primary); background: var(--bg-card); font-size: 10px; box-shadow: var(--shadow-sm); }
 .companion__actions button:last-child { padding: 3px 7px; }
@@ -936,6 +997,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .companion__actions button:hover { background: var(--accent-soft); }
 .companion__status { margin: 2px 0 0; max-width: 150px; border-radius: 4px; padding: 0 3px; color: var(--text-secondary); background: var(--bg-card); font-size: 8px; line-height: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .companion__status:empty { display: none; }
+
 @media (min-width: 700px) {
   .app { border-inline: 1px solid var(--border-subtle); }
   .conversation { padding-inline: clamp(0px, 3vw, 28px); }
