@@ -430,7 +430,7 @@ mod tests {
         // Just the lantern and its one-line bubble: a transparent window still
         // swallows clicks on whatever sits behind it, so its box is the art.
         assert_eq!(pet["width"], 132);
-        assert_eq!(pet["height"], 150);
+        assert_eq!(pet["height"], 128);
         for flag in ["alwaysOnTop", "transparent", "skipTaskbar"] {
             assert_eq!(pet[flag], true);
         }

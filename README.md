@@ -66,7 +66,7 @@ pretending.
   `source` — **calling a plugin's reply "Warden" is claiming another client's answer**. A conversation
   with no shared topic is a **temporary chat**: it stays in this window, and the status line says it
   is not synced
-- **A small resident companion window**: 132×150 with nothing in it but the lantern and a one-line
+- **A small resident companion window**: 132×128 with nothing in it but the lantern and a one-line
   bubble — click it (or press `⌥Space`) to open the chat, and only the lantern body drags the window.
   **Closing a window hides it rather than quitting** (the red button must not cut off an answer being
   generated); **Quit in the tray is what exits**

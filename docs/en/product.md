@@ -144,7 +144,7 @@ numbers like lines of code**, and **a topic-switching chat panel that stays in s
 plugins**. All three are landed; each has its own boundary.
 
 **① Resident = the companion window + the tray, not "the window is always on screen"**. The companion
-window is 132×150 (`index.html?surface=companion`), the main window 480×760; clicking the companion
+window is 132×128 (`index.html?surface=companion`), the main window 480×760; clicking the companion
 opens the chat. **The window holds the lantern and one speech bubble, nothing else**: the metric line,
 the status line and the "chat" button are gone — numbers belong to the conversation (see ②), and the
 entrances are click / `⌥Space` / the tray, so a few lines of text on top of a character were just another

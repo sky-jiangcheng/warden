@@ -37,6 +37,7 @@ cd src-tauri && cargo test --all-targets --features test-fixtures               
 src/                 前端（TypeScript + Vite，无框架）
   main.ts            首屏渲染：只消费后端的 shell_status，不含任何运行时知识
   styles.css         设计令牌 + 卡片/徽章/排版
+  assets/warden.png  桌宠图：264px 光栅，按 80px 显示（3× 只为不留放大糊边）
 src-tauri/           后端（Rust）
   src/lib.rs         Tauri 命令装配与窗口生命周期
   src/mcp_client.rs  MCP stdio 客户端：initialize / tools/list / tools/call

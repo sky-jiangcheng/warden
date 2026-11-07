@@ -32,7 +32,7 @@
         "title": "Warden",
         "url": "index.html?surface=companion",
         "width": 132,
-        "height": 150,
+        "height": 128,
         "alwaysOnTop": true,
         "decorations": false,
         "transparent": true,

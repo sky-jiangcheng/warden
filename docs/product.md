@@ -136,7 +136,7 @@ Phase 1 起那份副本已经删掉：工具清单在连接时用 MCP 的 `tools
 
 用户给这个产品的定位是三句话：**常驻的小机器人**、**快速看到代码量这类量化数据**、**可以切主题的对话框，而且 IDE 插件跟它的聊天面板同步**。三句都已落地，各自的边界如下。
 
-**① 常驻 = 伴侣窗 + 托盘，不是「窗口永远在场」**。伴侣窗 132×150（`index.html?surface=companion`），主窗 480×760；点伴侣开聊天。**窗里只有灯体和一句话气泡**：指标行、状态行、「对话」按钮都删了——数字归对话（见②），入口归点击 / `⌥Space` / 托盘三处，窗前那几行字只是在角色身上叠了一层界面。**只有灯体发起原生拖拽**（`window_drag`），控件一律不带 `data-tauri-drag-region`——把插图做成按钮，用户点不动还会以为程序坏了。**关窗即隐藏、托盘 Quit 才退出**：`on_window_event` 对 `CloseRequested` 做的是 `prevent_close` + 隐藏，代码里写的理由是「保住两个 webview 与它们正在跑的生成任务」——**红按钮不该把一轮正在生成的回答掐断**；Warden 又是 `repotory-mcp` 的父进程，进程退出会连带断掉那条会话通道。**Cinder Desktop 反过来已经做到关窗即退**（ADR-0047 补注），它不托管任何长驻通道。
+**① 常驻 = 伴侣窗 + 托盘，不是「窗口永远在场」**。伴侣窗 132×128（`index.html?surface=companion`），主窗 480×760；点伴侣开聊天。**窗里只有灯体和一句话气泡**：指标行、状态行、「对话」按钮都删了——数字归对话（见②），入口归点击 / `⌥Space` / 托盘三处，窗前那几行字只是在角色身上叠了一层界面。**只有灯体发起原生拖拽**（`window_drag`），控件一律不带 `data-tauri-drag-region`——把插图做成按钮，用户点不动还会以为程序坏了。**关窗即隐藏、托盘 Quit 才退出**：`on_window_event` 对 `CloseRequested` 做的是 `prevent_close` + 隐藏，代码里写的理由是「保住两个 webview 与它们正在跑的生成任务」——**红按钮不该把一轮正在生成的回答掐断**；Warden 又是 `repotory-mcp` 的父进程，进程退出会连带断掉那条会话通道。**Cinder Desktop 反过来已经做到关窗即退**（ADR-0047 补注），它不托管任何长驻通道。
 
 **② 对话即界面：量化数据走对话里的工具调用，主窗不再有常驻面板**（同日落地）。模型请求现在带 `tools`——只读白名单从服务端 `tools/list` 现场过滤（`repotory_metrics` / `repotory_context` / `projects_list` / `projects_stats` / `notes_search` / `notes_read` / `wiki_search` / `wiki_read`），**schema 一字不改地用服务端的**；模型点名白名单外的工具（包括服务端 advertised 的写工具）得到的是**客户端拒绝**，永不执行；`repotory_chat` 整个不在模型工具面里——**回复落库是 Warden 自己做的，模型再会 append 就是双写**。轮数上限 5，超限后强制一轮纯文本作答。工具调用只在对话流里留一个「调用中 / 已完成」的状态行，**不写进 `repotory_chat`**——它是 UI 层的过程，不是会话产物。无 Cinder 的临时对话不带工具、不带 system 提示词，单轮契约不变。
 
