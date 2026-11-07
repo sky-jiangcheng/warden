@@ -155,6 +155,58 @@ pub fn store_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Provide
     Ok(ProviderStore::new(dir.join("providers.json")))
 }
 
+/// Picks the provider a probe should talk to.
+///
+/// The editor form is a DRAFT: it can carry a base URL the user has just
+/// typed, while the provider it edits points somewhere else entirely. The
+/// draft wins on the base URL — otherwise "test connection" keeps probing
+/// the SAVED provider (a local Ollama on 127.0.0.1) while the form shows
+/// OpenRouter, and the user is told the wrong thing failed.
+///
+/// Everything else about a saved provider is kept: the id (so the API key
+/// still comes from the credential store), the headers, the name.
+pub fn probe_target(
+    config: &ProviderConfig,
+    id: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<Provider, String> {
+    let saved = id
+        .map(str::trim)
+        .filter(|i| !i.is_empty())
+        .and_then(|i| config.find(i).cloned());
+    let draft = base_url.map(str::trim).filter(|u| !u.is_empty());
+
+    match (saved, draft) {
+        (Some(mut provider), Some(url)) => {
+            // A different endpoint means the saved default model belongs to
+            // the old one; keeping it would only produce "model not found".
+            if !same_endpoint(&provider.base_url, url) {
+                provider.default_model = None;
+            }
+            provider.base_url = url.to_string();
+            Ok(provider)
+        }
+        (Some(provider), None) => Ok(provider),
+        (None, Some(url)) => Ok(Provider {
+            id: "probe".to_string(),
+            name: "probe".to_string(),
+            base_url: url.to_string(),
+            default_model: None,
+            headers: BTreeMap::new(),
+            has_api_key: false,
+        }),
+        (None, None) => {
+            Err("no base URL given \u{2014} fill in the provider's Base URL first".to_string())
+        }
+    }
+}
+
+/// Whether two base URLs point at the same endpoint (a trailing slash is not
+/// a different endpoint).
+fn same_endpoint(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/') == b.trim_end_matches('/')
+}
+
 /// Reads the provider config, seeding the default one on first run.
 ///
 /// The default is a local Ollama on its OpenAI-compatible surface: it needs
@@ -174,6 +226,96 @@ pub fn config_or_default(store: &ProviderStore) -> (ProviderConfig, Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn provider(id: &str, base_url: &str, model: Option<&str>) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: id.to_string(),
+            base_url: base_url.to_string(),
+            default_model: model.map(|m| m.to_string()),
+            headers: BTreeMap::new(),
+            has_api_key: false,
+        }
+    }
+
+    fn config_with(providers: Vec<Provider>) -> ProviderConfig {
+        ProviderConfig {
+            providers,
+            active_provider_id: None,
+        }
+    }
+
+    #[test]
+    fn the_draft_base_url_wins_over_the_saved_one() {
+        // The bug this fixes: editing a local Ollama provider, typing an
+        // OpenRouter URL and pressing "test connection" used to probe the
+        // SAVED Ollama (127.0.0.1:11434) and report that one as unreachable.
+        let config = config_with(vec![provider(
+            "ollama",
+            "http://127.0.0.1:11434/v1",
+            Some("llama3"),
+        )]);
+        let target = probe_target(
+            &config,
+            Some("ollama"),
+            Some("https://openrouter.ai/api/v1"),
+        )
+        .expect("target");
+        assert_eq!(target.base_url, "https://openrouter.ai/api/v1");
+        // The id is kept, so the key still comes from the credential store.
+        assert_eq!(target.id, "ollama");
+    }
+
+    #[test]
+    fn a_changed_endpoint_drops_the_saved_default_model() {
+        let config = config_with(vec![provider(
+            "ollama",
+            "http://127.0.0.1:11434/v1",
+            Some("llama3"),
+        )]);
+        let target = probe_target(
+            &config,
+            Some("ollama"),
+            Some("https://openrouter.ai/api/v1"),
+        )
+        .expect("target");
+        assert_eq!(target.default_model, None);
+
+        let same = probe_target(&config, Some("ollama"), Some("http://127.0.0.1:11434/v1/"))
+            .expect("target");
+        assert_eq!(same.default_model, Some("llama3".to_string()));
+    }
+
+    #[test]
+    fn the_saved_provider_is_used_when_the_draft_is_empty() {
+        let config = config_with(vec![provider(
+            "ollama",
+            "http://127.0.0.1:11434/v1",
+            Some("llama3"),
+        )]);
+        let target = probe_target(&config, Some("ollama"), None).expect("target");
+        assert_eq!(target.base_url, "http://127.0.0.1:11434/v1");
+        assert_eq!(target.default_model, Some("llama3".to_string()));
+    }
+
+    #[test]
+    fn a_new_provider_probes_the_typed_url() {
+        let config = config_with(vec![]);
+        let target =
+            probe_target(&config, None, Some("https://openrouter.ai/api/v1")).expect("target");
+        assert_eq!(target.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(target.id, "probe");
+    }
+
+    #[test]
+    fn neither_a_saved_provider_nor_a_base_url_is_reported_plainly() {
+        // The old wording ("no provider is configured yet") pointed at the
+        // wrong thing: the user is IN the add-provider form, and the only
+        // thing missing is the Base URL they have to type.
+        let config = config_with(vec![]);
+        let err = probe_target(&config, None, None).expect_err("must fail");
+        assert!(err.contains("Base URL"), "unhelpful message: {err}");
+    }
 
     #[test]
     fn the_view_never_carries_the_key() {

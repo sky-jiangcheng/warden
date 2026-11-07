@@ -588,6 +588,20 @@ function editorValues() {
   };
 }
 
+/// Why the editor cannot probe yet, or null when it can.
+///
+/// A NEW provider has nothing saved to fall back on, so without a Base URL
+/// there is no endpoint to ask. Saying that here beats letting the backend
+/// answer "no provider is configured yet", which points at the wrong thing:
+/// the user is IN the add-provider form, and the one thing missing is the
+/// URL they have to type.
+function editorProbeBlocked(values: ReturnType<typeof editorValues>): string | null {
+  if (!values.id && !values.baseUrl) {
+    return "请先填写 Base URL —— 模型列表与连接测试都按它去请求";
+  }
+  return null;
+}
+
 /// Render the tray (the wake-up entry) state.
 ///
 /// The tray is reported rather than assumed: macOS gives no way to check
@@ -763,6 +777,12 @@ function main() {
     const editorError = pick<HTMLElement>("#editor-error");
     const editorDetail = pick<HTMLElement>("#editor-detail");
     editorError.textContent = "";
+    const blocked = editorProbeBlocked(values);
+    if (blocked) {
+      editorDetail.textContent = "";
+      editorError.textContent = blocked;
+      return;
+    }
     editorDetail.textContent = "拉取中…";
 
     void invoke<ModelInfo[]>("provider_fetch_models", {
@@ -797,6 +817,12 @@ function main() {
     const editorError = pick<HTMLElement>("#editor-error");
     const editorDetail = pick<HTMLElement>("#editor-detail");
     editorError.textContent = "";
+    const blocked = editorProbeBlocked(values);
+    if (blocked) {
+      editorDetail.textContent = "";
+      editorError.textContent = blocked;
+      return;
+    }
     editorDetail.textContent = "测试中…";
 
     void invoke<ConnectionTest>("provider_test_connection", {

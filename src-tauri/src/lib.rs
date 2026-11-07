@@ -21,8 +21,6 @@ mod tray;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use std::collections::BTreeMap;
-
 use tauri::ipc::Channel;
 
 use crate::llm::{ChatMessage, LlmClient, ModelInfo};
@@ -447,26 +445,8 @@ async fn provider_fetch_models(
 ) -> Result<Vec<ModelInfo>, String> {
     let (config, _) = store.load();
 
-    let provider = match (&id, &base_url) {
-        (Some(id), _) if !id.trim().is_empty() => config
-            .find(id.trim())
-            .cloned()
-            .ok_or_else(|| format!("no provider named \"{id}\""))?,
-        (_, Some(url)) if !url.trim().is_empty() => Provider {
-            id: "probe".to_string(),
-            name: "probe".to_string(),
-            base_url: url.trim().to_string(),
-            default_model: None,
-            headers: BTreeMap::new(),
-            has_api_key: false,
-        },
-        _ => {
-            let active = config
-                .active()
-                .ok_or_else(|| "no provider is configured yet".to_string())?;
-            active.clone()
-        }
-    };
+    let provider =
+        crate::provider_commands::probe_target(&config, id.as_deref(), base_url.as_deref())?;
 
     // A key typed into the form wins over the stored one: the user is
     // testing a key they have not saved yet.
@@ -496,28 +476,8 @@ async fn provider_test_connection(
 ) -> Result<ConnectionTest, String> {
     let (config, _) = store.load();
 
-    let stored = match (&id, &base_url) {
-        (Some(id), _) if !id.trim().is_empty() => config.find(id.trim()).cloned(),
-        _ => None,
-    };
-
-    let provider = match (stored, &base_url) {
-        (Some(provider), _) => provider,
-        (None, Some(url)) if !url.trim().is_empty() => Provider {
-            id: "probe".to_string(),
-            name: "probe".to_string(),
-            base_url: url.trim().to_string(),
-            default_model: None,
-            headers: BTreeMap::new(),
-            has_api_key: false,
-        },
-        _ => {
-            let active = config
-                .active()
-                .ok_or_else(|| "no provider is configured yet".to_string())?;
-            active.clone()
-        }
-    };
+    let provider =
+        crate::provider_commands::probe_target(&config, id.as_deref(), base_url.as_deref())?;
 
     let key = match api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         Some(key) => Some(key.to_string()),
