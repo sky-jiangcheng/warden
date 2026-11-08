@@ -285,7 +285,7 @@ jobs:
           spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
           # tauri-action published the .dmg under its own name; keep that name
           # so the notarised file replaces it instead of joining it.
-          asset="$(gh release view "$TAG" --json assets --jq '.assets[] | select(.name | endswith(".dmg")) | .name')"
+          asset="$(gh release view "$TAG" --json assets --jq '[.assets[] | select(.name | endswith(".dmg")) | .name] | first // ""')"
           if [ -n "$asset" ] && [ "$asset" != "$(basename "$DMG")" ]; then
             mv "$DMG" "$(dirname "$DMG")/$asset"
           fi
