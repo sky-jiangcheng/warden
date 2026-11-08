@@ -5,14 +5,17 @@
 # Cinder main repo learned this the hard way (v2.14.0 shipped from a red
 # commit), so the gate is a real job here too.
 #
-# Signing and notarisation are WIRED but OFF by default. There is no Apple
-# Developer ID in this repository, so today the macOS bundle is ad-hoc signed
-# and the first launch needs one command (the release body and
-# docs/troubleshooting.md both say which). Tauri's own bundler does the whole
-# job as soon as the six APPLE_* variables exist, so a step copies them out of
-# the repository secrets when a certificate is configured and prints "stays
-# ad-hoc signed" when it is not — the day a certificate is bought, adding the
-# secrets is the entire change.
+# Signing and notarisation are ON: the Developer ID certificate is configured,
+# so the macOS bundle is signed, notarised by Apple and stapled. The steps
+# below copy the six APPLE_* variables out of the repository secrets and
+# refuse to build when the certificate is there but the notarisation
+# credentials are not — a release that skips notarisation still installs, so
+# a silent failure ships an app that pops "Apple cannot verify" for everyone.
+#
+# A macOS build produces two artefacts: the .app and the .dmg around it.
+# Tauri's bundler signs and notarises the .app but never notarises the .dmg,
+# and the .dmg is what a browser downloads and what Gatekeeper assesses
+# first — so the .dmg is notarised and stapled here as well.
 name: Release
 
 on:
@@ -232,21 +235,56 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **API Key 不再进系统钥匙串。** 之前每次启动 macOS 都会弹「Warden 想要使用你储存在钥匙串的 repotory-agent 中的机密信息」，点「始终允许」下次还问——因为钥匙串条目的 ACL 绑的是创建它的那个 App 的代码签名，而本仓是 ad-hoc 签名，每出一个新构建在钥匙串眼里就是一个全新的 App，授权挂不住。现在 Key 存到 app config 目录的 `secrets.json`，**创建时就是 0600**：读它不需要任何授权，也能 `cat` / `rm`。取舍写在 [排障](docs/troubleshooting.md#api-key-为什么落成文件)里，没有藏。
+            **API Key 不再进系统钥匙串。** 之前每次启动 macOS 都会弹「Warden 想要使用你储存在钥匙串的 repotory-agent 中的机密信息」，点「始终允许」下次还问——因为钥匙串条目的 ACL 绑的是创建它的那个 App 的代码签名，而当时的构建是 ad-hoc 签名的，每出一个新构建在钥匙串眼里就是一个全新的 App，授权挂不住。现在 Key 存到 app config 目录的 `secrets.json`，**创建时就是 0600**：读它不需要任何授权，也能 `cat` / `rm`。取舍写在 [排障](docs/troubleshooting.md#api-key-为什么落成文件)里，没有藏。
 
             **升级须知：API Key 要重填一次。** 旧版本存在钥匙串里，新版本不读它——读一次就等于再弹一次那个密码框。打开设置 → 对应 provider → 重新保存 API Key，一次就够。旧条目可在「钥匙串访问」里搜 `repotory-agent` 手动删掉。
 
             **文档重写。** README 补上了安装步骤、常见问题与完整的许可说明；新增[排障](docs/troubleshooting.md)：Gatekeeper 为什么拦、Key 为什么落成文件、首屏「未安装」怎么查、provider 报 401/404 怎么定位。
 
-            **macOS 未签名**（本仓没有 Apple Developer ID）。首次打开若提示「已损坏」或「无法验证开发者」，用任意一种方式放行：
-
-            ```
-            xattr -dr com.apple.quarantine "/Applications/Warden.app"
-            ```
-
-            或在 Finder 里右键 → 打开。Windows / Linux 的产物未签名，SmartScreen 可能提示。签名与公证的步骤已经接进流水线，配好证书就会自动走。
+            **macOS 已签名并公证。** 产物用 Developer ID Application 签名，提交 Apple 公证，票据 stapled 进包里——Gatekeeper 不再拦，拖进 `/Applications` 直接双击就开，不用再跑 `xattr -dr com.apple.quarantine`。v0.1.7 及更早的版本没签名，那几个版本才需要放行命令；这一版起不需要了。Windows 产物未签名，SmartScreen 可能要求确认。
 
             Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Tauri's bundler signs and notarises the .app, but it never notarises
+      # the .dmg that wraps it — and the .dmg is what a browser downloads and
+      # what Gatekeeper assesses first, so an un-notarised .dmg still gets the
+      # "Apple cannot verify" dialog even though the app inside it carries a
+      # valid ticket. The file is already on disk from the build, so it is
+      # notarised in place and then re-uploaded over the asset tauri-action
+      # published.
+      - name: Notarise the disk image
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          DMG=""
+          for f in $(find src-tauri/target -name '*.dmg' -type f); do DMG="$f"; break; done
+          if [ -z "${DMG}" ]; then
+            echo "::error::the build produced no .dmg."
+            exit 1
+          fi
+          notary_args=()
+          if [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+            notary_args=(--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER")
+          elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            notary_args=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          else
+            echo "::error::no notarisation credentials for the .dmg."
+            exit 1
+          fi
+          xcrun notarytool submit "$DMG" "${notary_args[@]}" --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+          # tauri-action published the .dmg under its own name; keep that name
+          # so the notarised file replaces it instead of joining it.
+          asset="$(gh release view "$TAG" --json assets --jq '.assets[] | select(.name | endswith(".dmg")) | .name')"
+          if [ -n "$asset" ] && [ "$asset" != "$(basename "$DMG")" ]; then
+            mv "$DMG" "$(dirname "$DMG")/$asset"
+          fi
+          gh release upload "$TAG" "$DMG" --clobber
