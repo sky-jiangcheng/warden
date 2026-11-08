@@ -39,11 +39,12 @@ xattr -dr com.apple.quarantine "/Applications/Warden.app"
 > **别关 Gatekeeper。** `sudo spctl --master-disable` 会让整台机器的下载检查失效，
 > 那是拿一个 App 换掉所有 App 的保护。上面那条命令只动这一个 bundle。
 
-**什么才是真正的解法**：Apple Developer Program（99 美元/年）→ Developer ID Application 证书 →
-`codesign --options runtime` 签 hardened runtime → `xcrun notarytool submit --wait` →
-`xcrun stapler staple`。做完之后用户双击就开，没有任何对话框。`release.yml` 里已经把
-签名与公证的步骤写好了，只是没配证书时那几步会被跳过（见工作流里的注释）。这不是「懒得弄」，
-是证书要花钱、要实名，属于本人的决定。
+**什么才是真正的解法**：签名 + 公证，两者都要有。签名（`codesign --options runtime
+--timestamp`）证明是谁做的，公证（`xcrun notarytool submit --wait` + `xcrun stapler staple`）
+是 Apple 扫过一遍证明不是恶意软件。做完之后用户双击就开，没有任何对话框。
+
+`release.yml` 里已经把签名与公证接好了：证书配好之后自动走，没配就走未签名那条路并打一条
+warning。完整的步骤（怎么拿证书、怎么配 secrets）在[签名与公证](signing.md)。
 
 Windows 同理：没有代码签名证书，SmartScreen 会拦一次，点「更多信息 → 仍要运行」即可。
 

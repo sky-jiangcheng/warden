@@ -127,6 +127,11 @@ jobs:
       # a certificate that fails to import. Writing the variables into
       # $GITHUB_ENV only when they have content keeps the unsigned build
       # byte-for-byte what it was.
+      #
+      # The App Store Connect API key is preferred over an Apple ID password:
+      # no password ends up in the workflow log, and there is no two-factor
+      # prompt to answer in the middle of a release. The .p8 key file has to
+      # exist on disk for notarytool to read it, so it is written out here.
       - name: Configure Apple signing when a certificate is available
         if: matrix.platform == 'macos-latest'
         env:
@@ -136,6 +141,9 @@ jobs:
           APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
           set -euo pipefail
           if [ -z "${CERT}" ]; then
@@ -147,11 +155,72 @@ jobs:
             echo "APPLE_CERTIFICATE=${CERT}"
             echo "APPLE_CERTIFICATE_PASSWORD=${CERT_PASSWORD}"
             echo "APPLE_SIGNING_IDENTITY=${SIGNING_IDENTITY}"
-            echo "APPLE_ID=${APPLE_ID_SECRET}"
-            echo "APPLE_PASSWORD=${APPLE_PASSWORD_SECRET}"
             echo "APPLE_TEAM_ID=${TEAM_ID}"
           } >> "$GITHUB_ENV"
+          if [ -n "${APPLE_ID_SECRET}" ]; then
+            echo "APPLE_ID=${APPLE_ID_SECRET}" >> "$GITHUB_ENV"
+            echo "APPLE_PASSWORD=${APPLE_PASSWORD_SECRET}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${API_KEY}" ] && [ -n "${API_ISSUER}" ] && [ -n "${API_KEY_P8}" ]; then
+            printf '%s' "${API_KEY_P8}" | base64 --decode > "$RUNNER_TEMP/AuthKey_${API_KEY}.p8"
+            chmod 600 "$RUNNER_TEMP/AuthKey_${API_KEY}.p8"
+            echo "APPLE_API_KEY=${API_KEY}" >> "$GITHUB_ENV"
+            echo "APPLE_API_ISSUER=${API_ISSUER}" >> "$GITHUB_ENV"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey_${API_KEY}.p8" >> "$GITHUB_ENV"
+          fi
           echo "Apple signing and notarisation are ON for this run."
+
+      # The credentials are checked BEFORE the build rather than after it.
+      #
+      # Tauri fails with "the environment variable APPLE_ID is missing" or a
+      # notarytool error, both of which arrive twenty minutes into a macOS
+      # build and read like a broken toolchain. Checking first turns a
+      # twenty-minute mystery into a one-line answer, and it is the only way
+      # to tell "signed and notarised" apart from "signed but the notarisation
+      # silently did not happen".
+      - name: Verify the notarisation credentials are complete
+        if: matrix.platform == 'macos-latest'
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CERT}" ]; then
+            echo "No certificate configured — the bundle will be ad-hoc signed. Nothing to check."
+            exit 0
+          fi
+          if [ -n "${API_KEY}" ] || [ -n "${API_ISSUER}" ] || [ -n "${API_KEY_P8}" ]; then
+            missing=""
+            [ -n "${API_KEY}" ] || missing="${missing} APPLE_API_KEY"
+            [ -n "${API_ISSUER}" ] || missing="${missing} APPLE_API_ISSUER"
+            [ -n "${API_KEY_P8}" ] || missing="${missing} APPLE_API_KEY_P8"
+            if [ -n "${missing}" ]; then
+              echo "::error::the App Store Connect key is half configured — missing:${missing}"
+              exit 1
+            fi
+            echo "Notarisation credentials: App Store Connect API key."
+          elif [ -n "${APPLE_ID_SECRET}" ] || [ -n "${APPLE_PASSWORD_SECRET}" ] || [ -n "${TEAM_ID}" ]; then
+            missing=""
+            [ -n "${APPLE_ID_SECRET}" ] || missing="${missing} APPLE_ID"
+            [ -n "${APPLE_PASSWORD_SECRET}" ] || missing="${missing} APPLE_PASSWORD"
+            [ -n "${TEAM_ID}" ] || missing="${missing} APPLE_TEAM_ID"
+            if [ -n "${missing}" ]; then
+              echo "::error::the Apple ID credentials are half configured — missing:${missing}"
+              exit 1
+            fi
+            echo "Notarisation credentials: Apple ID."
+          else
+            echo "::error::a certificate is configured but there are no notarisation credentials."
+            echo "::error::Set either APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_P8,"
+            echo "::error::or APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID."
+            echo "::error::See docs/signing.md."
+            exit 1
+          fi
 
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0

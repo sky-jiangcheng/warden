@@ -77,9 +77,11 @@
 xattr -dr com.apple.quarantine "/Applications/Warden.app"
 ```
 
-这份构建**没有 Apple Developer ID 签名、也没公证**，所以 macOS 会拿
+这份构建**可能没有 Apple Developer ID 签名、也没公证**——签名与公证是在发布流水线里做的，
+**证书没配进 CI 的那次发布就是未签名的**，macOS 于是拿
 「Apple 无法验证 "Warden" 是否包含可能危害 Mac 安全或泄露隐私的恶意软件」拦下来。
 上面那条命令就是绕过这个对话框的正确做法；[为什么，以及什么才是真正的解法](docs/troubleshooting.md#macos-打不开应用)。
+怎么让每一版都不再弹这个框，见[签名与公证](docs/signing.md)。
 
 ### Windows · Linux
 

@@ -84,9 +84,12 @@ flag on first run:
 xattr -dr com.apple.quarantine "/Applications/Warden.app"
 ```
 
-The build is **not signed with an Apple Developer ID and not notarised**, so macOS will otherwise refuse to
-open it with *"Apple cannot check Warden for malicious software"*. The command above is exactly what that
-dialog is asking you to work around; [why, and what would fix it properly](docs/en/troubleshooting.md#macos-refuses-to-open-the-app).
+The build **may not carry an Apple Developer ID signature or a notarisation ticket** — signing and
+notarisation happen in the release pipeline, and **a release produced without a certificate configured is
+unsigned**, so macOS refuses to open it with *"Apple cannot check Warden for malicious software"*. The
+command above is exactly what that dialog is asking you to work around; [why, and what would fix it
+properly](docs/en/troubleshooting.md#macos-refuses-to-open-the-app). To stop every build from showing this
+dialog, see [Signing and notarisation](docs/en/signing.md).
 
 ### Windows · Linux
 
