@@ -1,116 +1,158 @@
-# Warden
+<p align="center">
+  <a href="https://github.com/sky-jiangcheng/warden"><img src="src-tauri/icons/128x128.png" width="96" alt="Warden" /></a>
+</p>
 
-**Warden** — a local copilot that runs on your own machine (**not** GitHub Copilot): open a repository, talk to a local model about that project, and let [Cinder](https://github.com/sky-jiangcheng/cinder) remember what matters.
+<h1 align="center">Warden</h1>
 
-**Two products, one job each** — Cinder Desktop is the **workbench** (browse, edit, **approve** and govern this memory); Warden is the **assistant** (read, chat, run commands over MCP). One shared local memory, one protocol, and **approval stays in Cinder Desktop**.
+<p align="center">
+  <b>The copilot that is still there when the editor is closed.</b><br/>
+  A local assistant in your menu bar. It finds the repositories on your machine, keeps a small<br/>
+  companion window on screen, and talks about the project you have open — over MCP, to any model you point it at.
+</p>
 
-> **Status: Phase 2 — model providers are configurable and the chat loop works.** The app builds and runs, it reaches the memory layer, and it talks to any model behind an OpenAI-compatible API.
+<p align="center">
+  <b>Two products, one job each.</b><br/>
+  <a href="https://github.com/sky-jiangcheng/cinder">Cinder</a> Desktop is the <b>workbench</b> — browse, edit, <b>approve</b>, govern what is remembered.<br/>
+  Warden is the <b>assistant</b> — read, chat, act. One shared local memory, one protocol,<br/>
+  and <b>approval stays in Cinder Desktop</b>, because the approval tools are not on the MCP surface Warden is allowed to use.
+</p>
 
-## What this is
+<p align="center">
+  <a href="https://github.com/sky-jiangcheng/warden/releases"><img src="https://img.shields.io/github/v/release/sky-jiangcheng/warden?color=6366f1" alt="Release" /></a>
+  <a href="https://github.com/sky-jiangcheng/warden/actions/workflows/ci.yml"><img src="https://github.com/sky-jiangcheng/warden/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-111827" alt="macOS | Windows | Linux" />
+  <img src="https://img.shields.io/badge/Account-not%20required-22c55e" alt="No account required" />
+  <img src="https://img.shields.io/badge/Model-any%20OpenAI--compatible-7c3aed" alt="Any OpenAI-compatible model" />
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/sky-jiangcheng/warden?color=22c55e" alt="MIT License" /></a>
+</p>
 
-An **independent product**, not one more screen inside the Cinder Desktop app.
+<p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a> · <a href="docs/en/product.md">Positioning</a> · <a href="docs/en/roadmap.md">Roadmap</a> · <a href="docs/en/troubleshooting.md">Troubleshooting</a>
+</p>
 
-It does four things: **finds the repositories on this machine by itself**, **talks to a model
-about the project you have open**, **runs commands within a whitelist**, and **pulls memory
-back from Cinder**. Which model you use is **your**
-choice — **any provider that conforms to the OpenAI-compatible API works** (OpenRouter, OpenAI,
-DeepSeek, SiliconFlow, vLLM, LM Studio, and the local Ollama too) — and so is the shape of the
-interface.
+---
 
-The three roles stay separate:
+## 🎯 Why a second app at all?
 
-| | Owner | What it owns |
-|---|---|---|
-| copilot | Agent (this repo) | Repository discovery, model entry, command execution, memory panels |
-| memory | [Cinder](https://github.com/sky-jiangcheng/cinder) | Project knowledge, session handoffs, approved knowledge pages |
-| protocol | MCP | The Agent reads memory through `repotory_*` tools only — never the database |
+Because the moment you close the editor, every coding agent forgets the project — and the assistant you
+wanted was never only for one window.
 
-## How it relates to the Cinder Desktop app
+| The problem today | What Warden does instead |
+| :--- | :--- |
+| 🪟 **The assistant lives inside the editor.** Close the window and it is gone, along with the thread. | **A resident process with a tray.** Close the window and it hides; quit from the tray and it exits. A question you started keeps generating while the window is in the background. |
+| 🌙 **You lose the "where was I".** Yesterday's decisions, the gotcha you hit, the next step — none of it survives the session. | **It reads the same memory your agents write.** Project knowledge, session handoffs and approved knowledge pages come from Cinder over MCP — the same records Cursor wrote, not a second history that looks like it. |
+| 🧠 **Long answers need a big model; quick questions do not.** | **Any OpenAI-compatible provider.** One client, no vendor code: a local Ollama for free and offline, OpenRouter / OpenAI / DeepSeek when the question is hard. Switching is a base URL. |
+| 📂 **You tell every tool where your code is.** | **It walks the disk itself.** Point it at directories, it finds the git repositories under them, and a new one surfaces as a bubble asking whether it is yours. Dismissed once, never asked again. |
 
-**Two products, one job each** — not master and servant, not two interfaces of one product.
+---
 
-| | Cinder Desktop | Agent (the copilot) |
-|---|---|---|
+## 📦 The two products
+
+Not master and servant, and not two windows of one application — two halves of one loop.
+
+| | Cinder Desktop | Warden |
+| :--- | :--- | :--- |
 | Positioning | the **workbench** | the **assistant** |
 | What it does | browse, edit, **approve**, govern | read, chat, execute |
-| Memory channel | uses `internal/service` directly | **MCP only** |
-| Approval (approve / reject) | **yes** (a human is present) | **no** — those two tools are not on the MCP surface at all |
-| Closing it | the workbench is gone | the copilot keeps running |
-| Where the repositories come from | its own scan roots | **its own scan roots + its own watchlist** |
+| Memory channel | uses the service layer directly | **MCP only** — never the database |
+| Approval (approve / reject) | **yes** — a human is present | **no** — those tools are not on Warden's MCP surface at all |
+| If you close it | the workbench is gone | the copilot keeps running |
+| Where repositories come from | its own scan roots | **its own scan roots + its own watchlist** |
 
-**Approval stays with the human, and not by convention**: Cinder's MCP surface registers only the
-pure-read knowledge page tools (`repotory_wiki_search` / `repotory_wiki_read`), because the gate on
-the write side is "publishing content into retrieval is a human act". The Agent goes over MCP, so it
-stands outside that gate automatically.
+**Approval stays with the human by construction, not by convention.** Cinder's MCP surface registers only
+the read-only knowledge-page tools; the gate on the write side is "publishing content into retrieval is an
+act of a person". Warden reaches memory over MCP, so it stands outside that gate automatically — there is
+no flag to get wrong.
 
-**The Agent never touches the database**: it needs the `repotory-mcp` binary to exist.
-**No `repotory-mcp` binary, no memory** — and that binary **ships as a standalone release asset** (one
-per platform), so the **desktop app is not required**; the first screen says so plainly rather than
-pretending.
+**No `repotory-mcp`, no memory.** Warden launches the MCP server as a child process. That binary ships as a
+standalone release asset for every platform, so **Cinder Desktop is not a prerequisite** — the first screen
+says which of the three states it is in rather than pretending. (Cinder 2.33 renamed its binaries; the same
+server is also shipped as `cinder-mcp`. Warden looks for the frozen name `repotory-mcp`, which Cinder still
+installs alongside it.)
 
-## What runs today
+---
 
-- **Find the repositories yourself**: it scans the directories you give it for git repositories,
-  lists them, and **a new one surfaces as a bubble at the top of the window asking whether you
-  want to follow it**; **a dismissed repository is never asked about again**
-- **Configure a model provider**: type a base URL and any OpenAI-compatible service connects;
-  **fetch the model list** (whatever the server reports is what is shown — **this repository keeps no
-  copy of it**), **test the connection** (a real request, which proves the key, the endpoint and the
-  model all work), and pick a model
-- **Chat with the model**: the answer streams in as it is written
-- **A chat panel with topics that is the same conversation the IDE plugins see**: the topic list and
-  the messages poll `repotory_chat` every 2.5 seconds, and **Warden, VS Code and JetBrains read and
-  write one record** — not three histories that look alike. **Only completed messages sync** (a
-  half-finished stream is never stored), **messages are immutable** (the same id with a different
-  payload errors instead of overwriting), and every assistant message is labelled from its own
-  `source` — **calling a plugin's reply "Warden" is claiming another client's answer**. A conversation
-  with no shared topic is a **temporary chat**: it stays in this window, and the status line says it
-  is not synced
-- **A small resident companion window**: 132×128 with nothing in it but the lantern and a one-line
-  bubble — click it (or press `⌥Space`) to open the chat, and only the lantern body drags the window.
-  **Closing a window hides it rather than quitting** (the red button must not cut off an answer being
-  generated); **Quit in the tray is what exits**
-- **The numbers, on demand**: ask in the chat and the model calls `repotory_metrics`, which reads what
-  memory **already stores** — **it does not scan disk, run git or refresh caches**, so nothing polls and
-  nothing is recomputed just because you asked; a scope it cannot cover shows null, **never a guessed
-  number**
-- **Actually reaches the memory layer**: it launches the `repotory-mcp` child process over stdio by
-  itself, does one MCP handshake, then fetches the **real tool list** with `tools/list` and shows it on
-  the first screen (**20 tools** on this machine — **this repository keeps no copy of the list**; it
-  shows whatever the server reports)
-- Shows the first-version product boundary and the milestones
+## 🚀 Install
 
-Command execution and the memory panels do not exist yet — see the [roadmap](docs/roadmap.md).
+### macOS
 
-## How the repositories are found
+Download `Warden_<version>_universal.dmg` from [Releases](https://github.com/sky-jiangcheng/warden/releases)
+(one universal build covers Apple silicon and Intel), drag it to `/Applications`, then clear the quarantine
+flag on first run:
 
-**The copilot walks the disk itself, without going through Cinder.** Give it a few
-directories to look in and it finds the git repositories under them, lists them, and
-**lets you say which ones are yours**.
+```bash
+xattr -dr com.apple.quarantine "/Applications/Warden.app"
+```
 
-- **What counts as a repository**: a `.git` **directory**. A worktree's or a submodule's
-  `.git` is a **file**, and that does not count — the same rule Cinder's own scanner
-  uses, so the two never disagree about the same directory.
-- **Two answers**: "follow" means "this is my work", "dismiss" means "stop asking".
-  **A dismissed repository never surfaces again** — otherwise saying "no" once would still
-  be asked a second time.
-- **A bubble for new repositories**: one at a time, sliding down from the top of the window
-  (five cards at once is a form, not a question). **When the window is in the background it
-  becomes a system notification, and clicking it brings the window back.**
-- **It keeps looking while nobody is looking**: the scan runs every five minutes even with
-  the window closed. That is what makes it a robot rather than a report.
-- **The watchlist is the copilot's own** (`repos.json` in the app config directory) and
-  **does not go into Cinder's database**: the writer of `projects.is_starred` there is the
-  desktop app and there is no MCP twin for it — sharing it would mean changing the main
-  repository, which is not a copilot's job.
+The build is **not signed with an Apple Developer ID and not notarised**, so macOS will otherwise refuse to
+open it with *"Apple cannot check Warden for malicious software"*. The command above is exactly what that
+dialog is asking you to work around; [why, and what would fix it properly](docs/en/troubleshooting.md#macos-refuses-to-open-the-app).
 
-The list carries names and paths for now. **Git metadata (branch, last commit) and "bring a
-repository into the conversation" are not done.**
+### Windows · Linux
 
-## How model providers are reached
+| Platform | Asset | Note |
+| :--- | :--- | :--- |
+| Windows | `Warden_<version>_x64_en-US.msi` / `_x64-setup.exe` | unsigned — SmartScreen may ask you to confirm |
+| Linux | `Warden_<version>_amd64.AppImage` / `.deb` / `_x86_64.rpm` | AppImage is the no-install option |
 
-**One protocol covers them all.** The OpenAI-compatible API is the de-facto standard here, and its
-shape is small:
+### Before the memory layer works
+
+The chat works with any provider the moment Warden is installed. The **memory** panels need the
+`repotory-mcp` binary on your `PATH` — it comes from the
+[Cinder](https://github.com/sky-jiangcheng/cinder) releases, or from Cinder Desktop's installer. Without it
+the first screen says *not installed* and the rest of the app still works.
+
+---
+
+## ⚡ Quick start
+
+1. **Open Warden.** No account, no sign-in, no telemetry. It starts in the tray.
+2. **Pick a model.** The default is a local Ollama (`http://127.0.0.1:11434/v1`, model `qwen3:8b`) — it needs
+   no key, so if Ollama is running there is nothing to configure. Any other provider: paste a base URL, press
+   **Test connection** (a real request — it proves endpoint, key and model together), pick a model, done.
+3. **Give it a directory to look in.** It lists the git repositories underneath and asks, one at a time,
+   whether a newly found one is yours.
+4. **Ask.** Click the companion, or press `⌥Space`. The answer streams in as it is written.
+
+---
+
+## ✅ What runs today
+
+- **Finds the repositories itself** — scans the directories you give it every five minutes, even with the
+  window closed; a new repository surfaces as a bubble (or a system notification when the window is hidden),
+  and **a dismissed one never surfaces again**
+- **Configures any OpenAI-compatible provider** — base URL, model list fetched from the server (Warden keeps
+  no copy of anyone's catalogue), a real connection test, optional extra headers
+- **Chats, streaming** — and the thread is the **same conversation the IDE plugins see**: topics and messages
+  poll `repotory_chat`, so Warden, VS Code and JetBrains read and write one record. Only completed messages
+  sync, messages are immutable (same id with a different payload is an error, never an overwrite), and every
+  assistant message is labelled from its own `source` — calling a plugin's reply "Warden" would be claiming
+  another client's answer
+- **A resident companion window** — 132×128, nothing in it but the lantern and a one-line bubble; click it or
+  press `⌥Space` to open the chat, and only the lantern drags the window. **Closing a window hides it**
+  (the red button must not cut off an answer being generated); **Quit in the tray is the way out**
+- **Numbers on demand** — ask in the chat and the model calls `repotory_metrics`, which reads what memory
+  **already stores**: nothing scans the disk, runs git or refreshes a cache to answer you. A scope it cannot
+  cover shows `null`, never a guessed number
+- **Really reaches the memory layer** — launches the MCP server over stdio, does one handshake, then fetches
+  the **real tool list** with `tools/list` and shows it (the server reports; Warden keeps no copy)
+
+**Not built yet:** command execution in the repository, the memory panels, git metadata (branch, last commit)
+on the repository list. See the [roadmap](docs/en/roadmap.md) — it is honest about the order things arrive in.
+
+---
+
+## 🧭 How it works
+
+### The three lanes
+
+| Lane | Owner | Reached by | Notes |
+| :--- | :--- | :--- | :--- |
+| Repositories | Warden | its own scanner (`repos.json` in the app config directory) | a `.git` **directory** is a repository; a worktree's or submodule's `.git` **file** is not — the same rule Cinder uses, so the two never disagree about one directory |
+| Providers | Warden | HTTPS to the base URL you configured, loopback directly | **a local provider never goes through a proxy**: with a proxy running, the proxy is another machine and its `127.0.0.1` is itself |
+| Memory | [Cinder](https://github.com/sky-jiangcheng/cinder) | MCP over stdio, `repotory_*` tools only | the connection is **resident**: the server holds one SQLite handle, so reconnecting per call would reopen the database per call |
+
+### One protocol for every model
 
 ```
 GET  {base}/models            → {"data": [{"id": "..."}, ...]}
@@ -118,81 +160,107 @@ POST {base}/chat/completions  → {"choices": [{"message": {"content": "..."}}]}
 POST {base}/chat/completions  (with "stream": true) → SSE lines, ended by data: [DONE]
 ```
 
-OpenRouter, OpenAI, DeepSeek, SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all speak
-it, so **there is exactly one client in the code** — adding a vendor is a configuration change,
-not a code change.
+OpenRouter, OpenAI, DeepSeek, SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all speak it, so **there
+is exactly one client in the code** — adding a vendor is a configuration change, not a code change. "Local
+model" and "hosted model" are not two kinds of thing here; they are one shape.
 
-**A local Ollama takes the same road** (`http://127.0.0.1:11434/v1`): "local model" and "hosted
-model" are not two kinds of thing here, they are one shape.
+### Why Tauri
 
-**The API key lives in the operating system's credential store** (macOS Keychain, Windows Credential
-Manager, Linux Secret Service); the config file holds only the fact that a key exists — **a key in
-a plain file is a key in every backup**.
+Warden needs a **tray** — a menu-bar icon, click to wake — because "close the workbench and an assistant is
+still there" is the entire product. Wails v2 has no tray (`pkg/menu`'s `TrayMenu` is a dead type) and the
+standalone `systray` crates need cgo, which would break the bare `go build ./...` in Cinder's CI. Tauri also
+gives the app a real frontend toolchain for the companion window and a native spinner-free WebView.
 
-**Loopback never goes through a proxy**: a local provider is reached directly, everything else goes
-through `HTTPS_PROXY` / `HTTP_PROXY` (and `NO_PROXY` is honoured). That is not a preference — with
-a proxy running, the proxy is a different machine, and its `127.0.0.1` is itself.
+It is **an independent process + a real tray + a real distribution channel**, not a native UI framework:
+Tauri uses the system WebView, so the interface is web technology, not Swift/AppKit controls.
 
-## How the memory layer is reached
+---
 
-MCP over stdio is **newline-delimited JSON-RPC**. The client's handshake is three steps:
+## ❓FAQ
 
-```
-initialize (a request with an id)
-  → notifications/initialized (a notification, no id)
-  → tools/list / tools/call
-```
+**Do I need Cinder Desktop installed?**
+No. You need the `repotory-mcp` binary on `PATH` for the memory lane. Everything else — repositories, providers,
+chat — works without it, and the app says so on the first screen instead of failing at the first question.
 
-The client is written in Rust (`src-tauri/src/mcp_client.rs`) — **a Tauri webview cannot spawn a child
-process**, and the IDE plugins can do it in TypeScript only because the VS Code / JetBrains hosts carry
-a Node / JVM runtime. The copilot's equivalent host is the Rust side.
+**Does my code or my questions leave the machine?**
+Only to the provider **you** configured. There is no Warden server, no account, no telemetry, no crash
+reporting. With the default Ollama provider, nothing leaves the machine at all.
 
-The connection is **resident**: the server keeps the same SQLite database open, so re-opening it per
-call means re-opening the database per call. The first screen tells three states apart and never blurs
-them: **not installed** / **installed but not answering** (with a retry button) / **connected with N
-tools**.
+**Where is my API key stored?**
+In a `secrets.json` file beside the provider list, with `0600` permissions — not in the macOS Keychain. That
+is a deliberate trade-off and it is explained, with the alternative, in
+[why the key is a file, not a keychain item](docs/en/troubleshooting.md#where-the-api-key-lives-and-why).
 
-## Stack
+**macOS says it cannot verify the app. Is that expected?**
+Yes — the build is ad-hoc signed only. See
+[macOS refuses to open the app](docs/en/troubleshooting.md#macos-refuses-to-open-the-app).
 
-Tauri v2, Rust backend, TypeScript frontend. The default provider is the local Ollama and the
-default model is `qwen3:8b` (Qwen3 8B Q4) — it needs no account and no key, so it works the moment
-it is installed.
+**Why not just an IDE plugin?**
+Because a plugin dies with its host, and because the interesting moment is the one where no editor is open —
+you are reading a stack trace in a terminal, or you want to ask "what did I decide about the retry policy"
+before opening anything. Warden is the piece that is still running; the IDE plugins are the ones that come
+and go. They share the memory, not the process.
 
-**Why Tauri**: it ships a **tray** (menu-bar icon, click to wake), which is what makes "close the
-workbench and an assistant is still there" possible at all. (Wails v2 has no tray — the `TrayMenu`
-in `pkg/menu` is a dead type — and the external `systray` needs cgo.)
+---
 
-**The tray is in place** (`src-tauri/src/tray.rs`): left click wakes the window, right click opens
-the Show / Quit menu. **Closing a window hides it instead of quitting** (`on_window_event` answers
-`CloseRequested` with `prevent_close`): an answer that is being generated must not be cut off by the
-red button, and Warden is the parent of its `repotory-mcp` child — quitting tears that channel down
-with it (`Drop` kills the child). **Quit in the tray is the way out.** Cinder Desktop does the
-opposite: **closing its window exits it**, because it hosts no long-lived channel (main repo
-ADR-0047).
-
-**It is "an independent process + a real tray + a real distribution channel", not a native UI
-framework** — Tauri uses the system WebView, not Swift/AppKit controls.
-
-## Development
+## 🛠 Development
 
 ```bash
 npm install
-npm run tauri dev      # develop
-npm run tauri build    # package
+npm run tauri dev      # develop (Vite + Tauri in one command)
+npm run tauri build    # package a bundle for this machine
 ```
 
-Type-check the Rust backend on its own:
+Backend on its own, without a window server:
 
 ```bash
-cd src-tauri && cargo check
+cd src-tauri && cargo check --all-targets --features test-fixtures
+cd src-tauri && cargo test --features test-fixtures     # the suite, including the end-to-end MCP run
 ```
 
-## Docs
+Gates that CI enforces and you can run locally:
 
-- [Positioning and boundary](docs/product.md) — what the first version does, does not do, and what is still undecided
-- [Roadmap](docs/roadmap.md) — Phase 0–6 and the milestones
+```bash
+node scripts/check-brand.mjs        # display-layer brand words, frozen identifiers, live repo addresses
+node scripts/check-docs-mirror.mjs  # docs/*.md and docs/en/*.md are 1:1
+cargo fmt --all -- --check
+cargo clippy --all-targets --features test-fixtures -- -D warnings
+```
+
+---
+
+## 📚 Docs
+
+- [Positioning and boundary](docs/en/product.md) — what the first version does, does not do, and what is still undecided
+- [Roadmap](docs/en/roadmap.md) — Phase 0–6 and the milestones
+- [Troubleshooting](docs/en/troubleshooting.md) — the Gatekeeper dialog, the key file, MCP not found, provider errors
 - [AGENTS.md](AGENTS.md) — development entry point (for AI agents and new members)
 
-## License
+---
 
-MIT — see [LICENSE](LICENSE).
+## 📄 License
+
+[MIT](LICENSE) © 2026-present [sky-jiangcheng](https://github.com/sky-jiangcheng) and Warden contributors.
+
+Warden is free for personal and commercial use under the MIT License. In practice that means:
+
+| You want to | MIT allows it |
+| :--- | :--- |
+| Use Warden at work, on a commercial codebase | ✅ yes |
+| Fork it, modify it, keep your changes private | ✅ yes |
+| Ship it inside a product you sell | ✅ yes |
+| Redistribute a patched build to your team | ✅ yes |
+
+The only thing the license does not hand over is the **name**. The `Warden` and `Cinder` names and logos
+remain trademarks of the project, so a fork must not present itself as Warden — rename it, keep the notice,
+and link back here. That is the whole restriction.
+
+**Third-party components.** The application bundles [Tauri](https://tauri.app) (MIT / Apache-2.0) and the Rust
+crates listed in `src-tauri/Cargo.lock` (mostly MIT / Apache-2.0); their licenses are those of their authors.
+No model weights are bundled: Warden ships no model, so the license of the model you connect is between you
+and its provider. The `repotory-mcp` binary it launches is part of
+[Cinder](https://github.com/sky-jiangcheng/cinder) and carries the same MIT license.
+
+**No warranty.** As the MIT text says: the software is provided "as is". It runs read-only over your
+repositories and writes only inside its own configuration directory, but it is pre-1.0 software — pin a
+version you have tried, and read the release notes before upgrading.

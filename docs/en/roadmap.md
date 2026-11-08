@@ -85,10 +85,11 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
 **Progress so far**: **the chat loop works and the model entry is open**.
 
 - **The provider configuration layer** (`src-tauri/src/providers.rs`): a provider is "a base URL".
-  The configuration lives in a JSON file in the app config directory, and the **API key lives in the
-  operating system's credential store** (macOS Keychain / Windows Credential Manager / Linux Secret
-  Service) — the config file holds only whether a key exists, because **a key in a plain file is a key
-  in every backup**;
+  The configuration lives in `providers.json` in the app config directory, and the **API key lives in
+  `secrets.json` beside it, created `0600`** — the config file holds only whether a key exists. Not the
+  OS credential store: this app is ad-hoc signed, so a keychain ACL has no signature to bind to and
+  "always allow" has to be re-answered on every build (the v0.1.7 decision; the reasoning is the header
+  comment of `src/providers.rs`);
 - **The OpenAI-compatible client** (`src-tauri/src/llm.rs`): **there is exactly one client in the
   code**. OpenRouter, OpenAI, DeepSeek, SiliconFlow, vLLM, LM Studio and Ollama's `/v1` surface all
   speak the same thing, so adding a vendor is a configuration change rather than a code change;

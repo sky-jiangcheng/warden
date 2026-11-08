@@ -85,7 +85,8 @@ OpenRouter / OpenAI / DeepSeek / 硅基流动 / vLLM / LM Studio / Ollama 的 `/
 于是每加一家厂商都要改代码。**本机 Ollama 现在走的就是远程 provider 那条路**
 （`http://127.0.0.1:11434/v1`）——「装了 Ollama」和「配了 OpenRouter」是同一件事。
 
-**API Key 存进系统钥匙串**（macOS Keychain / Windows 凭据管理器 / Linux Secret Service），
+**API Key 存在 app config 目录的 `secrets.json` 里，创建即 0600**（不再走系统钥匙串：
+本仓是 ad-hoc 签名，钥匙串 ACL 绑不住签名，「始终允许」每出新版本就得重来一次），
 provider 配置文件里只存「有没有 Key」。
 
 **「看用户喜好」的部分明确交给用户**：模型后端、界面形态都不由本仓决定。

@@ -89,8 +89,10 @@ so every new vendor meant a code change. **The local Ollama now takes the same r
 provider** (`http://127.0.0.1:11434/v1`) — "Ollama is installed" and "OpenRouter is configured" are
 the same kind of fact.
 
-**The API key lives in the operating system's credential store** (macOS Keychain, Windows Credential
-Manager, Linux Secret Service); the provider config file holds only whether a key exists.
+**The API key lives in `secrets.json` in the app config directory, created `0600`** (not in the OS
+credential store: this app is ad-hoc signed, so a keychain ACL has no stable signature to bind to and
+"always allow" has to be re-answered on every build). The provider config file holds only whether a
+key exists.
 
 **Everything the user is allowed to have a preference about** — which model, the shape of the
 interface — is left to the user.

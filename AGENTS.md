@@ -43,7 +43,7 @@ src-tauri/           后端（Rust）
   src/mcp_client.rs  MCP stdio 客户端：initialize / tools/list / tools/call
   src/tray.rs        托盘（copilot 的唤回入口）：左键唤回窗口，右键 Show / Quit
   src/binaries.rs    在本机找可执行文件（只找，不探活）
-  src/providers.rs   provider 配置：持久化 + 钥匙串里的 API Key
+  src/providers.rs   provider 配置：persist + 同目录 0600 文件里的 API Key
   src/llm.rs         OpenAI 兼容客户端：拉模型 / 聊天 / SSE 流式
   src/provider_commands.rs  provider 命令背后的逻辑
   src/memory_layer.rs    记忆层（Cinder MCP）状态：连接 + 服务端给的工具清单
@@ -64,9 +64,11 @@ scripts/             仓库守卫脚本
   vLLM / LM Studio / Ollama 的 `/v1` 面），所以**代码里只有一个客户端**。
   **加一家厂商是改配置不是改代码**——别为某家厂商开分支。
   **本机 Ollama 和远程 provider 走同一条路**（「本地模型」与「云端模型」不是两类东西）。
-- **API Key 存系统钥匙串**（keyring crate），provider 配置文件里只存「有没有 Key」。
-  **别把 Key 落进 JSON**——明文落盘的密钥就是躺在每个备份里的密钥。
-  前端 payload 里也**永远只有 `hasApiKey`，没有 Key 本身**。
+- **API Key 存同目录的 `secrets.json`，建文件即 0600**，provider 配置里只存「有没有 Key」。
+  **别把 Key 混进 `providers.json`**——那个文件是给人看、给人贴进 issue 的。
+  也别再改回系统钥匙串：ad-hoc 签名让 ACL 绑不住，「始终允许」每次都得重来
+  （`src/providers.rs` 头上有完整推理）。
+  前端 payload 里**永远只有 `hasApiKey`，没有 Key 本身**。
 - **模型清单由服务端给出，本仓不保留副本**——跟 MCP 工具清单同一条规矩。
   拉到的清单不进配置文件（会漂），要用就现拉。
 - **双语手册必须同批改**：`docs/**` 与 `docs/en/**` 是镜像，只改一边 = 双语漂移。守卫是 `npm run check:docs`（`scripts/check-docs-mirror.mjs`），有意只出中文的文档要在脚本的 `ZH_ONLY` 白名单登记并附理由。

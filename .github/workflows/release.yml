@@ -5,10 +5,15 @@
 # Cinder main repo learned this the hard way (v2.14.0 shipped from a red
 # commit), so the gate is a real job here too.
 #
-# What this does NOT do: sign or notarise. There is no Apple Developer ID in
-# this repository, so the macOS bundle is ad-hoc signed at best. The release
-# body says how to open it; pretending it is notarised would be worse than
-# saying it plainly.
+# Signing and notarisation are WIRED but OFF by default. There is no Apple
+# Developer ID in this repository, so today the macOS bundle is ad-hoc signed
+# and the first launch needs one command (the release body and
+# docs/troubleshooting.md both say which). Tauri's own bundler does the whole
+# job as soon as five environment variables exist — certificate, password,
+# signing identity, Apple ID, team id — so the day a certificate is bought,
+# adding those as repository secrets is the entire change. Until then the env
+# values resolve to empty strings, Tauri treats them as absent, and the build
+# is byte-for-byte what it is today.
 name: Release
 
 on:
@@ -120,13 +125,28 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Apple signing + notarisation. Empty when the secrets do not exist,
+          # which is not an error: Tauri then ad-hoc signs exactly as before.
+          # With all five set, the bundler signs the app with the Developer ID,
+          # submits it to notarytool, staples the ticket, and the DMG installs
+          # with no Gatekeeper dialog at all.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Warden ${{ github.ref_name }}
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **桌宠只剩灯体和一句话**：指标行、状态行、「对话」按钮都删了。数字改成在对话里问一句——模型去调 `repotory_metrics`，不再有 15 秒轮询；入口本来就有三处（点它、`⌥Space`、托盘），那几行字只是在角色身上又叠了一层界面。窗口从 168×196 收到 132×128：透明窗口照样挡住它盖住的画外区域，所以它的框就该是画本身。桌宠图也从 64px 的位图换成 264px 光栅按 80px 显示——之前那张在小尺寸上被放大了一倍多，边缘是糊的。
+            **API Key 不再进系统钥匙串。** 之前每次启动 macOS 都会弹「Warden 想要使用你储存在钥匙串的 repotory-agent 中的机密信息」，点「始终允许」下次还问——因为钥匙串条目的 ACL 绑的是创建它的那个 App 的代码签名，而本仓是 ad-hoc 签名，每出一个新构建在钥匙串眼里就是一个全新的 App，授权挂不住。现在 Key 存到 app config 目录的 `secrets.json`，**创建时就是 0600**：读它不需要任何授权，也能 `cat` / `rm`。取舍写在 [排障](docs/troubleshooting.md#api-key-为什么落成文件)里，没有藏。
+
+            **升级须知：API Key 要重填一次。** 旧版本存在钥匙串里，新版本不读它——读一次就等于再弹一次那个密码框。打开设置 → 对应 provider → 重新保存 API Key，一次就够。旧条目可在「钥匙串访问」里搜 `repotory-agent` 手动删掉。
+
+            **文档重写。** README 补上了安装步骤、常见问题与完整的许可说明；新增[排障](docs/troubleshooting.md)：Gatekeeper 为什么拦、Key 为什么落成文件、首屏「未安装」怎么查、provider 报 401/404 怎么定位。
 
             **macOS 未签名**（本仓没有 Apple Developer ID）。首次打开若提示「已损坏」或「无法验证开发者」，用任意一种方式放行：
 
@@ -134,7 +154,7 @@ jobs:
             xattr -dr com.apple.quarantine "/Applications/Warden.app"
             ```
 
-            或在 Finder 里右键 → 打开。Windows / Linux 的产物未签名，SmartScreen 可能提示。
+            或在 Finder 里右键 → 打开。Windows / Linux 的产物未签名，SmartScreen 可能提示。签名与公证的步骤已经接进流水线，配好证书就会自动走。
 
             Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider.
           releaseDraft: false
