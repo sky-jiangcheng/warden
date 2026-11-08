@@ -93,7 +93,7 @@ dialog is asking you to work around; [why, and what would fix it properly](docs/
 | Platform | Asset | Note |
 | :--- | :--- | :--- |
 | Windows | `Warden_<version>_x64_en-US.msi` / `_x64-setup.exe` | unsigned — SmartScreen may ask you to confirm |
-| Linux | `Warden_<version>_amd64.AppImage` / `.deb` / `_x86_64.rpm` | AppImage is the no-install option |
+| Linux | `Warden_<version>_amd64.AppImage` / `Warden_<version>_amd64.deb` / `Warden-<version>-1.x86_64.rpm` | AppImage is the no-install option |
 
 ### Before the memory layer works
 

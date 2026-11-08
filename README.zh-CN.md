@@ -86,7 +86,7 @@ xattr -dr com.apple.quarantine "/Applications/Warden.app"
 | 平台 | 产物 | 说明 |
 | :--- | :--- | :--- |
 | Windows | `Warden_<版本>_x64_en-US.msi` / `_x64-setup.exe` | 未签名，SmartScreen 可能要求确认 |
-| Linux | `Warden_<版本>_amd64.AppImage` / `.deb` / `_x86_64.rpm` | AppImage 免安装 |
+| Linux | `Warden_<版本>_amd64.AppImage` / `Warden_<版本>_amd64.deb` / `Warden-<版本>-1.x86_64.rpm` | AppImage 免安装 |
 
 ### 记忆层的前置条件
 
