@@ -77,19 +77,11 @@ installs alongside it.)
 ### macOS
 
 Download `Warden_<version>_universal.dmg` from [Releases](https://github.com/sky-jiangcheng/warden/releases)
-(one universal build covers Apple silicon and Intel), drag it to `/Applications`, then clear the quarantine
-flag on first run:
+(one universal build covers Apple silicon and Intel) and drag it to `/Applications`. The dmg is signed with an
+Apple Developer ID and notarised, so Gatekeeper lets it through — double-click and it opens, no dialog.
 
-```bash
-xattr -dr com.apple.quarantine "/Applications/Warden.app"
-```
-
-The build **may not carry an Apple Developer ID signature or a notarisation ticket** — signing and
-notarisation happen in the release pipeline, and **a release produced without a certificate configured is
-unsigned**, so macOS refuses to open it with *"Apple cannot check Warden for malicious software"*. The
-command above is exactly what that dialog is asking you to work around; [why, and what would fix it
-properly](docs/en/troubleshooting.md#macos-refuses-to-open-the-app). To stop every build from showing this
-dialog, see [Signing and notarisation](docs/en/signing.md).
+Releases before v0.1.8 were not signed. On one of those, macOS refuses to open the app with *"Apple cannot
+check Warden for malicious software"*; [here is what to do about that](docs/en/troubleshooting.md#macos-refuses-to-open-the-app).
 
 ### Windows · Linux
 
@@ -195,7 +187,7 @@ is a deliberate trade-off and it is explained, with the alternative, in
 [why the key is a file, not a keychain item](docs/en/troubleshooting.md#where-the-api-key-lives-and-why).
 
 **macOS says it cannot verify the app. Is that expected?**
-Yes — the build is ad-hoc signed only. See
+Only on releases before v0.1.8 — those were ad-hoc signed. v0.1.8 and later are signed and notarised. See
 [macOS refuses to open the app](docs/en/troubleshooting.md#macos-refuses-to-open-the-app).
 
 **Why not just an IDE plugin?**

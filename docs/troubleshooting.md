@@ -23,11 +23,12 @@
 > 未打开 "Warden"。Apple 无法验证 "Warden" 是否包含可能危害 Mac 安全或泄露隐私的恶意软件。
 
 **为什么**：macOS 的 Gatekeeper 只放行两类东西——App Store 的，或者用 Apple Developer ID
-签名并**公证（notarise）**过的。Warden 的 release 构建两者都不是：本仓没有 Apple Developer ID
-证书，`release.yml` 里也只做 ad-hoc 签名（`codesign -s -`，签名主体就是这段二进制本身）。
-再加上浏览器下载时给 dmg 打了 `com.apple.quarantine` 标记，首次启动就会撞上这个对话框。
+签名并**公证（notarise）**过的。**v0.1.8 起 Warden 两个都是**：dmg 用 Developer ID 签名、
+提交过 Apple 公证、票据 stapled 在包里。v0.1.8 之前只有 ad-hoc 签名（`codesign -s -`，
+签名主体就是这段二进制本身），再加上浏览器下载时给 dmg 打了 `com.apple.quarantine` 标记，
+首次启动就会撞上这个对话框。
 
-**怎么办**（任选一种，都是一次性的）：
+**怎么办**（只有旧版本需要，任选一种，都是一次性的）：
 
 ```bash
 # 装到 /Applications 之后，清掉隔离标记
@@ -39,12 +40,10 @@ xattr -dr com.apple.quarantine "/Applications/Warden.app"
 > **别关 Gatekeeper。** `sudo spctl --master-disable` 会让整台机器的下载检查失效，
 > 那是拿一个 App 换掉所有 App 的保护。上面那条命令只动这一个 bundle。
 
-**什么才是真正的解法**：签名 + 公证，两者都要有。签名（`codesign --options runtime
---timestamp`）证明是谁做的，公证（`xcrun notarytool submit --wait` + `xcrun stapler staple`）
-是 Apple 扫过一遍证明不是恶意软件。做完之后用户双击就开，没有任何对话框。
-
-`release.yml` 里已经把签名与公证接好了：证书配好之后自动走，没配就走未签名那条路并打一条
-warning。完整的步骤（怎么拿证书、怎么配 secrets）在[签名与公证](signing.md)。
+**新版本为什么不用管**：签名（`codesign --options runtime --timestamp`）证明是谁做的，
+公证（`xcrun notarytool submit --wait` + `xcrun stapler staple`）是 Apple 扫过一遍证明不是
+恶意软件。两个都做完，用户双击就开，没有任何对话框——`release.yml` 里每次都自动走。
+完整的步骤（怎么拿证书、怎么配 secrets）在[签名与公证](signing.md)。
 
 Windows 同理：没有代码签名证书，SmartScreen 会拦一次，点「更多信息 → 仍要运行」即可。
 

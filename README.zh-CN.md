@@ -71,17 +71,12 @@
 ### macOS
 
 从 [Releases](https://github.com/sky-jiangcheng/warden/releases) 下 `Warden_<版本>_universal.dmg`
-（一份通用包，Apple silicon 和 Intel 都能用），拖进 `/Applications`，首次打开前清掉隔离标记：
+（一份通用包，Apple silicon 和 Intel 都能用），拖进 `/Applications` 就行。dmg 用 Apple Developer ID
+签了名、也过了 Apple 公证，Gatekeeper 直接放行——双击就开，不弹框。
 
-```bash
-xattr -dr com.apple.quarantine "/Applications/Warden.app"
-```
-
-这份构建**可能没有 Apple Developer ID 签名、也没公证**——签名与公证是在发布流水线里做的，
-**证书没配进 CI 的那次发布就是未签名的**，macOS 于是拿
-「Apple 无法验证 "Warden" 是否包含可能危害 Mac 安全或泄露隐私的恶意软件」拦下来。
-上面那条命令就是绕过这个对话框的正确做法；[为什么，以及什么才是真正的解法](docs/troubleshooting.md#macos-打不开应用)。
-怎么让每一版都不再弹这个框，见[签名与公证](docs/signing.md)。
+v0.1.8 之前的版本没有签名。如果你拿到的是那些版本，macOS 会拿
+「Apple 无法验证 "Warden" 是否包含可能危害 Mac 安全或泄露隐私的恶意软件」拦下来，
+[那该怎么办](docs/troubleshooting.md#macos-打不开应用)。
 
 ### Windows · Linux
 

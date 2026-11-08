@@ -85,8 +85,9 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 
 - **provider 配置层**（`src-tauri/src/providers.rs`）：provider 就是「一个 base URL」。
   配置落在 app config 目录的 `providers.json` 里，**API Key 存同目录的 `secrets.json`、创建即 0600**
-  ——配置文件里只存「有没有 Key」。**不进系统钥匙串**：本仓 ad-hoc 签名，钥匙串 ACL 绑不住签名，
+  ——配置文件里只存「有没有 Key」。**不进系统钥匙串**：早期版本 ad-hoc 签名，钥匙串 ACL 绑不住签名，
   「始终允许」每出一个新构建就得重来一次（v0.1.7 的决定，推理在 `src/providers.rs` 头注释）；
+  现在发布流水线用 Developer ID 签名了，文件这条路仍然保留；
 - **OpenAI 兼容客户端**（`src-tauri/src/llm.rs`）：**代码里只有一个客户端**。
   OpenRouter、OpenAI、DeepSeek、硅基流动、vLLM、LM Studio、Ollama 的 `/v1` 面
   全都说同一套话，所以加一家厂商是改配置不是改代码；

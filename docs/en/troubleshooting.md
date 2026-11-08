@@ -24,12 +24,12 @@ or
 > "Warden" Not Opened. Apple cannot check it for malicious software.
 
 **Why.** Gatekeeper only lets through two kinds of software: apps from the App Store, or apps signed with an
-Apple Developer ID **and notarised**. Signing and notarisation happen in the release pipeline, and **a release
-produced without a certificate configured is unsigned** (the bundle then carries only an ad-hoc signature,
-`codesign -s -`, whose subject is the binary itself). On top of that, the browser marks the downloaded dmg with
-`com.apple.quarantine`, so the first launch hits the dialog.
+Apple Developer ID **and notarised**. **Warden is both as of v0.1.8**: the dmg is signed with the Developer ID,
+submitted to Apple for notarisation, and the ticket is stapled into the bundle. Before v0.1.8 the bundle carried
+only an ad-hoc signature (`codesign -s -`, whose subject is the binary itself), and the browser marked the
+downloaded dmg with `com.apple.quarantine`, so the first launch hit the dialog.
 
-**What to do** (either one, once):
+**What to do** (older releases only — either one, once):
 
 ```bash
 # after dragging the app into /Applications
@@ -41,14 +41,13 @@ or **right-click → Open** in Finder, then **Open** again in the dialog.
 > **Do not disable Gatekeeper.** `sudo spctl --master-disable` switches off download checking for the whole
 > machine — one app's problem traded for every app's protection. The command above touches one bundle.
 
-**What would actually fix it.** Signing plus notarisation — you need both. Signing
+**Why newer releases do not need any of that.** Signing plus notarisation — you need both. Signing
 (`codesign --options runtime --timestamp`) proves who built it; notarisation (`xcrun notarytool submit --wait`
 plus `xcrun stapler staple`) is Apple's malware scan. After that the app opens on a double click with no
-dialog at all.
+dialog at all, and `release.yml` does both on every run.
 
-`release.yml` already carries those steps: with a certificate configured they run automatically, without one
-the build stays unsigned and says so. The full path — getting a certificate, wiring it into the secrets — is
-in [Signing and notarisation](en/signing.md).
+The full path — getting a certificate, wiring it into the secrets — is in
+[Signing and notarisation](en/signing.md).
 
 Windows behaves the same way without a code-signing certificate: SmartScreen blocks once, **More info → Run
 anyway** gets through.

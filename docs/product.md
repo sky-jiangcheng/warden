@@ -86,7 +86,8 @@ OpenRouter / OpenAI / DeepSeek / 硅基流动 / vLLM / LM Studio / Ollama 的 `/
 （`http://127.0.0.1:11434/v1`）——「装了 Ollama」和「配了 OpenRouter」是同一件事。
 
 **API Key 存在 app config 目录的 `secrets.json` 里，创建即 0600**（不再走系统钥匙串：
-本仓是 ad-hoc 签名，钥匙串 ACL 绑不住签名，「始终允许」每出新版本就得重来一次），
+早期版本是 ad-hoc 签名，钥匙串 ACL 绑不住签名，「始终允许」每出新版本就得重来一次；
+发布流水线现在用 Developer ID 签名了，文件这条路仍然保留——它不弹框、可读可删），
 provider 配置文件里只存「有没有 Key」。
 
 **「看用户喜好」的部分明确交给用户**：模型后端、界面形态都不由本仓决定。

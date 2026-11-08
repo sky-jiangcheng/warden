@@ -90,9 +90,10 @@ provider** (`http://127.0.0.1:11434/v1`) — "Ollama is installed" and "OpenRout
 the same kind of fact.
 
 **The API key lives in `secrets.json` in the app config directory, created `0600`** (not in the OS
-credential store: this app is ad-hoc signed, so a keychain ACL has no stable signature to bind to and
-"always allow" has to be re-answered on every build). The provider config file holds only whether a
-key exists.
+credential store: early builds were ad-hoc signed, so a keychain ACL had no stable signature to bind to
+and "always allow" had to be re-answered on every build; the release pipeline signs with a real
+Developer ID now, and the file stays anyway — no prompt, readable and deletable). The provider config
+file holds only whether a key exists.
 
 **Everything the user is allowed to have a preference about** — which model, the shape of the
 interface — is left to the user.

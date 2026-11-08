@@ -28,11 +28,16 @@
 // They used to be (macOS Keychain, Windows Credential Manager, Linux Secret
 // Service). On macOS that turned into a prompt for the LOGIN KEYCHAIN PASSWORD
 // on every launch: a keychain item's access control list is keyed to the code
-// signature of the app that created it, and this app ships ad-hoc signed
-// (`codesign -s -`, because there is no Apple Developer ID in the release
-// workflow). An ad-hoc signature is a hash of the exact binary, so every new
-// build is a different application as far as the keychain is concerned — the
-// "always allow" answer cannot stick, and the user is asked again.
+// signature of the app that created it, and the app used to ship ad-hoc signed
+// (`codesign -s -`). An ad-hoc signature is a hash of the exact binary, so
+// every new build was a different application as far as the keychain was
+// concerned — the "always allow" answer could not stick, and the user was
+// asked again.
+//
+// The release pipeline signs with a real Developer ID now, so the ACL would
+// bind again. The file stays anyway: a credential store that can ask for the
+// account password is a store the user learns to dismiss, and the file needs
+// no prompt at all.
 //
 // A credential store that asks for the account password every single time is
 // not protecting the secret, it is training the user to dismiss the dialog.
