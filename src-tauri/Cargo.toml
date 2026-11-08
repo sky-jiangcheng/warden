@@ -1,6 +1,6 @@
 [package]
 name = "repotory-agent"
-version = "0.1.6"
+version = "0.1.7"
 description = "A local copilot that reads the Cinder memory layer"
 authors = ["sky-jiangcheng"]
 edition = "2024"
@@ -53,17 +53,14 @@ serde_json = "1"
 # dropped the old `rustls-tls` spelling, and `rustls-no-provider` would need
 # a crypto provider installed by hand. `rustls` pulls aws-lc-rs, which builds
 # with the C compiler the runners already have.
+# Provider API keys deliberately do NOT go through the OS credential store.
+# They did (the `keyring` crate, macOS Keychain / Windows Credential Manager /
+# Linux Secret Service), and on macOS that produced a login-keychain password
+# prompt on every launch: a keychain ACL is bound to the app's code signature,
+# and this app ships ad-hoc signed, so every build counts as a different
+# application and "always allow" cannot stick. See `src/providers.rs` for the
+# trade-off that replaced it (a 0600 file beside the config).
 reqwest = { version = "0.13", features = ["json", "stream", "rustls"] }
-
-# API keys live in the operating system's credential store (macOS Keychain,
-# Windows Credential Manager, Linux Secret Service) rather than in the
-# provider config file. The feature set covers all three; a build for one
-# platform still compiles the others' code paths as no-ops.
-keyring = { version = "4", features = [
-    "apple-native-keyring-store",
-    "windows-native-keyring-store",
-    "zbus-secret-service-keyring-store",
-] }
 
 # The MCP client drives a child process over stdio. `tokio::time::timeout`
 # bounds every request (a wedged server must not leave a caller pending

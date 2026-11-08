@@ -18,21 +18,36 @@
 // What is stored where:
 //
 //   * the non-secret parts of a provider (name, base URL, default model) go
-//     to a JSON file in the app config directory — they are configuration and
-//     they are meant to be readable;
-//   * the API key goes to the operating system's credential store (macOS
-//     Keychain, Windows Credential Manager, Linux Secret Service). A key in a
-//     plain file is a key in every backup, every sync folder and every
-//     screen share that file lands in.
+//     to `providers.json` in the app config directory — they are
+//     configuration and they are meant to be readable;
+//   * the API keys go to `secrets.json` in the SAME directory, written with
+//     owner-only permissions (0600) at creation time.
 //
-// The config file therefore holds a KEY REFERENCE (the credential's account
-// name), never the key itself.
+// Why the keys are not in the OS credential store any more.
+//
+// They used to be (macOS Keychain, Windows Credential Manager, Linux Secret
+// Service). On macOS that turned into a prompt for the LOGIN KEYCHAIN PASSWORD
+// on every launch: a keychain item's access control list is keyed to the code
+// signature of the app that created it, and this app ships ad-hoc signed
+// (`codesign -s -`, because there is no Apple Developer ID in the release
+// workflow). An ad-hoc signature is a hash of the exact binary, so every new
+// build is a different application as far as the keychain is concerned — the
+// "always allow" answer cannot stick, and the user is asked again.
+//
+// A credential store that asks for the account password every single time is
+// not protecting the secret, it is training the user to dismiss the dialog.
+// The trade-off taken here is stated plainly instead of hidden: a key in a
+// file is a key in every backup and every sync folder that file reaches. In
+// exchange it is read without a prompt, it can be inspected and deleted with
+// `open` / `rm`, and it is protected by the same 0600 bit as the rest of the
+// user's per-app state. A user who does not want any key on disk runs the
+// local Ollama, which needs none.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The credential service the API keys live under, in the OS credential store.
-const KEYRING_SERVICE: &str = "repotory-agent";
+/// The file holding the provider API keys, next to `providers.json`.
+const SECRETS_FILE: &str = "secrets.json";
 
 /// One configured model provider.
 ///
@@ -59,8 +74,8 @@ pub struct Provider {
     /// it, so the map is usually empty.
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    /// Whether the API key lives in the credential store. A provider without
-    /// a key is legitimate — a local Ollama needs none.
+    /// Whether an API key is on file for this provider. A provider without a
+    /// key is legitimate — a local Ollama needs none.
     #[serde(default)]
     pub has_api_key: bool,
 }
@@ -178,8 +193,8 @@ impl ProviderStore {
     /// Writes the configuration.
     ///
     /// The file is written with owner-only permissions: it holds no secret
-    /// today, but a config file the user may later point at a key-bearing
-    /// path should not be world-readable either.
+    /// (the keys live in `secrets.json` beside it), but a list of the
+    /// providers a person uses is nobody else's business either.
     pub fn save(&self, config: &ProviderConfig) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
@@ -211,37 +226,85 @@ fn restrict_permissions(path: &Path) {
     }
 }
 
-/// Stores an API key in the operating system's credential store.
-pub fn store_api_key(provider_id: &str, key: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, provider_id)
-        .map_err(|err| format!("the credential store is not available: {err}"))?;
-    entry
-        .set_password(key)
-        .map_err(|err| format!("the API key could not be stored: {err}"))
-}
-
-/// Reads an API key from the operating system's credential store.
+/// Writes a file that is owner-only FROM THE FIRST BYTE.
 ///
-/// A missing credential is not an error: it means "this provider has no key",
-/// which is a normal state for a local runtime.
-pub fn load_api_key(provider_id: &str) -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, provider_id)
-        .map_err(|err| format!("the credential store is not available: {err}"))?;
-    match entry.get_password() {
-        Ok(key) => Ok(Some(key)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(err) => Err(format!("the API key could not be read: {err}")),
+/// `fs::write` creates with the process umask (0644 on a default macOS
+/// account) and only a later `chmod` narrows it, which leaves a window where
+/// any local user can read the file. These files hold API keys, so the mode
+/// is applied at creation instead of after it.
+fn write_owner_only(path: &Path, body: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|err| format!("the file could not be opened: {err}"))?;
+        file.write_all(body.as_bytes())
+            .map_err(|err| format!("the file could not be written: {err}"))
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, body).map_err(|err| format!("the file could not be written: {err}"))
     }
 }
 
-/// Removes an API key from the operating system's credential store.
-pub fn delete_api_key(provider_id: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, provider_id)
-        .map_err(|err| format!("the credential store is not available: {err}"))?;
-    match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => Err(format!("the API key could not be removed: {err}")),
+impl ProviderStore {
+    /// The API keys file: same directory as the config, never the same file.
+    fn secrets_path(&self) -> PathBuf {
+        self.path.with_file_name(SECRETS_FILE)
+    }
+
+    fn read_secrets(&self) -> Result<BTreeMap<String, String>, String> {
+        let raw = match std::fs::read_to_string(self.secrets_path()) {
+            Ok(raw) => raw,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(BTreeMap::new());
+            }
+            Err(err) => return Err(format!("the API keys could not be read: {err}")),
+        };
+        serde_json::from_str(&raw)
+            .map_err(|err| format!("the API keys file is not valid JSON: {err}"))
+    }
+
+    fn write_secrets(&self, secrets: &BTreeMap<String, String>) -> Result<(), String> {
+        let path = self.secrets_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("the config directory could not be created: {err}"))?;
+        }
+        let body = serde_json::to_string_pretty(secrets)
+            .map_err(|err| format!("the API keys could not be serialized: {err}"))?;
+        write_owner_only(&path, &body)
+    }
+
+    /// Stores an API key for a provider.
+    pub fn store_api_key(&self, provider_id: &str, key: &str) -> Result<(), String> {
+        let mut secrets = self.read_secrets()?;
+        secrets.insert(provider_id.to_string(), key.to_string());
+        self.write_secrets(&secrets)
+    }
+
+    /// Reads a provider's API key.
+    ///
+    /// A missing key is not an error: it means "this provider has no key",
+    /// which is a normal state for a local runtime.
+    pub fn load_api_key(&self, provider_id: &str) -> Result<Option<String>, String> {
+        Ok(self.read_secrets()?.get(provider_id).cloned())
+    }
+
+    /// Removes a provider's API key. Removing what is not there is a success:
+    /// the caller asked for the key to be gone, and it is.
+    pub fn delete_api_key(&self, provider_id: &str) -> Result<(), String> {
+        let mut secrets = self.read_secrets()?;
+        if secrets.remove(provider_id).is_none() {
+            return Ok(());
+        }
+        self.write_secrets(&secrets)
     }
 }
 
@@ -273,8 +336,8 @@ pub fn default_config() -> ProviderConfig {
 
 /// Makes an id from a display name: lowercase, dashes, no spaces.
 ///
-/// Ids end up in the credential store as account names, so they have to be
-/// predictable: the same name always maps to the same credential.
+/// Ids end up as the keys of the entries in `secrets.json`, so they have to
+/// be predictable: the same name always maps to the same stored key.
 pub fn slugify(name: &str) -> String {
     let mut slug = String::new();
     let mut last_was_dash = true;
@@ -464,5 +527,108 @@ mod tests {
         assert!(config.providers.is_empty());
         assert!(problem.is_some(), "a broken config file must be reported");
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A scratch store whose directory is unique to the test that asked for
+    /// it: these write real files, and two tests sharing one path would pass
+    /// or fail depending on the order they ran in.
+    fn scratch_store(name: &str) -> (PathBuf, ProviderStore) {
+        let dir = std::env::temp_dir().join(format!(
+            "repotory-agent-secrets-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        (dir.clone(), ProviderStore::new(dir.join("providers.json")))
+    }
+
+    #[test]
+    fn a_stored_key_round_trips_and_goes_away_when_deleted() {
+        let (dir, store) = scratch_store("roundtrip");
+        assert_eq!(store.load_api_key("openrouter").expect("load"), None);
+
+        store
+            .store_api_key("openrouter", "sk-or-123")
+            .expect("store");
+        assert_eq!(
+            store.load_api_key("openrouter").expect("load"),
+            Some("sk-or-123".to_string())
+        );
+
+        // A second provider does not overwrite the first: the file is a map.
+        store.store_api_key("deepseek", "sk-ds-456").expect("store");
+        assert_eq!(
+            store.load_api_key("openrouter").expect("load"),
+            Some("sk-or-123".to_string())
+        );
+
+        store.delete_api_key("openrouter").expect("delete");
+        assert_eq!(store.load_api_key("openrouter").expect("load"), None);
+        assert_eq!(
+            store.load_api_key("deepseek").expect("load"),
+            Some("sk-ds-456".to_string())
+        );
+
+        // Deleting what is not there is a success, not an error.
+        store.delete_api_key("never-existed").expect("idempotent");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The keys must not land in the configuration file: that file is meant to
+    /// be readable, and it is the one people paste into an issue.
+    #[test]
+    fn the_keys_are_written_beside_the_config_not_into_it() {
+        let (dir, store) = scratch_store("separate");
+        let mut config = default_config();
+        config.upsert(Provider {
+            id: "openrouter".to_string(),
+            name: "OpenRouter".to_string(),
+            base_url: "https://openrouter.ai/api/v1".to_string(),
+            default_model: None,
+            headers: BTreeMap::new(),
+            has_api_key: true,
+        });
+        store.save(&config).expect("save");
+        store
+            .store_api_key("openrouter", "sk-or-secret")
+            .expect("store");
+
+        let config_body = std::fs::read_to_string(dir.join("providers.json")).expect("read");
+        assert!(!config_body.contains("sk-or-secret"));
+        let secrets_body = std::fs::read_to_string(dir.join(SECRETS_FILE)).expect("read");
+        assert!(secrets_body.contains("sk-or-secret"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 0600 at creation: an API key readable by every local account is a key
+    /// that has already leaked.
+    #[cfg(unix)]
+    #[test]
+    fn the_keys_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, store) = scratch_store("mode");
+        store
+            .store_api_key("openrouter", "sk-or-123")
+            .expect("store");
+        let mode = std::fs::metadata(dir.join(SECRETS_FILE))
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "the keys file must be 0600, got {mode:o}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A half-written or hand-edited keys file must be reported, not read as
+    /// "this provider has no key" — that would send the user looking at their
+    /// provider settings instead of at the file.
+    #[test]
+    fn a_corrupt_keys_file_is_reported() {
+        let (dir, store) = scratch_store("corrupt");
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join(SECRETS_FILE), "{not json").expect("write");
+        assert!(store.load_api_key("openrouter").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

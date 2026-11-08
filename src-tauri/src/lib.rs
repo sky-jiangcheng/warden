@@ -27,9 +27,7 @@ use crate::llm::{ChatMessage, LlmClient, ModelInfo};
 use crate::provider_commands::{
     ChatChunk, ConnectionTest, ProviderInput, ProviderList, ProviderView, describe_llm_error,
 };
-use crate::providers::{
-    Provider, ProviderStore, delete_api_key, load_api_key, slugify, store_api_key,
-};
+use crate::providers::{Provider, ProviderStore, slugify};
 use crate::repos::{RepoScan, RepoStore};
 
 /// What the first screen needs: which model providers are configured, whether
@@ -270,8 +268,8 @@ fn provider_save(
     let (mut config, _) = store.load();
 
     // A new provider takes its id from its name; an existing one keeps the
-    // id it has, because that id is the credential store's account name and
-    // changing it would orphan the stored key.
+    // id it has, because that id is the key of its entry in the keys file
+    // and changing it would orphan the stored key.
     let id = if input.id.trim().is_empty() {
         let base = slugify(&name);
         let mut candidate = base.clone();
@@ -289,12 +287,12 @@ fn provider_save(
     if input.save_api_key {
         match input.api_key.as_deref() {
             Some(key) if !key.trim().is_empty() => {
-                store_api_key(&id, key.trim())?;
+                store.store_api_key(&id, key.trim())?;
                 has_api_key = true;
             }
             _ => {
                 // An empty key with "save" checked means "remove it".
-                delete_api_key(&id)?;
+                store.delete_api_key(&id)?;
                 has_api_key = false;
             }
         }
@@ -339,7 +337,7 @@ fn provider_remove(
     }
     // The key is removed too: a credential nobody references is a secret
     // nobody rotates.
-    let _ = delete_api_key(&id);
+    let _ = store.delete_api_key(&id);
     store.save(&config)?;
     Ok(ProviderList {
         providers: config
@@ -396,7 +394,7 @@ async fn provider_fetch_models(
     // testing a key they have not saved yet.
     let key = match api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         Some(key) => Some(key.to_string()),
-        None => load_api_key(&provider.id)?,
+        None => store.load_api_key(&provider.id)?,
     };
 
     let client = LlmClient::new(&provider, key).map_err(|err| err.to_string())?;
@@ -425,7 +423,7 @@ async fn provider_test_connection(
 
     let key = match api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         Some(key) => Some(key.to_string()),
-        None => load_api_key(&provider.id)?,
+        None => store.load_api_key(&provider.id)?,
     };
 
     // Which model to test: what the user asked for, else the provider's

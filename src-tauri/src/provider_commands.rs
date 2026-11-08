@@ -163,8 +163,8 @@ pub fn store_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Provide
 /// the SAVED provider (a local Ollama on 127.0.0.1) while the form shows
 /// OpenRouter, and the user is told the wrong thing failed.
 ///
-/// Everything else about a saved provider is kept: the id (so the API key
-/// still comes from the credential store), the headers, the name.
+/// Everything else about a saved provider is kept: the id (so the API key is
+/// still found), the headers, the name.
 pub fn probe_target(
     config: &ProviderConfig,
     id: Option<&str>,
@@ -262,7 +262,7 @@ mod tests {
         )
         .expect("target");
         assert_eq!(target.base_url, "https://openrouter.ai/api/v1");
-        // The id is kept, so the key still comes from the credential store.
+        // The id is kept, so the key is still found.
         assert_eq!(target.id, "ollama");
     }
 

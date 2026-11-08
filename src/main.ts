@@ -2,7 +2,8 @@
 // Conversation state lives in chat.ts; the small desktop surface lives in
 // companion.ts. Runtime/provider/tool knowledge still comes only from Rust.
 // Stored API keys never return to the UI: a newly typed secret is passed
-// directly to the backend's operating-system credential store.
+// directly to the backend, which writes it to a 0600 file beside the provider
+// config. It is never sent back — `hasApiKey` is all the UI ever learns.
 import { listen } from "@tauri-apps/api/event";
 import { browserNote, desktop, errorText, initSheets, invoke, pick } from "./ui";
 import { initChat } from "./chat";

@@ -12,7 +12,7 @@ use crate::llm::{
 };
 use crate::mcp_client::McpSession;
 pub use crate::provider_commands::{ChatChunk, ToolEvent};
-use crate::providers::{ProviderStore, load_api_key};
+use crate::providers::ProviderStore;
 
 // Capability bindings, not a substitute for the server's tools/list.
 const CHAT_TOOL: &str = "repotory_chat";
@@ -352,12 +352,11 @@ fn prepare(store: &ProviderStore, request: &ChatRequest) -> Result<(LlmClient, S
         .trim()
         .to_string();
     nonempty(&model, "model", 500)?;
-    // This function runs on the blocking pool: both config and keyring do IO.
+    // This function runs on the blocking pool: both config and keys do IO.
     let key = if provider.has_api_key {
-        Some(
-            load_api_key(&provider.id)?
-                .ok_or("the provider's API key is missing from the keyring")?,
-        )
+        Some(store.load_api_key(&provider.id)?.ok_or(
+            "the provider's API key is missing — open the provider settings and save it again",
+        )?)
     } else {
         None
     };
