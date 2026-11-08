@@ -9,11 +9,10 @@
 # Developer ID in this repository, so today the macOS bundle is ad-hoc signed
 # and the first launch needs one command (the release body and
 # docs/troubleshooting.md both say which). Tauri's own bundler does the whole
-# job as soon as five environment variables exist — certificate, password,
-# signing identity, Apple ID, team id — so the day a certificate is bought,
-# adding those as repository secrets is the entire change. Until then the env
-# values resolve to empty strings, Tauri treats them as absent, and the build
-# is byte-for-byte what it is today.
+# job as soon as the six APPLE_* variables exist, so a step copies them out of
+# the repository secrets when a certificate is configured and prints "stays
+# ad-hoc signed" when it is not — the day a certificate is bought, adding the
+# secrets is the entire change.
 name: Release
 
 on:
@@ -121,21 +120,43 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      # Apple signing + notarisation, switched on by the presence of a
+      # certificate and off by its absence. This is a step rather than `env:`
+      # on the build step because GitHub resolves a missing secret to the empty
+      # string — and an EMPTY APPLE_CERTIFICATE is not "no certificate", it is
+      # a certificate that fails to import. Writing the variables into
+      # $GITHUB_ENV only when they have content keeps the unsigned build
+      # byte-for-byte what it was.
+      - name: Configure Apple signing when a certificate is available
+        if: matrix.platform == 'macos-latest'
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CERT}" ]; then
+            echo "No Apple certificate configured — the bundle stays ad-hoc signed."
+            echo "See docs/troubleshooting.md for what users then have to do."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=${CERT}"
+            echo "APPLE_CERTIFICATE_PASSWORD=${CERT_PASSWORD}"
+            echo "APPLE_SIGNING_IDENTITY=${SIGNING_IDENTITY}"
+            echo "APPLE_ID=${APPLE_ID_SECRET}"
+            echo "APPLE_PASSWORD=${APPLE_PASSWORD_SECRET}"
+            echo "APPLE_TEAM_ID=${TEAM_ID}"
+          } >> "$GITHUB_ENV"
+          echo "Apple signing and notarisation are ON for this run."
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Apple signing + notarisation. Empty when the secrets do not exist,
-          # which is not an error: Tauri then ad-hoc signs exactly as before.
-          # With all five set, the bundler signs the app with the Developer ID,
-          # submits it to notarytool, staples the ticket, and the DMG installs
-          # with no Gatekeeper dialog at all.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Warden ${{ github.ref_name }}
