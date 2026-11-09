@@ -202,55 +202,93 @@ fn is_loopback_host(host: &str) -> bool {
         || host.ends_with(".localhost")
 }
 
+/// The proxy decision, extracted into `resolved_proxy` below so it can be
+/// unit-tested without a live network or a `reqwest` proxy object. `proxy_for`
+/// wraps it into the `reqwest::Proxy` the client is built with.
+/// Decides the proxy URL for a provider, given the proxy settings the
+/// process started with. Returns `None` for "connect directly".
+///
+/// Two loopback rules, in order:
+///
+///   1. A loopback target host is reached directly — a proxy cannot reach
+///      the caller's own loopback.
+///   2. A remote target whose configured proxy is itself on the loopback
+///      interface is also reached directly: a dead local proxy (or one that
+///      is not running) must not block a remote request that works without
+///      it. This mirrors rule 1 and is what keeps a remote endpoint working
+///      when the system proxy points at a port nothing is listening on — the
+///      exact Clash-port-mismatch trap.
+///
+/// `NO_PROXY` exclusions are honoured for remote targets.
+fn resolved_proxy(
+    base_url: &str,
+    https_proxy: Option<&str>,
+    http_proxy: Option<&str>,
+    no_proxy: Option<&str>,
+) -> Option<String> {
+    let host = host_of(base_url).unwrap_or_default();
+    let parsed = reqwest::Url::parse(base_url).ok()?;
+    // Rule 1: a loopback target is reached directly.
+    if is_loopback_host(&host) {
+        return None;
+    }
+    let chosen = match parsed.scheme() {
+        "https" => https_proxy.or(http_proxy),
+        _ => http_proxy.or(https_proxy),
+    }?;
+    // The user's exclusion list is honoured.
+    if let Some(list) = no_proxy
+        && host_is_excluded(&host, list)
+    {
+        return None;
+    }
+    // Rule 2: a loopback proxy is skipped — connect directly.
+    if let Ok(proxy_url) = reqwest::Url::parse(chosen)
+        && let Some(proxy_host) = proxy_url.host_str()
+        && is_loopback_host(proxy_host)
+    {
+        return None;
+    }
+    Some(chosen.to_string())
+}
+
 /// The proxy to use for a provider.
 ///
 /// Two rules, in this order:
-//
-//   1. A loopback provider is reached directly. The proxy cannot reach it.
+///
+///   1. A loopback provider is reached directly. The proxy cannot reach it.
 ///   2. Everything else goes through the proxy named by the environment
 ///      (`HTTPS_PROXY` for https, `HTTP_PROXY` for http), because that is
 ///      how a user behind a corporate network or in a region with a
-//      firewall reaches OpenRouter. `NO_PROXY` is honoured, so a host the
-//      user excluded stays excluded.
-//
-// The client is built per provider rather than shared, because the decision
+///      firewall reaches OpenRouter. `NO_PROXY` is honoured, so a host the
+///      user excluded stays excluded. A proxy that is itself on the loopback
+///      interface (a dead local proxy) is skipped, so it cannot block a
+///      remote request that works without it.
+///
+/// The client is built per provider rather than shared, because the decision
 /// depends on the provider's host. `Proxy::custom` also disables reqwest's
 /// automatic system proxy, which is what we want: the environment variables
-// are read here instead, and the rule above is applied on top of them.
+/// are read here instead, and the rule above is applied on top of them.
 fn proxy_for(provider: &Provider) -> reqwest::Proxy {
-    let host = host_of(provider.normalized_base_url()).unwrap_or_default();
-    let no_proxy = std::env::var("NO_PROXY")
-        .or_else(|_| std::env::var("no_proxy"))
-        .ok();
-
-    if is_loopback_host(&host) {
-        // `Proxy::custom` returning `None` means "connect directly".
-        return reqwest::Proxy::custom(|_url| None::<reqwest::Url>);
-    }
-
     let https_proxy = std::env::var("HTTPS_PROXY")
         .or_else(|_| std::env::var("https_proxy"))
         .ok();
     let http_proxy = std::env::var("HTTP_PROXY")
         .or_else(|_| std::env::var("http_proxy"))
         .ok();
+    let no_proxy = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .ok();
 
-    reqwest::Proxy::custom(move |url: &reqwest::Url| {
-        let scheme = url.scheme();
-        let chosen = match scheme {
-            "https" => https_proxy.clone().or_else(|| http_proxy.clone()),
-            _ => http_proxy.clone().or_else(|| https_proxy.clone()),
-        }?;
-        // The exclusion list is applied here rather than left to the
-        // environment's own matcher, so that a host the user excluded is
-        // reached directly.
-        if let Some(list) = &no_proxy
-            && host_is_excluded(url.host_str().unwrap_or_default(), list)
-        {
-            return None;
-        }
-        reqwest::Url::parse(&chosen).ok()
-    })
+    match resolved_proxy(
+        provider.normalized_base_url(),
+        https_proxy.as_deref(),
+        http_proxy.as_deref(),
+        no_proxy.as_deref(),
+    ) {
+        None => reqwest::Proxy::custom(|_url| None::<reqwest::Url>),
+        Some(url) => reqwest::Proxy::custom(move |_url| reqwest::Url::parse(&url).ok()),
+    }
 }
 
 /// The host part of a URL.
@@ -1049,5 +1087,56 @@ mod tests {
         assert!(host_is_excluded("anything", "*"));
         assert!(!host_is_excluded("example.com", "other.com"));
         assert!(!host_is_excluded("notexample.com", "example.com"));
+    }
+
+    /// A remote provider whose only configured proxy is a loopback address
+    /// (a dead local proxy, or a developer-box proxy that is not running)
+    /// must fall back to a direct connection rather than be blocked by the
+    /// dead proxy. This mirrors the loopback-target rule and is what keeps a
+    /// remote endpoint working when the system proxy points at a port
+    /// nothing is listening on.
+    #[test]
+    fn a_remote_provider_skips_a_loopback_proxy() {
+        // Remote target, loopback https proxy -> direct.
+        assert_eq!(
+            resolved_proxy(
+                "https://openrouter.ai/api/v1",
+                Some("http://127.0.0.1:7897"),
+                None,
+                None
+            ),
+            None
+        );
+        // Remote target, loopback http proxy -> direct.
+        assert_eq!(
+            resolved_proxy(
+                "http://example.com/v1",
+                None,
+                Some("http://127.0.0.1:7897"),
+                None
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_remote_provider_uses_a_non_loopback_proxy() {
+        assert_eq!(
+            resolved_proxy(
+                "https://openrouter.ai/api/v1",
+                Some("http://10.0.0.1:8080"),
+                None,
+                None
+            ),
+            Some("http://10.0.0.1:8080".to_string())
+        );
+    }
+
+    #[test]
+    fn a_remote_provider_without_a_proxy_is_direct() {
+        assert_eq!(
+            resolved_proxy("https://openrouter.ai/api/v1", None, None, None),
+            None
+        );
     }
 }
