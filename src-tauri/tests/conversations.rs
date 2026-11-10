@@ -459,11 +459,12 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
     let tools = reply["tools"].as_array().unwrap();
     assert_eq!(
         tools.len(),
-        2,
+        3,
         "only whitelisted read-only tools are offered"
     );
     assert_eq!(tools[0]["function"]["name"], "repotory_metrics");
     assert_eq!(tools[1]["function"]["name"], "repotory_projects_list");
+    assert_eq!(tools[2]["function"]["name"], "repotory_context");
     assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
 
     // The persisted reply is that same second-round text.
@@ -504,6 +505,40 @@ async fn the_watchlist_is_named_in_the_system_prompt_as_wardens_own_list() {
     // The distinction is the point: the two lists must not be conflated.
     assert!(prompt.contains("watchlist"), "{prompt}");
     assert!(prompt.contains("NOT the same"), "{prompt}");
+}
+
+/// `repotory_context` answers with a PLAIN-TEXT briefing — its server-side
+/// handler returns a string, not JSON. Warden used to parse every model tool
+/// answer as JSON, so the model was handed "returned invalid JSON: expected
+/// value at line 1 column 1" for a perfectly healthy Cinder. The prose must
+/// reach the model verbatim.
+#[tokio::test]
+async fn a_plain_text_tool_answer_reaches_the_model_verbatim() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "/repo/one").await;
+    let mut req = request("m5", "what is this project about?");
+    req.model = Some("tools:repotory_context".into());
+    let (result, chunks) = f.send(req).await;
+    result.expect("send");
+
+    let events: Vec<&ToolEvent> = chunks.iter().filter_map(|c| c.tool_call.as_ref()).collect();
+    assert_eq!(events.len(), 2);
+    assert!(
+        events[1].ok,
+        "the prose answer must not be refused: {:?}",
+        events[1].error
+    );
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool result message");
+    assert_eq!(
+        tool_message["content"].as_str().unwrap(),
+        "Project: warden\nTech stack: Rust + TypeScript\nRecent commits: 3 today"
+    );
 }
 
 /// A tool whose answer is a JSON ARRAY — the real `repotory_projects_list`

@@ -61,6 +61,8 @@ fn serve_chat() {
                      "inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"Optional repository path"}}}},
                     {"name":"repotory_projects_list","description":"List all projects",
                      "inputSchema":{"type":"object","properties":{}}},
+                    {"name":"repotory_context","description":"Load a project's working context",
+                     "inputSchema":{"type":"object","properties":{"path":{"type":"string"}}}},
                     {"name":"repotory_notes_create","description":"create a note",
                      "inputSchema":{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}}
                 ]
@@ -80,6 +82,12 @@ fn serve_chat() {
                     // list serialises as [] — never an object, never null.
                     Ok(text(
                         &json!([{"id":1,"name":"cinder"},{"id":2,"name":"warden"}]).to_string(),
+                    ))
+                } else if name == "repotory_context" {
+                    // The real Cinder contract: a PLAIN-TEXT briefing, not
+                    // JSON — BuildProjectContext returns a string.
+                    Ok(text(
+                        "Project: warden\nTech stack: Rust + TypeScript\nRecent commits: 3 today",
                     ))
                 } else if name == "repotory_notes_create" {
                     // The marker the whitelist test watches for: it must NEVER
@@ -244,6 +252,14 @@ fn serve() {
             if request.contains("\"name\":\"refuse\"") {
                 format!(
                     r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32000,"message":"{TOOL_ERROR}"}}}}"#
+                )
+            } else if request.contains("\"name\":\"refuse_inband\"") {
+                // The protocol's OTHER failure face: a healthy transport, a
+                // result that says it failed — how mcp-go answers an
+                // input-schema violation. The client must not read it as a
+                // completed call.
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"isError":true,"content":[{{"type":"text","text":"input validation failed: project_id must be a number"}}]}}}}"#
                 )
             } else {
                 format!(

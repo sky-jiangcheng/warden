@@ -173,7 +173,15 @@ that names a tool outside the whitelist (including write tools the server advert
 **persisting the reply is Warden's own job, and a model that could append would double-write the very
 conversation it is answering**. The round cap is 5, after which one final text-only round is forced.
 A tool call shows in the conversation as a "calling / done" status line only, **never written into
-`repotory_chat`** — it is a UI-layer event, not a conversation artifact. **The two project lists are
+`repotory_chat`** — it is a UI-layer event, not a conversation artifact. **A model tool's answer
+travels verbatim; the client invents no shape** (added 2026-11-10): the server's tool face is not one
+uniform JSON contract — `repotory_context` answers with a plain-text briefing, `repotory_projects_list`
+with a JSON array, the rest with objects, and an argument-validation refusal is a plain sentence.
+Warden used to parse every answer as JSON, so a healthy Cinder was reported to the model as
+`returned invalid JSON` — **the model reads prose and JSON alike; parsing for it is copying a contract
+that will drift**. Only the internal `repotory_chat` path still requires a JSON object: every one of its
+answers is read by field (`threads` / `thread.id` / `messages`), and anything else is a broken server.
+**The two project lists are
 named apart in the system prompt** (added 2026-11-10): Warden's own watchlist (the directories the user
 adopted from the disk scan, read from `repos.json` at send time) and Cinder's starred projects (what
 `repotory_projects_list` answers) reply to two different questions — "what am I working on" versus "what

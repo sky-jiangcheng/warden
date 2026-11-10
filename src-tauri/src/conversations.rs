@@ -109,7 +109,59 @@ fn system_prompt(repository: Option<&str>, watched: &[String]) -> String {
     prompt
 }
 
-async fn call(session: &McpSession, name: &str, mut arguments: Value) -> Result<Value, String> {
+/// Runs one `repotory_chat` operation and parses its answer.
+///
+/// The chat path is the one place a JSON object IS the contract: every
+/// operation's answer is read by field (`threads`, `thread.id`, `messages`),
+/// so anything else is a broken server and must fail loudly.
+async fn call(session: &McpSession, name: &str, arguments: Value) -> Result<Value, String> {
+    let text = call_text(session, name, arguments).await?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Cinder {name} returned invalid JSON: {e}"))?;
+    // An object OR an array — never a bare scalar. The shape is the server's
+    // business, not ours: `repotory_projects_list` answers with a JSON array,
+    // and its own comment says an empty list must serialise as `[]`, not
+    // `null`. Requiring an object here rejected that contract outright, and
+    // the model then read a client-side error as a broken Cinder. A scalar is
+    // still refused: neither the chat path (which reads `threads`) nor the
+    // model (which reads records) can do anything with `"ok"`.
+    if !value.is_object() && !value.is_array() {
+        return Err(format!("Cinder {name} must return a JSON object or array"));
+    }
+    Ok(value)
+}
+
+/// Calls one model-facing tool and hands the answer to the model as text.
+///
+/// The server's tool face is NOT one JSON contract — it is per-tool, and
+/// inventing a client-side shape for it is how "healthy Cinder" turns into
+/// a string of client errors the model can only misread:
+///
+///   * `repotory_context` answers with a PLAIN-TEXT briefing (its handler
+///     returns `BuildProjectContext(res) string`), and argument-validation
+///     refusals on several tools are plain sentences too;
+///   * `repotory_projects_list` answers with a JSON ARRAY;
+///   * the rest answer with JSON objects.
+///
+/// So the text travels to the model verbatim — it reads prose and JSON
+/// alike, and it is the one consumer that can. Parsing here would either
+/// reject the plain-text contract (this bug, twice) or rewrite the server's
+/// answer, which the thin-client rule already forbids for tool lists and
+/// versions.
+async fn call_model_tool(
+    session: &McpSession,
+    name: &str,
+    arguments: Value,
+) -> Result<String, String> {
+    call_text(session, name, arguments).await
+}
+
+/// The transport both paths share: ensure, advertise-check, call, evict.
+async fn call_text(
+    session: &McpSession,
+    name: &str,
+    mut arguments: Value,
+) -> Result<String, String> {
     // Optional MCP strings must be omitted, not sent as JSON null: an older
     // server may validate its input schema before invoking the handler.
     if let Some(fields) = arguments.as_object_mut() {
@@ -126,20 +178,7 @@ async fn call(session: &McpSession, name: &str, mut arguments: Value) -> Result<
     }
     let answer = client.call_tool(name, arguments).await;
     session.evict_if_closed(&answer).await;
-    let text = answer.map_err(|e| format!("Cinder {name}: {e}"))?;
-    let value: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Cinder {name} returned invalid JSON: {e}"))?;
-    // An object OR an array — never a bare scalar. The shape is the server's
-    // business, not ours: `repotory_projects_list` answers with a JSON array,
-    // and its own comment says an empty list must serialise as `[]`, not
-    // `null`. Requiring an object here rejected that contract outright, and
-    // the model then read a client-side error as a broken Cinder. A scalar is
-    // still refused: neither the chat path (which reads `threads`) nor the
-    // model (which reads records) can do anything with `"ok"`.
-    if !value.is_object() && !value.is_array() {
-        return Err(format!("Cinder {name} must return a JSON object or array"));
-    }
-    Ok(value)
+    answer.map_err(|e| format!("Cinder {name}: {e}"))
 }
 
 fn nonempty(value: &str, name: &str, max: usize) -> Result<(), String> {
@@ -674,8 +713,12 @@ async fn send_inner(
                         Some(message),
                     )
                 } else {
-                    match call(session, &tool_call.name, arguments).await {
-                        Ok(value) => (value.to_string(), true, None),
+                    // The server's answer travels to the model verbatim —
+                    // prose from repotory_context, JSON from the rest. The
+                    // model reads both; a client-side parse would reject the
+                    // prose contract outright.
+                    match call_model_tool(session, &tool_call.name, arguments).await {
+                        Ok(text) => (text, true, None),
                         Err(error) => (
                             json!({"error": error.clone()}).to_string(),
                             false,

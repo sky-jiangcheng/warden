@@ -372,6 +372,13 @@ impl McpClient {
     }
 
     /// Calls one tool and returns its text content.
+    ///
+    /// An `isError: true` result is the protocol's own in-band tool failure —
+    /// the server says "this call failed" while the transport stays healthy
+    /// (mcp-go answers input-schema violations this way). It becomes an
+    /// `Err`, not a successful answer: a UI that read it as done-and-OK would
+    /// show a failed call as a completed one. The server's text is kept as
+    /// the error message, so the model can still read why it was refused.
     pub async fn call_tool(
         &self,
         name: &str,
@@ -383,6 +390,13 @@ impl McpClient {
                 serde_json::json!({ "name": name, "arguments": arguments }),
             )
             .await?;
+        if result
+            .get("isError")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(McpError::Protocol(extract_text(&result)));
+        }
         Ok(extract_text(&result))
     }
 

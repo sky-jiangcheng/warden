@@ -103,6 +103,25 @@ async fn a_server_error_reaches_the_caller_as_an_error() {
     );
 }
 
+/// The protocol's in-band failure — `result.isError` with text, how mcp-go
+/// answers an input-schema violation — is an Err too, carrying the server's
+/// own sentence. A client that read it as a completed call would show "✓ 已
+/// 完成" for a call the server refused.
+#[tokio::test]
+async fn an_in_band_tool_failure_is_an_error_with_the_server_text() {
+    let (client, _) = connect().await;
+
+    let err = client
+        .call_tool("refuse_inband", serde_json::json!({}))
+        .await
+        .expect_err("isError is a failure, not an answer");
+
+    assert!(
+        err.to_string().contains("project_id must be a number"),
+        "the error must carry the server's own text: {err}"
+    );
+}
+
 /// The client kills the server when it goes away.
 ///
 /// This matters more than it looks: the server holds the Cinder SQLite
