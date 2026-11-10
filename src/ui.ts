@@ -16,9 +16,28 @@ export function pick<T extends Element>(selector: string): T {
   return element;
 }
 
+// Rust and the OS report errors in English while the UI speaks Chinese.
+// Translate the common phrases; backend messages are never rewritten here.
+const ERROR_PHRASES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/connection refused/gi, "连接被拒绝"],
+  [/connection reset/gi, "连接被重置"],
+  [/timed?\s?out|timeout/gi, "请求超时"],
+  [/permission denied|access denied/gi, "没有权限"],
+  [/no such file or directory|not found/gi, "未找到"],
+  [/broken pipe/gi, "连接中断"],
+  [/network (?:is )?unreachable|name resolution/gi, "网络不可达"],
+  [/unauthorized|forbidden/gi, "未授权"],
+  [/invalid|malformed/gi, "格式无效"],
+  [/failed to|unable to/gi, "操作失败"],
+];
+
 export function errorText(error: unknown): string {
   if (!desktop) return browserNote;
-  return error instanceof Error ? error.message : String(error);
+  const raw = error instanceof Error ? error.message : String(error);
+  if (!/[A-Za-z]/.test(raw)) return raw;
+  let text = raw;
+  for (const [pattern, zh] of ERROR_PHRASES) text = text.replace(pattern, zh);
+  return text;
 }
 
 export function initSheets(): void {

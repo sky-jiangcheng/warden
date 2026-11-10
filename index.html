@@ -6,24 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Warden</title>
-    <script>
-      /* Apply the stored theme before first paint so a dark-session reload
-         does not flash light. main.ts owns the three-state preference; this
-         only mirrors its resolution early enough to avoid the flash. */
-      (function () {
-        if (new URLSearchParams(location.search).get("surface") === "companion") document.documentElement.dataset.surface = "companion";
-        try {
-          var pref = localStorage.getItem("warden-theme") || "system";
-          var dark =
-            pref === "dark" ||
-            (pref === "system" &&
-              window.matchMedia("(prefers-color-scheme: dark)").matches);
-          if (dark) document.documentElement.setAttribute("data-theme", "dark");
-        } catch (e) {
-          /* private mode: fall through to the light default */
-        }
-      })();
-    </script>
+    <script src="/prepaint.js"></script>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
 
@@ -46,7 +29,12 @@
       <main class="conversation" aria-label="Warden 对话">
         <div class="topic-bar"><button class="topic-title" id="topic-title" type="button" aria-haspopup="dialog" aria-controls="topics-sheet">新对话</button><span class="sync-label" id="sync-status" role="status">连接中</span><button class="text-btn" id="sync-retry" type="button" hidden>重试</button></div>
         <p class="environment-note" id="environment-note" hidden>浏览器预览 · 未连接本机服务。对话与同步需在 Warden 桌面端使用。</p>
+        <div class="environment-note memory-banner" id="memory-banner" hidden>
+          <span id="memory-banner-text"></span>
+          <span class="memory-banner__actions"><button class="text-btn" id="memory-banner-settings" type="button">去设置</button><button class="text-btn" id="memory-banner-retry" type="button" hidden>重试</button></span>
+        </div>
         <div class="chat__log" id="chat-log" tabindex="0" role="region" aria-label="对话记录">
+          <p class="chat__loading" id="chat-loading" hidden>正在读取共享主题…</p>
           <section class="chat__empty" id="chat-empty">
             <span class="empty__eyebrow">YOUR QUIET COPILOT</span><h2>留一点空间，<br />想清楚再出发。</h2><p>关于代码，关于接下来的工作。<br />从一个问题开始，我在这里。</p>
             <div class="suggestions" aria-label="开始对话的建议">
@@ -70,8 +58,8 @@
     </div>
     <!-- Settings are a PAGE in the same window, not a modal dialog. Both the
          tray's right-click menu and the quiet header button land here. -->
-    <section class="view view--settings" id="settings-view" aria-labelledby="settings-heading" hidden>
-      <header class="sheet__head"><div><span class="eyebrow">MAKE IT YOURS</span><h2 id="settings-heading">设置与连接</h2></div><button class="icon-btn" id="settings-back" type="button" aria-label="返回对话" title="返回对话">×</button></header>
+    <section class="view view--settings" id="settings-view" role="region" aria-live="polite" aria-labelledby="settings-heading" hidden>
+      <header class="sheet__head"><div><span class="eyebrow">MAKE IT YOURS</span><h2 id="settings-heading" tabindex="-1">设置与连接</h2></div><button class="icon-btn" id="settings-back" type="button" aria-label="返回对话" title="返回对话">×</button></header>
       <div class="sheet__body" id="settings-drag">
         <section class="appearance-row"><div><h3>外观</h3><p>沿用 Cinder 家族的纸与墨</p></div><button class="btn" id="theme-toggle" type="button">跟随系统</button></section>
         <section class="card card--repos">
@@ -189,6 +177,8 @@
             也直接来自这份清单。
           </p>
           <p class="meta" id="memory-path"></p>
+          <ul class="memory-tools" id="memory-tools" aria-label="记忆层工具清单"></ul>
+          <p class="meta" id="memory-version"></p>
           <p class="meta meta--error" id="memory-error"></p>
           <button class="btn" id="memory-retry" type="button" hidden>
             重试连接
@@ -231,12 +221,12 @@
         <form class="rename-form" id="topic-rename-form"><label for="topic-rename">当前主题名称</label><div class="form__row"><input class="field" id="topic-rename" maxlength="120" required /><button class="btn" id="topic-rename-save" type="submit">重命名</button></div><p class="meta meta--error" id="topic-error" role="alert"></p></form>
       </div>
     </dialog>
-    <main class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="idle">
+    <div class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="idle">
       <p class="companion__bubble" id="companion-bubble" role="status" aria-live="polite"></p>
       <div class="lantern" id="companion-drag" title="点我对话 · 拖动可移动" role="button" tabindex="0" aria-label="Warden 桌宠，点击打开对话，拖动可移动窗口">
         <img src="/src/assets/warden.png" width="80" height="80" alt="" draggable="false" />
         <span class="lantern__glow" aria-hidden="true"></span>
       </div>
-    </main>
+    </div>
   </body>
 </html>

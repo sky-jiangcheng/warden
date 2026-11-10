@@ -3,15 +3,19 @@ import { browserNote, desktop, errorText, invoke, openSheet, pick, poll } from "
 
 type Thread = { id: string; title: string; path: string | null; createdAt: string; updatedAt: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; source: string; replyTo: string | null; createdAt: string; pending?: boolean; failed?: boolean };
+// A tool call belongs to one topic's reply; different threads can generate at
+// the same time, so this state cannot live in a shared closure.
+type ToolState = { name: string; done: boolean; ok?: boolean; error?: string };
 type Topic = {
   key: string; thread: Thread | null; title: string; path: string | null;
   messages: Message[]; draft: string; busy: boolean; error: string; loaded: boolean;
   revision: number; scrollTop: number; pinned: boolean; readError: boolean;
+  tool: ToolState | null;
 };
 type Provider = { id: string; name: string; defaultModel: string | null; active: boolean };
 type Repo = { path: string; name: string; missing: boolean };
 type Model = { id: string; name: string | null };
-type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean } | null };
+type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string } | null };
 
 export function initChat() {
   const input = pick<HTMLTextAreaElement>("#chat-input");
@@ -34,10 +38,8 @@ export function initChat() {
   let composing = false;
   let compositionEnded = 0;
   let renameBusy = false;
-  // The tool call the model is waiting on right now, if any. Shown in the
-  // pending reply's meta line — the visible text restarts on each tool round
-  // (the chunk's `text` resets), so the preamble never accumulates.
-  let activeTool: string | null = null;
+  // The tool state lives on Topic (see above), not here: concurrent replies on
+  // different threads must not overwrite one shared variable.
   const modelCache = new Map<string, Model[]>();
 
   function makeTopic(thread?: Thread): Topic {
@@ -45,7 +47,7 @@ export function initChat() {
       key: thread?.id ?? crypto.randomUUID(), thread: thread ?? null,
       title: thread?.title ?? "新对话", path: thread?.path ?? null,
       messages: [], draft: "", busy: false, error: "", loaded: !thread,
-      revision: 0, scrollTop: 0, pinned: true, readError: false,
+      revision: 0, scrollTop: 0, pinned: true, readError: false, tool: null,
     };
     topics.set(topic.key, topic);
     return topic;
@@ -70,7 +72,7 @@ export function initChat() {
     send.setAttribute("aria-label", active.busy ? "正在回复，请稍候" : "发送消息");
     pick<HTMLElement>("#chat-form").setAttribute("aria-busy", String(active.busy));
     contextSelect.disabled = Boolean(active.thread) || active.messages.length > 0 || active.busy;
-    pick<HTMLElement>("#chat-chip").textContent = !desktop ? "预览模式" : active.busy ? "正在思考…" : !providerSelect.value ? "在设置中连接模型" : !modelSelect.value ? "请选择模型" : active.thread ? "由 Cinder 保存对话" : temporary(active) ? "临时单轮 · 关闭窗口后丢失" : "发送后创建共享主题";
+    pick<HTMLElement>("#chat-chip").textContent = !desktop ? "预览模式" : active.busy ? "正在思考…" : !providerSelect.value ? "在设置中连接模型" : !modelSelect.value ? "请选择模型" : active.thread ? "由 Cinder 保存对话" : temporary(active) ? "临时单轮 · 退出 Warden 后不保留" : "发送后创建共享主题";
   }
 
   function render(): void {
@@ -103,13 +105,22 @@ export function initChat() {
       // calling those "Warden" would claim another client's answer.
       const label = message.role === "user" ? "你" : message.source === "warden" ? "Warden" : "助手";
       const source = message.source && message.source !== "warden" ? ` · ${message.source}` : "";
-      const tooling = message.pending && message.role === "assistant" && activeTool ? ` · 调用 ${activeTool}` : "";
-      const meta = `${label}${source}${message.failed ? " · 未完成" : tooling}`;
+      // Only the latest assistant reply carries this topic's tool state.
+      const lastMessage = active.messages[active.messages.length - 1] === message;
+      const tool = active.tool;
+      let tooling = "";
+      if (tool && message.role === "assistant" && lastMessage) {
+        tooling = !tool.done ? ` · 调用 ${tool.name}…`
+          : tool.ok === false ? ` · ${tool.name} 失败：${tool.error ?? "未知错误"}`
+          : ` · ✓ ${tool.name} 已完成`;
+      }
+      const meta = `${label}${source}${tooling || (message.failed ? " · 未完成" : "")}`;
       if (node.firstElementChild!.textContent !== meta) node.firstElementChild!.textContent = meta;
       // Plain text is deliberate: model output, titles, paths and sources are
       // untrusted. Never interpolate them into markup, selectors, or URLs.
       if (node.lastElementChild!.textContent !== message.content) node.lastElementChild!.textContent = message.content;
     }
+    pick<HTMLElement>("#chat-loading").hidden = active.loaded || !active.thread;
     pick<HTMLElement>("#chat-empty").hidden = active.messages.length > 0 || !active.loaded;
     log.scrollTop = keepBottom ? log.scrollHeight : oldTop;
     pick<HTMLButtonElement>("#jump-latest").hidden = keepBottom || active.messages.length === 0;
@@ -177,13 +188,16 @@ export function initChat() {
   }
 
   async function fetchThreads(): Promise<void> {
+    // Snapshot each revision before the request: a local rename bumps it, and
+    // an in-flight rename must not be overwritten by an old server title.
+    const revisions = new Map([...topics.values()].map((topic) => [topic.key, topic.revision]));
     try {
       const result = await invoke<{ threads: Thread[] }>("conversation_list", { path: null });
       for (const thread of result.threads) {
         const topic = [...topics.values()].find((item) => item.thread?.id === thread.id);
         if (topic) {
           // A local rename/create/send can finish while this list is in flight.
-          if (!topic.busy && (!topic.thread || thread.updatedAt >= topic.thread.updatedAt)) {
+          if (revisions.get(topic.key) === topic.revision && !topic.busy && (!topic.thread || thread.updatedAt >= topic.thread.updatedAt)) {
             topic.thread = thread;
             topic.title = thread.title;
           }
@@ -285,7 +299,7 @@ export function initChat() {
     topic.error = "";
     topic.draft = draft;
     topic.revision += 1;
-    activeTool = null;
+    topic.tool = null;
     updateStatus();
     renderTopics();
     const messageId = crypto.randomUUID();
@@ -315,7 +329,14 @@ export function initChat() {
         if (!accepting || streamDone) return;
         if (typeof chunk.text === "string") answer.content = chunk.text;
         else answer.content += chunk.delta || "";
-        if (chunk.toolCall) activeTool = chunk.toolCall.done ? null : chunk.toolCall.name;
+        if (chunk.toolCall) {
+          topic.tool = {
+            name: chunk.toolCall.name,
+            done: chunk.toolCall.done,
+            ok: chunk.toolCall.ok,
+            error: chunk.toolCall.error,
+          };
+        }
         if (chunk.error) streamError = chunk.error;
         if (chunk.done || chunk.error) streamDone = true;
         // Captured topic, not whichever topic is visible when a late chunk arrives.
@@ -337,7 +358,14 @@ export function initChat() {
       // unsynced send; the user gets to retry the intended operation.
     } finally {
       accepting = false;
-      activeTool = null;
+      // Keep the last tool state so done / failed stays visible after the
+      // stream ends, and surface a tool failure in the alert region.
+      // The onmessage callback assigns it asynchronously, so read it back
+      // through the map instead of a control-flow-narrowed local field.
+      const finalTool = topics.get(topic.key)?.tool ?? null;
+      if (finalTool?.done && finalTool.ok === false && !topic.error) {
+        topic.error = `工具调用失败：${finalTool.name}${finalTool.error ? ` · ${finalTool.error}` : ""}。`;
+      }
       if (user) user.pending = false;
       if (assistant) assistant.pending = false;
       topic.busy = false;
@@ -409,7 +437,10 @@ export function initChat() {
     pick<HTMLElement>(id).addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || !desktop) return;
       if ((event.target as HTMLElement).closest("button, input, select, textarea, a, label")) return;
-      void invoke("window_drag").catch(() => { /* drag is best effort */ });
+      void invoke("window_drag").catch((error) => {
+        active.error = `暂时无法拖动窗口。${errorText(error)}`;
+        updateStatus();
+      });
     });
   }
   pick<HTMLFormElement>("#topic-rename-form").addEventListener("submit", (event) => {
@@ -437,6 +468,8 @@ export function initChat() {
     })();
   });
 
+  // The preview-only note stays hidden on desktop; the memory banner is
+  // driven separately from shell_status and is visible on desktop too.
   pick<HTMLElement>("#environment-note").hidden = desktop;
   providerSelect.disabled = true;
   modelSelect.disabled = true;

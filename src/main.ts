@@ -49,6 +49,8 @@ type MemoryStatus = {
   tools: MemoryTool[];
   /// Why the server could not be reached, when it is installed but silent.
   error: string | null;
+  /// Contract version from initialize.serverInfo.version, when reported.
+  version?: string;
 };
 
 type TrayStatus = {
@@ -186,57 +188,109 @@ function renderMemory(status: ShellStatus) {
   const path = pick<HTMLElement>("#memory-path");
   const error = pick<HTMLElement>("#memory-error");
   const retry = pick<HTMLButtonElement>("#memory-retry");
+  const toolsList = pick<HTMLElement>("#memory-tools");
+  const versionLine = pick<HTMLElement>("#memory-version");
+  const banner = pick<HTMLElement>("#memory-banner");
+  const bannerText = pick<HTMLElement>("#memory-banner-text");
+  const bannerRetry = pick<HTMLButtonElement>("#memory-banner-retry");
+  const memory = status.memory;
 
   error.textContent = "";
   retry.hidden = true;
+  bannerRetry.hidden = true;
+  bannerText.textContent = "";
+  banner.hidden = true;
+  toolsList.replaceChildren();
+  versionLine.textContent = "";
 
-  if (!status.memory.available) {
+  if (!memory.available) {
     setChip(chip, "未安装", "warn");
     path.textContent = "未找到 repotory-mcp —— 装上它即可接入记忆层（桌面 App 非必需）";
     retry.hidden = false;
+    banner.hidden = false;
+    bannerText.textContent = "本次对话没有记忆：本机未找到记忆层，装上它才有项目上下文依据。";
     return;
   }
 
-  path.textContent = status.memory.path ?? "";
+  path.textContent = memory.path ?? "";
 
-  if (!status.memory.connected) {
+  if (!memory.connected) {
     setChip(chip, "连不上", "warn");
-    error.textContent = status.memory.error ?? "记忆层没有应答";
+    error.textContent = memory.error ?? "记忆层没有应答";
     // The server may have been installed a moment ago; a retry is cheaper
     // than telling the user to restart the app.
     retry.hidden = false;
+    banner.hidden = false;
+    bannerRetry.hidden = false;
+    bannerText.textContent = "本次对话没有上下文依据：记忆层连不上，聊天照常可用，但模型这次没有依据。";
     return;
   }
 
-  // The count is the card's whole tool story now: the names the model can
-  // call are the server's business, and the conversation itself shows which
-  // one answered a question.
-  setChip(chip, `已连接 · ${status.memory.tools.length} 个工具`, "ok");
+  // The names and descriptions are the server's own list, not a local copy.
+  for (const tool of memory.tools) {
+    const item = document.createElement("li");
+    item.textContent = tool.name;
+    if (tool.description) item.title = tool.description;
+    toolsList.appendChild(item);
+  }
+  const version = memory.version;
+  // ADR-0048: the server reports the contract version. Warden keeps no copy
+  // and hard-codes no floor, so one reported generation has nothing to compare
+  // against: show the generation and skip the "too old" warning rather than
+  // inventing a magic number.
+  const generation = version?.match(/^v?(\d+)/)?.[1] ?? null;
+  setChip(chip, version ? `记忆层 v${version} · ${memory.tools.length} 工具` : `${memory.tools.length} 工具`, "ok");
+  versionLine.textContent = generation !== null
+    ? `契约代 ${generation} · 版本与工具清单均由服务端上报，本仓不抄一份`
+    : "契约版本未上报，本仓不猜测";
 }
 
-/// The scan as last drawn. The checkbox list is rebuilt from this payload
-/// on every render; saving reads the DOM, which is the user's current answer.
+/// The latest scan payload. The checkbox list is built from it only when the
+/// page is safe to refresh; saving reads the DOM, which is the user's answer.
 let lastScan: RepoScan | null = null;
+
+/// A checkbox whose checked state differs from its rendered default is an
+/// un-saved tick: rebuilding the list would clear it.
+function unsavedSelection(): boolean {
+  return [...document.querySelectorAll<HTMLInputElement>("#projects .project__box")]
+    .some((box) => box.checked !== box.defaultChecked);
+}
 
 /// Show one page of the main window. The window itself never changes; only
 /// which surface is visible. Used by the quiet header button, the settings
 /// back button and the tray's navigation event — one switch, no drift.
 type View = "chat" | "settings";
 function showView(view: View): void {
+  // Dialogs are body-level children; one left open would float over settings.
+  for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
   document.documentElement.dataset.view = view;
   pick<HTMLElement>("#main-surface").hidden = view !== "chat";
   pick<HTMLElement>("#settings-view").hidden = view !== "settings";
   if (view === "chat") {
+    // Leaving settings drops an editor left half-filled.
+    pick<HTMLElement>("#provider-editor").hidden = true;
+    pick<HTMLInputElement>("#field-api-key").value = "";
+    editingProviderId = null;
     pick<HTMLTextAreaElement>("#chat-input").focus();
-  } else if (lastScan) {
-    // A background scan may have published a result while the chat page
-    // was up. Show it now rather than making the user press "重新扫描".
-    renderRepos(lastScan);
+    return;
   }
+  pick<HTMLElement>("#settings-heading").focus();
+  if (!lastScan) return;
+  // A rebuild would silently clear ticks the user has not saved yet.
+  if (unsavedSelection()) {
+    pick<HTMLElement>("#projects-note").textContent = "有未保存的更改 · 点「保存所选」提交。";
+    return;
+  }
+  // A background scan only updated lastScan; draw it when nothing is unsaved.
+  renderRepos(lastScan);
 }
 
 /// Render the scan roots and the selectable project list.
-function renderRepos(scan: RepoScan) {
+function renderRepos(scan: RepoScan, preserveSelection = false) {
+  // A scan arriving while the user has ticks restores them by data-path.
+  const kept = preserveSelection
+    ? new Map([...document.querySelectorAll<HTMLInputElement>("#projects .project__box")].map((box) => [box.dataset.path ?? "", box.checked]))
+    : null;
   lastScan = scan;
   // The chat context picker offers the projects the user adopted, not every
   // checkout the scanner happened to walk past.
@@ -280,7 +334,7 @@ function renderRepos(scan: RepoScan) {
       actions.className = "root__actions";
       actions.appendChild(makeButton("移除", () => {
         void invoke<RepoScan>("repo_roots_remove", { path: root }).then(
-          (next) => renderRepos(next),
+          (next) => renderRepos(next, true),
           (err: unknown) => { pick<HTMLElement>("#repo-error").textContent = String(err); },
         );
       }));
@@ -304,7 +358,7 @@ function renderRepos(scan: RepoScan) {
     empty.textContent = "这些目录里没有 git 仓库。";
     list.appendChild(empty);
   } else {
-    for (const project of scan.projects) list.appendChild(renderProjectRow(project));
+    for (const project of scan.projects) list.appendChild(renderProjectRow(project, kept?.get(project.path)));
   }
 
   const selected = scan.projects.filter((project) => project.favorite).length;
@@ -318,7 +372,7 @@ function renderRepos(scan: RepoScan) {
 
 /// One checkbox row. A parent folder is labelled with how many checkouts it
 /// holds, so "单仓库" and "仓库的上一级" are distinguishable at a glance.
-function renderProjectRow(project: ProjectCandidate): HTMLLIElement {
+function renderProjectRow(project: ProjectCandidate, checked?: boolean): HTMLLIElement {
   const item = document.createElement("li");
   item.className = "project";
   item.dataset.path = project.path;
@@ -327,7 +381,9 @@ function renderProjectRow(project: ProjectCandidate): HTMLLIElement {
   box.type = "checkbox";
   box.className = "project__box";
   box.id = `project-${project.path.replace(/[^a-zA-Z0-9]/g, "-")}`;
-  box.checked = project.favorite;
+  // defaultChecked records the saved baseline so un-saved ticks are visible.
+  box.defaultChecked = project.favorite;
+  box.checked = checked ?? project.favorite;
   box.dataset.path = project.path;
 
   const main = document.createElement("div");
@@ -373,22 +429,20 @@ function saveProjects(): void {
 /// Load the repository screen. Never announces anything.
 async function loadRepos() {
   try {
-    renderRepos(await invoke<RepoScan>("repo_scan"));
+    renderRepos(await invoke<RepoScan>("repo_scan"), true);
   } catch (error) {
     pick<HTMLElement>("#repo-error").textContent =
       error instanceof Error ? error.message : String(error);
   }
 }
 
-/// A background scan publishes its result as data. The settings list is
-/// rebuilt silently — the user is never interrupted by a discovery.
+/// A background scan publishes its result as data only. It never rebuilds the
+/// checkbox list: that would discard un-saved selections while the user is
+/// looking at it. showView draws lastScan when the page is safe to refresh.
 async function watchForRepoChanges() {
   try {
     await listen<RepoScan>("repos:changed", (event) => {
-      // Only redraw while the user is looking at settings; a rebuild under
-      // an open checkbox list would discard un-saved selections.
-      if (document.documentElement.dataset.view === "settings") renderRepos(event.payload);
-      else lastScan = event.payload;
+      lastScan = event.payload;
     });
   } catch {
     // No backend (the frontend also runs in a plain browser).
@@ -597,6 +651,9 @@ function main() {
     } catch (error) {
       setChip(pick<HTMLElement>("#memory-chip"), "未连接", "warn");
       pick<HTMLElement>("#memory-error").textContent = errorText(error);
+      pick<HTMLElement>("#memory-banner").hidden = false;
+      pick<HTMLElement>("#memory-banner-text").textContent = "本次对话没有上下文依据：记忆层状态读取失败，聊天照常可用。";
+      pick<HTMLButtonElement>("#memory-banner-retry").hidden = false;
     } finally {
       refreshing = false;
       retry.hidden = false;
@@ -641,6 +698,13 @@ function main() {
   void listen<string>("warden:navigate", (event) => {
     showView(event.payload === "settings" ? "settings" : "chat");
   }).catch(() => { /* plain browser: no backend events */ });
+  // Rust emits window:error when hiding a surface fails; show it plainly.
+  void listen<string>("window:error", (event) => {
+    pick<HTMLElement>("#chat-error").textContent = errorText(event.payload);
+  }).catch(() => { /* plain browser: no backend events */ });
+  // Reuse the existing page switch and retry button; no new event is created.
+  pick<HTMLButtonElement>("#memory-banner-settings").addEventListener("click", () => showView("settings"));
+  pick<HTMLButtonElement>("#memory-banner-retry").addEventListener("click", () => pick<HTMLButtonElement>("#memory-retry").click());
 
   pick<HTMLFormElement>("#root-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -654,7 +718,7 @@ function main() {
     void invoke<RepoScan>("repo_roots_add", { path }).then(
       (scan: RepoScan) => {
         if (input.value.trim() === path) input.value = "";
-        renderRepos(scan);
+        renderRepos(scan, true);
       },
       (err: unknown) => { pick<HTMLElement>("#repo-error").textContent = errorText(err); },
     ).finally(() => { button.disabled = false; });
@@ -712,7 +776,7 @@ function main() {
         pick<HTMLButtonElement>("#provider-add").focus();
       },
       (err: unknown) => {
-        editorError.textContent = err instanceof Error ? err.message : String(err);
+        editorError.textContent = errorText(err);
       },
     );
   });
