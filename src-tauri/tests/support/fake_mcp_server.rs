@@ -59,6 +59,8 @@ fn serve_chat() {
                     {"name":"repotory_chat","description":"shared chat"},
                     {"name":"repotory_metrics","description":"workspace metrics",
                      "inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"Optional repository path"}}}},
+                    {"name":"repotory_projects_list","description":"List all projects",
+                     "inputSchema":{"type":"object","properties":{}}},
                     {"name":"repotory_notes_create","description":"create a note",
                      "inputSchema":{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}}
                 ]
@@ -73,6 +75,12 @@ fn serve_chat() {
                         .map(|value| text(&value.to_string()))
                 } else if name == "repotory_metrics" {
                     Ok(text(&json!({"repositoryCount":2,"totalLines":null,"commitsToday":3,"additionsToday":40,"deletionsToday":5,"notesCount":6,"pendingReviewCount":1,"refreshedAt":null}).to_string()))
+                } else if name == "repotory_projects_list" {
+                    // The real Cinder contract: a JSON ARRAY, and an empty
+                    // list serialises as [] — never an object, never null.
+                    Ok(text(
+                        &json!([{"id":1,"name":"cinder"},{"id":2,"name":"warden"}]).to_string(),
+                    ))
                 } else if name == "repotory_notes_create" {
                     // The marker the whitelist test watches for: it must NEVER
                     // appear in a reply — Warden refuses write tools client-side

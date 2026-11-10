@@ -107,8 +107,15 @@ async fn call(session: &McpSession, name: &str, mut arguments: Value) -> Result<
     let text = answer.map_err(|e| format!("Cinder {name}: {e}"))?;
     let value: Value = serde_json::from_str(&text)
         .map_err(|e| format!("Cinder {name} returned invalid JSON: {e}"))?;
-    if !value.is_object() {
-        return Err(format!("Cinder {name} must return a JSON object"));
+    // An object OR an array — never a bare scalar. The shape is the server's
+    // business, not ours: `repotory_projects_list` answers with a JSON array,
+    // and its own comment says an empty list must serialise as `[]`, not
+    // `null`. Requiring an object here rejected that contract outright, and
+    // the model then read a client-side error as a broken Cinder. A scalar is
+    // still refused: neither the chat path (which reads `threads`) nor the
+    // model (which reads records) can do anything with `"ok"`.
+    if !value.is_object() && !value.is_array() {
+        return Err(format!("Cinder {name} must return a JSON object or array"));
     }
     Ok(value)
 }

@@ -455,10 +455,11 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
     let tools = reply["tools"].as_array().unwrap();
     assert_eq!(
         tools.len(),
-        1,
+        2,
         "only whitelisted read-only tools are offered"
     );
     assert_eq!(tools[0]["function"]["name"], "repotory_metrics");
+    assert_eq!(tools[1]["function"]["name"], "repotory_projects_list");
     assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
 
     // The persisted reply is that same second-round text.
@@ -470,6 +471,43 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
             .unwrap()
             .contains("repositoryCount")
     );
+}
+
+/// A tool whose answer is a JSON ARRAY — the real `repotory_projects_list`
+/// contract — completes the round and reaches the model verbatim. Warden used
+/// to require an object from every tool and reported the array as
+/// "must return a JSON object", which the model then read as a broken Cinder.
+#[tokio::test]
+async fn an_array_tool_answer_reaches_the_model_verbatim() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "/repo/one").await;
+    let mut req = request("m3", "which repos does Cinder know?");
+    req.model = Some("tools:repotory_projects_list".into());
+    let (result, chunks) = f.send(req).await;
+    result.expect("send");
+
+    let events: Vec<&ToolEvent> = chunks.iter().filter_map(|c| c.tool_call.as_ref()).collect();
+    assert_eq!(events.len(), 2);
+    assert!(events[1].done);
+    assert!(
+        events[1].ok,
+        "the array answer must not be refused: {:?}",
+        events[1].error
+    );
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool result message");
+    let content: serde_json::Value =
+        serde_json::from_str(tool_message["content"].as_str().unwrap()).expect("tool JSON");
+    assert!(
+        content.is_array(),
+        "the array shape survives to the model: {content}"
+    );
+    assert_eq!(content[0]["name"], "cinder");
 }
 
 /// A write tool the server advertises is never offered to the model, and a
