@@ -101,6 +101,88 @@ function setChip(el: HTMLElement, text: string, variant: "ok" | "warn" | "quiet"
   el.textContent = text;
   el.classList.remove("chip--ok", "chip--warn", "chip--quiet");
   el.classList.add(`chip--${variant}`);
+  markTabState(el);
+}
+
+/// The dot on the tab that owns this chip's panel, recomputed from every status
+/// chip in that panel. A tab is a group of blocks, so one broken block makes the
+/// group broken — reading it off the DOM instead of remembering it per chip is
+/// what keeps the dot from going stale when a render downgrades a block.
+function markTabState(chip: HTMLElement): void {
+  const panel = chip.closest(".settings-panel");
+  if (!panel) return;
+  const dot = document.querySelector<HTMLElement>(
+    `.settings-tab[aria-controls="${panel.id}"] .tab__dot`,
+  );
+  if (!dot) return;
+  const states = [...panel.querySelectorAll<HTMLElement>(".card__head > .chip")];
+  const state = states.some((one) => one.classList.contains("chip--warn"))
+    ? "warn"
+    : states.some((one) => one.classList.contains("chip--ok"))
+      ? "ok"
+      : "quiet";
+  dot.dataset.state = state;
+}
+
+/// The settings page is grouped by what a block configures: 连接 / 项目 / 通用 /
+/// 关于, one panel visible at a time behind the tab strip. The last group visited
+/// is remembered — settings are opened to answer one question, and landing back
+/// where the user was is the whole point of grouping. An entry point that knows
+/// which block it points at (the memory banner means 连接) can land there directly.
+type SettingsTab = "connect" | "projects" | "general" | "about";
+const SETTINGS_TABS: readonly SettingsTab[] = ["connect", "projects", "general", "about"];
+const SETTINGS_TAB_KEY = "warden-settings-tab";
+
+function readSettingsTab(): SettingsTab {
+  try {
+    const stored = localStorage.getItem(SETTINGS_TAB_KEY);
+    if (stored && SETTINGS_TABS.includes(stored as SettingsTab)) return stored as SettingsTab;
+  } catch {
+    /* private mode: the group simply is not remembered */
+  }
+  return "connect";
+}
+
+function applySettingsTab(tab: SettingsTab): void {
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
+    const selected = button.dataset.tab === tab;
+    button.setAttribute("aria-selected", String(selected));
+    // A tablist is one tab stop: arrows move inside it, Tab leaves the strip.
+    button.tabIndex = selected ? 0 : -1;
+  }
+  for (const panel of document.querySelectorAll<HTMLElement>(".settings-panel")) {
+    panel.hidden = panel.id !== `panel-${tab}`;
+  }
+  try {
+    localStorage.setItem(SETTINGS_TAB_KEY, tab);
+  } catch {
+    /* private mode */
+  }
+}
+
+/// Wire the strip: click to switch, arrows / Home / End to walk it.
+function initSettingsTabs(): void {
+  applySettingsTab(readSettingsTab());
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
+    button.addEventListener("click", () => {
+      applySettingsTab((button.dataset.tab ?? "connect") as SettingsTab);
+    });
+  }
+  pick<HTMLElement>("#settings-tabs").addEventListener("keydown", (event) => {
+    const current = SETTINGS_TABS.indexOf(
+      (document.querySelector<HTMLButtonElement>('.settings-tab[aria-selected="true"]')?.dataset.tab ??
+        "connect") as SettingsTab,
+    );
+    const steps: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1 };
+    let next = event.key in steps ? (current + steps[event.key] + SETTINGS_TABS.length) % SETTINGS_TABS.length : -1;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = SETTINGS_TABS.length - 1;
+    if (next < 0) return;
+    event.preventDefault();
+    const tab = SETTINGS_TABS[next];
+    applySettingsTab(tab);
+    document.querySelector<HTMLButtonElement>(`.settings-tab[data-tab="${tab}"]`)?.focus();
+  });
 }
 
 /// The three-state theme preference (ADR-0050 §⑥): follow the OS, or pin
@@ -260,7 +342,7 @@ function unsavedSelection(): boolean {
 /// which surface is visible. Used by the quiet header button, the settings
 /// back button and the tray's navigation event — one switch, no drift.
 type View = "chat" | "settings";
-function showView(view: View): void {
+function showView(view: View, tab?: SettingsTab): void {
   // Dialogs are body-level children; one left open would float over settings.
   for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
   document.documentElement.dataset.view = view;
@@ -274,6 +356,9 @@ function showView(view: View): void {
     pick<HTMLTextAreaElement>("#chat-input").focus();
     return;
   }
+  // An entry point that names a block (the memory banner means 连接) lands on
+  // its group; anything else opens the remembered one.
+  applySettingsTab(tab ?? readSettingsTab());
   pick<HTMLElement>("#settings-heading").focus();
   if (!lastScan) return;
   // A rebuild would silently clear ticks the user has not saved yet.
@@ -631,6 +716,7 @@ function main() {
     return;
   }
   initSheets();
+  initSettingsTabs();
   chat = initChat();
   // The "new repository" bubble stays a top-level surface. Moving it into the
   // repository sheet (a closed <dialog>) meant the question never appeared
@@ -703,7 +789,9 @@ function main() {
     pick<HTMLElement>("#chat-error").textContent = errorText(event.payload);
   }).catch(() => { /* plain browser: no backend events */ });
   // Reuse the existing page switch and retry button; no new event is created.
-  pick<HTMLButtonElement>("#memory-banner-settings").addEventListener("click", () => showView("settings"));
+  // The banner is about the memory layer, so it lands on 连接, not on whatever
+  // group the user last visited.
+  pick<HTMLButtonElement>("#memory-banner-settings").addEventListener("click", () => showView("settings", "connect"));
   pick<HTMLButtonElement>("#memory-banner-retry").addEventListener("click", () => pick<HTMLButtonElement>("#memory-retry").click());
 
   pick<HTMLFormElement>("#root-form").addEventListener("submit", (event) => {

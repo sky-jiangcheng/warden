@@ -103,7 +103,7 @@ Access**, search `repotory-agent`, delete. Warden no longer reads or writes it.
 No migration was written, because **reading the old entry once means showing that password dialog once** — the
 only way not to ask is not to read.
 
-**What to do.** Settings → that provider → paste the API key again → save. Once. It will not ask again.
+**What to do.** Settings → the "连接" (Connections) tab → that provider → paste the API key again → save. Once. It will not ask again.
 
 ---
 

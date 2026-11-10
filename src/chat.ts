@@ -432,8 +432,10 @@ export function initChat() {
     void invoke("companion_hide_chat").catch((error) => { active.error = `暂时无法收起。${errorText(error)}`; updateStatus(); });
   });
   // The window is borderless, so its header is the drag handle. Controls
-  // inside the header keep their own clicks: only empty space drags.
-  for (const id of ["#main-drag", "#settings-drag"]) {
+  // inside the header keep their own clicks: only empty space drags. The
+  // settings tab strip belongs to that same band, so it drags too — and the
+  // button guard means clicking a tab never does.
+  for (const id of ["#main-drag", "#settings-tabs", "#settings-drag"]) {
     pick<HTMLElement>(id).addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || !desktop) return;
       if ((event.target as HTMLElement).closest("button, input, select, textarea, a, label")) return;

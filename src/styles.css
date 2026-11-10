@@ -940,8 +940,56 @@ body { background: transparent; }
 }
 .view--settings[hidden] { display: none !important; }
 .view--settings .sheet__head { background: var(--bg-page); }
-.view--settings .sheet__body { flex: 1; min-height: 0; padding-top: 18px; }
+.view--settings .sheet__body { flex: 1; min-height: 0; padding-top: 8px; }
 .view--settings .sheet::backdrop { display: none; }
+/* The settings tab strip: one hairline row under the head, the active tab held
+   up by an accent underline (the family's single saturated colour). Tabs are
+   labels for what is below, not navigation away — so the strip stays inside
+   the scroll surface's border box and never scrolls itself. */
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-page);
+  flex-shrink: 0;
+}
+.settings-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 120ms ease;
+}
+.settings-tab:hover { color: var(--text-primary); }
+.settings-tab[aria-selected="true"] { color: var(--text-primary); }
+.settings-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+.settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The state dot mirrors the chips inside the panel: warn when any block there
+   is broken, ok when at least one is working, otherwise invisible. Quiet by
+   default — a strip of dots is decoration, not information. */
+.tab__dot { width: 5px; height: 5px; border-radius: 50%; background: transparent; flex-shrink: 0; }
+.tab__dot[data-state="ok"] { background: var(--success); }
+.tab__dot[data-state="warn"] { background: var(--warning); }
+.settings-panel > .card:first-child { border-top: 0; }
+.settings-panel > .appearance-row:first-child { padding-top: 14px; }
 .icon-btn--quiet { opacity: .55; }
 .icon-btn--quiet:hover, .icon-btn--quiet:focus-visible { opacity: 1; }
 
