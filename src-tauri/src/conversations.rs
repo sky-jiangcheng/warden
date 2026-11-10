@@ -73,7 +73,17 @@ async fn model_tools(session: &McpSession) -> Result<Vec<ToolSpec>, String> {
 
 /// The system prompt for a tool-enabled conversation. Short on purpose: the
 /// context budget is small and the tools describe themselves.
-fn system_prompt(repository: Option<&str>) -> String {
+///
+/// `watched` is Warden's own watchlist — the projects the user adopted from
+/// the copilot's disk scan. It is a DIFFERENT list from Cinder's starred
+/// projects (`repotory_projects_list`), and the two answer different
+/// questions: the watchlist is "what the user is working on now", the starred
+/// set is "what the knowledge base has governed". Without both names in the
+/// prompt the model reads whichever tool it happens to call as THE answer to
+/// "which repositories do I watch", and the user is told their own list back
+/// wrong. Naming both, and saying which is which, costs one line and removes
+/// the confusion.
+fn system_prompt(repository: Option<&str>, watched: &[String]) -> String {
     let mut prompt = String::from(
         "You are Warden, a local copilot. Cinder, the memory layer, offers \
          read-only tools: use them for repository facts (metrics, notes, \
@@ -83,6 +93,18 @@ fn system_prompt(repository: Option<&str>) -> String {
     );
     if let Some(path) = repository.filter(|path| !path.is_empty()) {
         prompt.push_str(&format!("\nCurrent repository: {path}"));
+    }
+    if !watched.is_empty() {
+        let shown: Vec<&str> = watched.iter().map(String::as_str).take(20).collect();
+        prompt.push_str(&format!(
+            "\nThe user's Warden watchlist (their adopted projects from this \
+             machine's disk scan — Warden's own list, NOT the same as \
+             Cinder's starred projects from repotory_projects_list): {}. \
+             When asked which projects the user watches, answer from the \
+             watchlist; when citing Cinder's list, say it is the memory \
+             layer's.",
+            shown.join(", ")
+        ));
     }
     prompt
 }
@@ -285,6 +307,10 @@ pub struct ChatRequest {
     pub provider_id: Option<String>,
     pub thread_id: Option<String>,
     pub message_id: String,
+    /// Warden's own watchlist — the adopted project paths from the copilot's
+    /// disk scan. Read-only here: the command layer passes what RepoStore
+    /// holds at the moment the request starts.
+    pub watched: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -519,7 +545,10 @@ async fn send_inner(
             let tools = model_tools(session).await?;
             if !tools.is_empty() {
                 let repository = value["thread"]["path"].as_str().map(|p| p.to_string());
-                context.insert(0, ChatMessage::system(system_prompt(repository.as_deref())));
+                context.insert(
+                    0,
+                    ChatMessage::system(system_prompt(repository.as_deref(), &request.watched)),
+                );
             }
             (context, tools)
         } else {
@@ -753,6 +782,7 @@ mod tests {
             thread_id: Some("a".into()),
             model: None,
             provider_id: None,
+            watched: Vec::new(),
         };
         let guard = state.acquire(&request).unwrap();
         assert!(state.acquire(&request).is_err());

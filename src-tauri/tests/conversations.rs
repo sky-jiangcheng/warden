@@ -104,6 +104,7 @@ fn request(id: &str, message: &str) -> ChatRequest {
         thread_id: Some(THREAD.into()),
         model: None,
         provider_id: None,
+        watched: Vec::new(),
     }
 }
 fn answer(chunks: &[ChatChunk]) -> Value {
@@ -425,6 +426,9 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
         .find(|m| m["role"] == "system")
         .expect("system prompt");
     assert!(system["content"].as_str().unwrap().contains("/repo/one"));
+    // An empty watchlist adds nothing: the prompt must not claim a list the
+    // user never adopted.
+    assert!(!system["content"].as_str().unwrap().contains("watchlist"));
     // The assistant echo carries the calls it made; the tool result names the
     // same id and holds what the fake MCP answered.
     let echo = messages
@@ -471,6 +475,35 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
             .unwrap()
             .contains("repositoryCount")
     );
+}
+
+/// The watchlist is Warden's own list and Cinder's starred projects are the
+/// memory layer's; the system prompt names both apart so "which repos do I
+/// watch" cannot be answered with the wrong one.
+#[tokio::test]
+async fn the_watchlist_is_named_in_the_system_prompt_as_wardens_own_list() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "/repo/one").await;
+    let mut req = request("m4", "which repos do I watch?");
+    req.model = Some("tools".into());
+    req.watched = vec!["/work/alpha".into(), "/work/beta".into()];
+    let (result, chunks) = f.send(req).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let system = messages
+        .iter()
+        .find(|m| m["role"] == "system")
+        .expect("system prompt");
+    let prompt = system["content"].as_str().unwrap();
+    assert!(
+        prompt.contains("/work/alpha") && prompt.contains("/work/beta"),
+        "{prompt}"
+    );
+    // The distinction is the point: the two lists must not be conflated.
+    assert!(prompt.contains("watchlist"), "{prompt}");
+    assert!(prompt.contains("NOT the same"), "{prompt}");
 }
 
 /// A tool whose answer is a JSON ARRAY — the real `repotory_projects_list`

@@ -173,7 +173,13 @@ that names a tool outside the whitelist (including write tools the server advert
 **persisting the reply is Warden's own job, and a model that could append would double-write the very
 conversation it is answering**. The round cap is 5, after which one final text-only round is forced.
 A tool call shows in the conversation as a "calling / done" status line only, **never written into
-`repotory_chat`** — it is a UI-layer event, not a conversation artifact. A temporary conversation
+`repotory_chat`** — it is a UI-layer event, not a conversation artifact. **The two project lists are
+named apart in the system prompt** (added 2026-11-10): Warden's own watchlist (the directories the user
+adopted from the disk scan, read from `repos.json` at send time) and Cinder's starred projects (what
+`repotory_projects_list` answers) reply to two different questions — "what am I working on" versus "what
+has the knowledge base governed" — and a model shown only one of them will answer "which repositories do
+I watch" in the wrong register. When the watchlist is empty the passage does not appear at all: no list
+is invented. A temporary conversation
 without Cinder carries no tools and no system prompt; its single-turn contract is unchanged.
 
 **③ The numbers are still asked for in the conversation, never computed on the spot, and they no longer

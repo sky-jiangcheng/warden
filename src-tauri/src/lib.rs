@@ -527,6 +527,12 @@ async fn chat_send<R: tauri::Runtime>(
     // generation loop stops and the answer is never persisted to Cinder.
     let disconnected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag = std::sync::Arc::clone(&disconnected);
+    // The watchlist travels with the request so the system prompt can name
+    // it: Warden's adopted projects are a different list from Cinder's
+    // starred projects, and a model that only ever sees one of them answers
+    // "which repos do I watch" with the wrong one. Read at send time, not
+    // cached — saving a selection takes effect on the next message.
+    let watched = app.state::<RepoStore>().load().0.favorites;
     let outcome = conversations::send_with_cancel(
         &app.state::<mcp_client::McpSession>(),
         &app.state::<conversations::GenerationState>(),
@@ -537,6 +543,7 @@ async fn chat_send<R: tauri::Runtime>(
             provider_id,
             thread_id,
             message_id,
+            watched,
         },
         move |chunk| {
             if channel.send(chunk).is_err() {
