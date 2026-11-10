@@ -27,6 +27,11 @@ const MODELS_TIMEOUT_SECS: u64 = 20;
 /// How long a single non-streaming chat request may take.
 const CHAT_TIMEOUT_SECS: u64 = 120;
 
+/// How long the streaming client waits to establish a connection. It has no
+/// total request budget: a long answer is bounded only by the per-chunk idle
+/// timeout, so this covers just the connect phase.
+const CONNECT_TIMEOUT_SECS: u64 = 20;
+
 /// How long the gap between two stream chunks may be before the stream is
 /// declared dead. This is not the total request budget — a long answer may
 /// legitimately take minutes — it is the "the server went quiet" budget.
@@ -344,6 +349,7 @@ fn host_is_excluded(host: &str, list: &str) -> bool {
 /// The client for one provider.
 pub struct LlmClient {
     http: reqwest::Client,
+    http_stream: reqwest::Client,
     base_url: String,
     api_key: Option<String>,
     headers: Vec<(String, String)>,
@@ -378,8 +384,17 @@ impl LlmClient {
             .proxy(proxy_for(provider))
             .build()
             .map_err(|err| LlmError::Transport(err.to_string()))?;
+        // The streaming client has NO total `.timeout`: a long answer is
+        // bounded only by the per-chunk idle timeout in `chat_stream`. Only
+        // its connect phase is bounded here.
+        let http_stream = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .proxy(proxy_for(provider))
+            .build()
+            .map_err(|err| LlmError::Transport(err.to_string()))?;
         Ok(Self {
             http,
+            http_stream,
             base_url: provider.normalized_base_url().to_string(),
             api_key,
             headers: provider
@@ -498,7 +513,7 @@ impl LlmClient {
                 serde_json::to_value(tools).map_err(|e| LlmError::Protocol(e.to_string()))?;
         }
         let request = self
-            .request(self.http.post(&url))
+            .request(self.http_stream.post(&url))
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
             .json(&body);

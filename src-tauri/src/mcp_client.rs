@@ -37,7 +37,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -86,6 +86,14 @@ type Connected = (Arc<McpClient>, Vec<ToolInfo>);
 #[derive(Default)]
 pub struct McpSession {
     connected: tokio::sync::Mutex<Option<Connected>>,
+    /// Serializes connection attempts. Only the gate holder runs the (slow)
+    /// handshake; the rest wait here and then re-read `connected`. This is a
+    /// dedicated single-flight lock, not `connected`, so an in-flight connect
+    /// never blocks evictions or status reads that only touch `connected`.
+    connecting: tokio::sync::Mutex<()>,
+    /// Consecutive requests that timed out. A wedged server whose stdout is
+    /// still open never reports `Closed`, so three timeouts evict it.
+    timeouts: AtomicUsize,
 }
 
 impl McpSession {
@@ -94,6 +102,8 @@ impl McpSession {
     pub fn from_connected(client: McpClient, tools: Vec<ToolInfo>) -> Self {
         Self {
             connected: tokio::sync::Mutex::new(Some((Arc::new(client), tools))),
+            connecting: tokio::sync::Mutex::new(()),
+            timeouts: AtomicUsize::new(0),
         }
     }
 
@@ -103,14 +113,33 @@ impl McpSession {
     /// and is now, the next attempt should succeed. Caching the failure
     /// would need a retry button to be fair to the user.
     pub async fn ensure(&self) -> Result<Connected, McpError> {
-        let mut guard = self.connected.lock().await;
-        if let Some(session) = guard.as_ref() {
-            return Ok(session.clone());
+        // Fast path: a live session is only ever read behind a brief lock.
+        {
+            let guard = self.connected.lock().await;
+            if let Some(session) = guard.as_ref() {
+                return Ok(session.clone());
+            }
+        }
+        // Only one caller runs the handshake at a time. The gate, not
+        // `connected`, is held across the slow connect: `connected` itself is
+        // only ever locked for the brief swap, never across process/network
+        // IO. A failure is not cached — connected stays None for the next try.
+        let _gate = self.connecting.lock().await;
+        // Another caller may have connected while we waited for the gate.
+        {
+            let guard = self.connected.lock().await;
+            if let Some(session) = guard.as_ref() {
+                return Ok(session.clone());
+            }
         }
         let binary = crate::memory_layer::detect_mcp().ok_or(McpError::NotInstalled)?;
         let (client, tools) = McpClient::connect(&binary).await?;
         let session = (Arc::new(client), tools);
-        *guard = Some(session.clone());
+        {
+            let mut guard = self.connected.lock().await;
+            *guard = Some(session.clone());
+        }
+        self.timeouts.store(0, Ordering::Relaxed);
         Ok(session)
     }
 
@@ -132,15 +161,28 @@ impl McpSession {
         answer
     }
 
-    /// Drops a session whose answer says the server is gone, so the next
-    /// `ensure` starts it again.
+    /// Drops a dead session so the next `ensure` starts the server again.
     ///
-    /// Only `Closed` qualifies. A `Protocol` error is the server *answering*
-    /// (a tool refused the call), and a `Timeout` is a slow answer — neither
-    /// justifies killing a live connection and paying a fresh database open.
+    /// A `Closed` answer evicts immediately. A wedged server whose stdout is
+    /// still open never reports `Closed`: three consecutive `Timeout`s also
+    /// evict it, so `Drop` kills the child and the next call reconnects. Any
+    /// other answer proves the server is alive and resets the streak.
     pub(crate) async fn evict_if_closed<T>(&self, answer: &Result<T, McpError>) {
-        if matches!(answer, Err(McpError::Closed(_))) {
-            *self.connected.lock().await = None;
+        match answer {
+            Err(McpError::Closed(_)) => {
+                *self.connected.lock().await = None;
+                self.timeouts.store(0, Ordering::Relaxed);
+            }
+            Err(McpError::Timeout(_)) => {
+                let strikes = self.timeouts.fetch_add(1, Ordering::Relaxed) + 1;
+                if strikes >= 3 {
+                    *self.connected.lock().await = None;
+                    self.timeouts.store(0, Ordering::Relaxed);
+                }
+            }
+            _ => {
+                self.timeouts.store(0, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -210,6 +252,9 @@ pub struct McpClient {
     /// Pending requests, keyed by the JSON-RPC id we sent.
     pending: Pending,
     next_id: AtomicU64,
+    /// The version the server reported in the `initialize` answer. Never
+    /// hardcoded here; None when the server did not report one.
+    server_version: Option<String>,
 }
 
 impl McpClient {
@@ -264,14 +309,16 @@ impl McpClient {
             .spawn(move || read_loop(stdout, reader_pending))
             .map_err(McpError::Spawn)?;
 
-        let client = Self {
+        let mut client = Self {
             stdin: Mutex::new(stdin),
             child: Mutex::new(Some(child)),
             pending,
             next_id: AtomicU64::new(1),
+            server_version: None,
         };
 
-        client.handshake().await?;
+        let version = client.handshake().await?;
+        client.server_version = version;
         let tools = client.list_tools().await?;
         Ok((client, tools))
     }
@@ -279,20 +326,39 @@ impl McpClient {
     /// `initialize` then `notifications/initialized`.
     ///
     /// The notification carries no id, so it must not go through `request`:
-    /// a request waits for an answer, and the server sends none.
-    async fn handshake(&self) -> Result<(), McpError> {
-        self.request_with_timeout(
-            "initialize",
-            serde_json::json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": { "name": "repotory-agent", "version": env!("CARGO_PKG_VERSION") },
-            }),
-            HANDSHAKE_TIMEOUT,
-        )
-        .await?;
+    /// a request waits for an answer, and the server sends none. The
+    /// `initialize` answer carries `serverInfo.version`, which we keep; the
+    /// negotiated `protocolVersion` is only logged, never required.
+    async fn handshake(&self) -> Result<Option<String>, McpError> {
+        let result = self
+            .request_with_timeout(
+                "initialize",
+                serde_json::json!({
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": { "name": "repotory-agent", "version": env!("CARGO_PKG_VERSION") },
+                }),
+                HANDSHAKE_TIMEOUT,
+            )
+            .await?;
+        match result
+            .get("protocolVersion")
+            .and_then(|value| value.as_str())
+        {
+            Some(protocol) if protocol != PROTOCOL_VERSION => eprintln!(
+                "[mcp] server negotiated protocol {protocol}, client speaks {}",
+                PROTOCOL_VERSION
+            ),
+            None => eprintln!("[mcp] the initialize answer carried no protocolVersion"),
+            _ => {}
+        }
+        let version = result
+            .get("serverInfo")
+            .and_then(|info| info.get("version"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
         self.notify("notifications/initialized", serde_json::json!({}));
-        Ok(())
+        Ok(version)
     }
 
     /// The tool list, as the server reports it right now.
@@ -328,9 +394,14 @@ impl McpClient {
     pub fn server_pid(&self) -> Option<u32> {
         self.child
             .lock()
-            .expect("the MCP child lock is not poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|child| child.id())
+    }
+
+    /// The version the server reported at handshake, if any.
+    pub fn version(&self) -> Option<String> {
+        self.server_version.clone()
     }
 
     /// Sends a request and waits for the matching answer.
@@ -353,7 +424,7 @@ impl McpClient {
         let (tx, rx) = oneshot::channel();
         self.pending
             .lock()
-            .expect("the pending-request map is not poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .insert(id, tx);
 
         let body = serde_json::json!({
@@ -402,10 +473,7 @@ impl McpClient {
     }
 
     fn write_line(&self, line: &str) -> Result<(), McpError> {
-        let mut stdin = self
-            .stdin
-            .lock()
-            .expect("the MCP stdin lock is not poisoned");
+        let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
         use std::io::Write;
         writeln!(stdin, "{line}")
             .map_err(|err| McpError::Closed(format!("the request could not be written: {err}")))?;
@@ -417,7 +485,7 @@ impl McpClient {
     fn forget(&self, id: u64) {
         self.pending
             .lock()
-            .expect("the pending-request map is not poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .remove(&id);
     }
 }
@@ -427,21 +495,13 @@ impl Drop for McpClient {
         // The child is killed, not left to exit on its own: the server holds
         // the SQLite database open, and an orphan would keep it locked after
         // the copilot is gone.
-        if let Some(mut child) = self
-            .child
-            .lock()
-            .expect("the MCP child lock is not poisoned")
-            .take()
-        {
+        if let Some(mut child) = self.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = child.kill();
             let _ = child.wait();
         }
         // Every waiter is failed: a caller blocked on a request would wait
         // out the full timeout for an answer that can never arrive.
-        let mut pending = self
-            .pending
-            .lock()
-            .expect("the pending-request map is not poisoned");
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         for (_, tx) in pending.drain() {
             let _ = tx.send(Err(McpError::Closed(
                 "the MCP client was closed".to_string(),
@@ -521,9 +581,7 @@ fn read_loop(stdout: std::process::ChildStdout, pending: Pending) {
     }
     // The pipe closed: every waiter must be failed, or a caller would sit
     // there until its timeout for an answer that can never arrive.
-    let mut pending = pending
-        .lock()
-        .expect("the pending-request map is not poisoned");
+    let mut pending = pending.lock().unwrap_or_else(|e| e.into_inner());
     for (_, tx) in pending.drain() {
         let _ = tx.send(Err(McpError::Closed(
             "the MCP server closed its output".to_string(),
@@ -550,7 +608,7 @@ fn dispatch(line: &str, pending: &Pending) {
 
     let waiting = pending
         .lock()
-        .expect("the pending-request map is not poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .remove(&id);
     let Some(tx) = waiting else { return };
 

@@ -92,16 +92,20 @@ async fn shell_status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<She
 /// name, the Rust side owns the connection, and the answer comes back as
 /// text. The frontend never sees a process, a pipe or a port.
 ///
-/// The tool NAME comes from the caller, but the tool SET does not: the server
-/// decides which tools exist, and the frontend gets that list from
-/// `shell_status`. A name the server does not have comes back as an error
-/// from the server, which is the honest answer.
+/// Only the read-only tools in `MODEL_TOOLS` may be reached from the webview:
+/// a write tool such as `repotory_notes_create` must go through the human
+/// confirmation gate, never straight from arbitrary JS. A name outside the
+/// whitelist is rejected here before any process is touched; a name the
+/// server does not advertise still comes back as the server's honest error.
 #[tauri::command]
 async fn mcp_call_tool<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     name: String,
     arguments: serde_json::Value,
 ) -> Result<String, String> {
+    if !conversations::MODEL_TOOLS.contains(&name.as_str()) {
+        return Err(format!("tool {name} is not available from the webview"));
+    }
     app.state::<mcp_client::McpSession>()
         .call_tool(&name, arguments)
         .await
@@ -118,14 +122,32 @@ async fn mcp_call_tool<R: tauri::Runtime>(
 // product's database to know what is on this disk is not independent of
 // it, and the whole point of this product is that it stands on its own.
 
+/// Runs a repository disk scan off the IPC thread. The recursive walk is
+/// synchronous (see repos.rs), so every read/write-and-rescan command hands
+/// it to a blocking thread instead of stalling the async command executor.
+async fn run_repo_scan<F>(task: F) -> Result<RepoScan, String>
+where
+    F: FnOnce() -> Result<RepoScan, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|err| format!("the repository scan could not be completed: {err}"))?
+}
+
 /// Scans the configured roots and reports what is there.
 ///
 /// The bodies of these commands live in `repos.rs` so that the end-to-end
 /// test can drive the very same functions the IPC layer calls. A test that
 /// re-implements the command would only be testing itself.
 #[tauri::command]
-fn repo_scan(store: tauri::State<'_, RepoStore>) -> RepoScan {
-    let scan = repos::scan_now(&store);
+async fn repo_scan(store: tauri::State<'_, RepoStore>) -> Result<RepoScan, String> {
+    let store = store.inner().clone();
+    let scan = run_repo_scan(move || Ok(repos::scan_now(&store)))
+        .await
+        .unwrap_or_else(|problem| RepoScan {
+            problem: Some(problem),
+            ..Default::default()
+        });
     // The scan is logged because it is the one thing that happens without
     // the user asking: the window opens, the disk is walked, and a list
     // appears. If that list is wrong, the log is where the answer is.
@@ -135,19 +157,27 @@ fn repo_scan(store: tauri::State<'_, RepoStore>) -> RepoScan {
         scan.roots.len(),
         scan.new_repos.len()
     );
-    scan
+    Ok(scan)
 }
 
 /// Adds a scan root and reports the new scan.
 #[tauri::command]
-fn repo_roots_add(store: tauri::State<'_, RepoStore>, path: String) -> Result<RepoScan, String> {
-    repos::add_root_and_scan(&store, &path)
+async fn repo_roots_add(
+    store: tauri::State<'_, RepoStore>,
+    path: String,
+) -> Result<RepoScan, String> {
+    let store = store.inner().clone();
+    run_repo_scan(move || repos::add_root_and_scan(&store, &path)).await
 }
 
 /// Removes a scan root and reports the new scan.
 #[tauri::command]
-fn repo_roots_remove(store: tauri::State<'_, RepoStore>, path: String) -> Result<RepoScan, String> {
-    repos::remove_root_and_scan(&store, &path)
+async fn repo_roots_remove(
+    store: tauri::State<'_, RepoStore>,
+    path: String,
+) -> Result<RepoScan, String> {
+    let store = store.inner().clone();
+    run_repo_scan(move || repos::remove_root_and_scan(&store, &path)).await
 }
 
 /// Follows or unfollows a repository.
@@ -156,12 +186,13 @@ fn repo_roots_remove(store: tauri::State<'_, RepoStore>, path: String) -> Result
 /// the copilot stops announcing it and starts treating it as the user's
 /// work.
 #[tauri::command]
-fn repo_set_favorite(
+async fn repo_set_favorite(
     store: tauri::State<'_, RepoStore>,
     path: String,
     favorite: bool,
 ) -> Result<RepoScan, String> {
-    repos::set_favorite_and_scan(&store, &path, favorite)
+    let store = store.inner().clone();
+    run_repo_scan(move || repos::set_favorite_and_scan(&store, &path, favorite)).await
 }
 
 /// Marks a repository as "not this one".
@@ -170,17 +201,22 @@ fn repo_set_favorite(
 /// dismissed repository is never announced again. Without it, saying "no"
 /// once would still be asked again on the next scan.
 #[tauri::command]
-fn repo_dismiss(store: tauri::State<'_, RepoStore>, path: String) -> Result<RepoScan, String> {
-    repos::dismiss_and_scan(&store, &path)
+async fn repo_dismiss(
+    store: tauri::State<'_, RepoStore>,
+    path: String,
+) -> Result<RepoScan, String> {
+    let store = store.inner().clone();
+    run_repo_scan(move || repos::dismiss_and_scan(&store, &path)).await
 }
 
 /// Saves the projects the user selected in the settings list.
 #[tauri::command]
-fn repo_set_projects(
+async fn repo_set_projects(
     store: tauri::State<'_, RepoStore>,
     paths: Vec<String>,
 ) -> Result<RepoScan, String> {
-    repos::set_projects_and_scan(&store, &paths)
+    let store = store.inner().clone();
+    run_repo_scan(move || repos::set_projects_and_scan(&store, &paths)).await
 }
 
 /// How often the background scan looks for new repositories.
@@ -487,7 +523,11 @@ async fn chat_send<R: tauri::Runtime>(
     // The desk pet shows a thinking state even when the chat overlay has
     // been put away mid-answer. The event is broadcast, not tied to a window.
     let _ = app.emit("warden:thinking", true);
-    let outcome = conversations::send(
+    // A dead IPC channel means the webview is gone. Set a cancel flag so the
+    // generation loop stops and the answer is never persisted to Cinder.
+    let disconnected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&disconnected);
+    let outcome = conversations::send_with_cancel(
         &app.state::<mcp_client::McpSession>(),
         &app.state::<conversations::GenerationState>(),
         &app.state::<ProviderStore>(),
@@ -498,9 +538,12 @@ async fn chat_send<R: tauri::Runtime>(
             thread_id,
             message_id,
         },
-        |chunk| {
-            let _ = channel.send(chunk);
+        move |chunk| {
+            if channel.send(chunk).is_err() {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         },
+        disconnected,
     )
     .await;
     let _ = app.emit("warden:thinking", false);

@@ -168,7 +168,7 @@ pub struct ProjectCandidate {
 /// disagrees with the roots it is showing: the roots, the repositories, the
 /// newly found ones, the selectable projects and the problems all come from
 /// the same scan.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoScan {
     /// The scan roots.
@@ -187,6 +187,7 @@ pub struct RepoScan {
 }
 
 /// The watchlist on disk.
+#[derive(Clone)]
 pub struct RepoStore {
     path: PathBuf,
 }

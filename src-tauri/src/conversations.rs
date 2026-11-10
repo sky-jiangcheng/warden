@@ -2,7 +2,8 @@
 //! Only the originating Warden window receives token deltas. Other clients
 //! poll `read` for completed messages; there is no cross-IDE token stream.
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -33,7 +34,7 @@ const MAX_TITLE_CHARS: usize = 160;
 // write the very conversation it is answering; handoff and audit are the
 // memory layer's governance, not the copilot's. A write-capable face comes
 // later, behind a confirmation step.
-const MODEL_TOOLS: &[&str] = &[
+pub(crate) const MODEL_TOOLS: &[&str] = &[
     "repotory_metrics",
     "repotory_context",
     "repotory_projects_list",
@@ -207,6 +208,7 @@ struct Message {
     id: String,
     role: String,
     content: String,
+    #[serde(default)]
     source: String,
     reply_to: Option<String>,
 }
@@ -371,10 +373,35 @@ pub async fn send(
     state: &GenerationState,
     store: &ProviderStore,
     request: ChatRequest,
+    emit: impl FnMut(ChatChunk),
+) -> Result<(), String> {
+    send_with_cancel(
+        session,
+        state,
+        store,
+        request,
+        emit,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+}
+
+/// The IPC command uses this variant so a disconnected webview stops the
+/// generation: when `cancel` is set the stream loop breaks, no answer is
+/// persisted, and the error travels back through the final ChatChunk.
+pub async fn send_with_cancel(
+    session: &McpSession,
+    state: &GenerationState,
+    store: &ProviderStore,
+    request: ChatRequest,
     mut emit: impl FnMut(ChatChunk),
+    cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut text = String::new();
-    let outcome = send_inner(session, state, store, &request, &mut text, &mut emit).await;
+    let outcome = send_inner(
+        session, state, store, &request, &mut text, &mut emit, &cancel,
+    )
+    .await;
     emit(ChatChunk {
         delta: String::new(),
         text,
@@ -392,6 +419,7 @@ async fn send_inner(
     request: &ChatRequest,
     text: &mut String,
     emit: &mut impl FnMut(ChatChunk),
+    cancel: &AtomicBool,
 ) -> Result<(), String> {
     nonempty(&request.message, "message", MAX_INPUT_CHARS)?;
     nonempty(&request.message_id, "messageId", 190)?;
@@ -481,7 +509,7 @@ async fn send_inner(
             // the system prompt exists only when tools do — the no-Cinder
             // contract (no server-injected anything) stays intact. The
             // thread's path is the conversation's repository scope.
-            let tools = model_tools(session).await.unwrap_or_default();
+            let tools = model_tools(session).await?;
             if !tools.is_empty() {
                 let repository = value["thread"]["path"].as_str().map(|p| p.to_string());
                 context.insert(0, ChatMessage::system(system_prompt(repository.as_deref())));
@@ -510,12 +538,20 @@ async fn send_inner(
         let mut round: usize = 0;
         let outcome = loop {
             round += 1;
+            // A disconnected webview must not start (or continue) another
+            // paid round. The error is surfaced through the final ChatChunk.
+            if cancel.load(Ordering::Relaxed) {
+                break Err("the chat window disconnected; generation was stopped".to_string());
+            }
             // The round cap: once spent, the next call is text-only, so the
             // answer arrives in words instead of the cap silently turning
             // into an empty reply.
             let round_tools: &[ToolSpec] = if round > MAX_TOOL_ROUNDS { &[] } else { &tools };
             let streamed = match client
                 .chat_stream(&model, &messages, round_tools, |delta| {
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
                     text.push_str(delta);
                     emit(ChatChunk {
                         delta: delta.to_string(),
@@ -530,6 +566,11 @@ async fn send_inner(
                 Ok(outcome) => outcome,
                 Err(error) => break Err(error.to_string()),
             };
+            // The stream may have been cancelled mid-answer: stop before the
+            // outcome is recorded, and never persist it.
+            if cancel.load(Ordering::Relaxed) {
+                break Err("the chat window disconnected; generation was stopped".to_string());
+            }
             if streamed.tool_calls.is_empty() {
                 break if streamed.content.trim().is_empty() {
                     Err("the provider returned no answer".to_string())
@@ -555,6 +596,8 @@ async fn send_inner(
                     tool_call: Some(ToolEvent {
                         name: call.name.clone(),
                         done: false,
+                        ok: false,
+                        error: None,
                     }),
                 });
             }
@@ -585,13 +628,23 @@ async fn send_inner(
                 } else {
                     serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| json!({}))
                 };
-                let content = if !allowed {
-                    json!({"error": format!("tool {} is not available to the model", tool_call.name)})
-                        .to_string()
+                // The done event reports the real outcome: the UI reads `ok`
+                // and `error` to show success or a refusal/call failure.
+                let (content, ok, error) = if !allowed {
+                    let message = format!("tool {} is not available to the model", tool_call.name);
+                    (
+                        json!({"error": message.clone()}).to_string(),
+                        false,
+                        Some(message),
+                    )
                 } else {
                     match call(session, &tool_call.name, arguments).await {
-                        Ok(value) => value.to_string(),
-                        Err(error) => json!({"error": error}).to_string(),
+                        Ok(value) => (value.to_string(), true, None),
+                        Err(error) => (
+                            json!({"error": error.clone()}).to_string(),
+                            false,
+                            Some(error),
+                        ),
                     }
                 };
                 messages.push(ChatMessage::tool_result(tool_call.id.clone(), content));
@@ -603,6 +656,8 @@ async fn send_inner(
                     tool_call: Some(ToolEvent {
                         name: tool_call.name.clone(),
                         done: true,
+                        ok,
+                        error,
                     }),
                 });
             }

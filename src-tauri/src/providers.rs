@@ -241,7 +241,7 @@ fn write_owner_only(path: &Path, body: &str) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -249,6 +249,10 @@ fn write_owner_only(path: &Path, body: &str) -> Result<(), String> {
             .mode(0o600)
             .open(path)
             .map_err(|err| format!("the file could not be opened: {err}"))?;
+        // `.mode` only applies when the file is created; an already-existing
+        // secrets file must be narrowed explicitly too.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|err| format!("the file permissions could not be set: {err}"))?;
         file.write_all(body.as_bytes())
             .map_err(|err| format!("the file could not be written: {err}"))
     }

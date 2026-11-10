@@ -139,6 +139,11 @@ pub struct ToolEvent {
     pub name: String,
     /// False while the call executes, true once its result came back.
     pub done: bool,
+    /// True when the call completed successfully. Meaningful once `done` is
+    /// true; the UI reads it to show success or failure.
+    pub ok: bool,
+    /// The failure reason when the call was refused or errored.
+    pub error: Option<String>,
 }
 
 /// Turns a client error into something a person can act on.

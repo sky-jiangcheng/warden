@@ -47,6 +47,9 @@ pub struct MemoryLayerStatus {
     /// Why the server could not be reached, when it is installed but not
     /// answering. None when it is not installed (that case is `available`).
     pub error: Option<String>,
+    /// The version the server reported in the `initialize` answer. None until
+    /// a successful handshake, and never hardcoded in this repo.
+    pub version: Option<String>,
 }
 
 /// Where the MCP server lives, or None when it is not installed.
@@ -78,17 +81,19 @@ pub async fn status(session: &McpSession) -> MemoryLayerStatus {
             connected: false,
             tools: Vec::new(),
             error: None,
+            version: None,
         };
     };
     let path = Some(binary.display().to_string());
 
     match session.ensure().await {
-        Ok((_client, tools)) => MemoryLayerStatus {
+        Ok((client, tools)) => MemoryLayerStatus {
             available: true,
             path,
             connected: true,
             tools,
             error: None,
+            version: client.version(),
         },
         Err(err) => MemoryLayerStatus {
             available: true,
@@ -96,6 +101,7 @@ pub async fn status(session: &McpSession) -> MemoryLayerStatus {
             connected: false,
             tools: Vec::new(),
             error: Some(describe(&err)),
+            version: None,
         },
     }
 }
@@ -165,6 +171,7 @@ mod tests {
             connected: false,
             tools: Vec::new(),
             error: None,
+            version: None,
         })
         .expect("serialize");
         assert!(status.contains("\"available\":false"));
@@ -187,6 +194,7 @@ mod tests {
                 input_schema: None,
             }],
             error: None,
+            version: None,
         })
         .expect("serialize");
         assert!(connected.contains("\"connected\":true"));
@@ -199,6 +207,7 @@ mod tests {
             connected: false,
             tools: Vec::new(),
             error: Some("the MCP server did not answer in time (initialize)".to_string()),
+            version: None,
         })
         .expect("serialize");
         assert!(broken.contains("\"available\":true"));
