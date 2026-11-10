@@ -155,7 +155,9 @@ scripts/             仓库守卫脚本
   换版本要**故意**改，不要顺手改。
 - **`cargo fmt` 会重排长行**：新增测试断言后如果 CI 的 fmt job 红了，
   跑 `cargo fmt --all` 而不是手改格式。
-- **托盘是唤回入口，不是常驻**：关窗口仍然结束应用（与桌面端一致，ADR-0047 决策⑤）。
+- **托盘是唤回入口，关窗口是隐藏而不是退出**：`on_window_event` 对 `CloseRequested` 做
+  `prevent_close` + 隐藏，保住两个 webview 与正在跑的生成任务；**托盘 Quit 才真的退出**
+  （与 `docs/product.md`「常驻形态」及 `README` 一致）。
   托盘图标**必须在主线程创建**——`muda::Menu` 离开主线程会 panic，所以 `tray::install` 用
   `run_on_main_thread` 包一层。**tauri 的 `mock_app` 在单测里建不了真托盘**，
   正例只能靠运行时验证；单测只断言「未安装时 `tray.installed` 为 false」。

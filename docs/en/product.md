@@ -58,13 +58,14 @@ Five capabilities, fixed by Phase 0, plus one more ("find the repositories") add
 | **Find repositories** | **Walk the disk, list the repositories, and let the user say which ones matter** | **A new repository surfaces as a bubble; a followed one lands in the list** |
 | Chat | Talk to the model about the current project, streamed | Pick a repository + ask a question → get an answer |
 | Read project | Attach the repository path, the recent git diff, context retrieved from Cinder | Every attachment is selectable and previewable |
-| Run commands | Whitelisted tool execution; writes need human confirmation | The full command is shown, dangerous ones are blocked by default, every run is logged |
+| Run commands | Whitelisted tool execution; writes need human confirmation (**Phase 3 has not started**, see [roadmap.md](roadmap.md) M3) | The full command is shown, dangerous ones are blocked by default, every run is logged |
 | Memory panels | Current context / approved knowledge / cross-session conclusions | All three panels show real data |
-| Human confirmation | Dangerous actions never run unattended | The user sees the full command and its blast radius before confirming |
+| Human confirmation | Dangerous actions never run unattended (**Phase 3 has not started**) | The user sees the full command and its blast radius before confirming |
 
-**"Human confirmation" covers two things**: whitelisted command execution (Phase 3), and the copilot
-writing **durable knowledge** over MCP (`notes_create` / `notes_update` / `notes_organize`) — see item 5
-under "Open questions" below.
+**"Human confirmation": one half settled, one half waits for Phase 3**: the copilot
+writing **durable knowledge** over MCP (`notes_create` / `notes_update` / `notes_organize`)
+is settled (see item 5 under "Open questions" below); whitelisted command execution
+belongs to **Phase 3, which has not started** ([roadmap.md](roadmap.md) M3 is marked "not started").
 
 ## Decisions fixed in Phase 0
 
@@ -99,7 +100,8 @@ file holds only whether a key exists.
 interface — is left to the user.
 
 **The wake-up entry is in place, but the overall shape of the wake-up interaction is still undecided**: the tray icon is the current entry (left click wakes the window, right click opens the menu), and the first screen carries a "wake-up entry" card that shows in real time whether the tray is there — macOS does not let an external process query somebody else's menu-bar status item, so "is the tray actually there" can only be answered by the app itself (`tray.installed`), and when the tray fails to install the log carries a `[tray] ...` line.
-**A global shortcut and an always-visible window are not built yet** — they wait for user feedback.
+**The ⌥ Space global shortcut is registered** (`SHORTCUT` in `src-tauri/src/tray.rs`), and **the always-visible companion window has landed**
+(`index.html?surface=companion`, `alwaysOnTop`); whether the shape is adjusted further waits for user feedback.
 
 ## The memory-layer contract
 
@@ -242,7 +244,8 @@ present. The copilot's memory panels are **read-only**.
 The original question: Phase 1 of the roadmap says "auto-discover the local Cinder MCP". The options are: find the `repotory-mcp` binary on PATH, a fixed path, or a user-configured one.
 
 **How it works now**: it probes PATH plus the common install directories (`/usr/local/bin`,
-`/opt/homebrew/bin`, `~/.local/bin`) and, on a hit, **launches the child process over stdio by
+`/opt/homebrew/bin`, `~/.ollama/bin` — `find_binary` in `src-tauri/src/binaries.rs` is the truth),
+and, on a hit, **launches the child process over stdio by
 itself** — **exactly like the two IDE plugins** (VS Code / JetBrains both spawn `repotory-mcp`
 themselves, and that path already works). It then does one handshake (`initialize` →
 `notifications/initialized`), fetches the tool list with `tools/list`, and **stays resident** (the
@@ -252,7 +255,9 @@ per call).
 **Why launching by itself is right**: without a server there is no memory, and then the copilot has no
 reason to exist; while "probe but never launch" makes the first screen say "installed" — **it is
 promising something it never verified**. The first screen now tells three states apart: not installed /
-installed but not answering / connected with the server's tool list.
+installed but not answering / connected; when connected it shows the contract version the server
+reported plus the `tools/list` tool list (names and descriptions both come from the server), and the
+chip reads "记忆层 vX.Y.Z · N 工具".
 
 **Settled (2026-11-05): the chat continues, and a banner says so out loud.** When the memory layer
 cannot be reached the chat still works, but the interface has to say "this turn has no memory", and
@@ -323,5 +328,6 @@ conversation, can call the eight read-only whitelisted tools (see "the resident 
 read-only, so none of this touches the gate; the three durable-knowledge writes are **refused
 client-side** for the model and will never execute. This applies when M2
 actually writes the answer back through `repotory_handoff`.
-⑤ **Phase 0's "human confirmation" now covers two things**: whitelisted command execution (Phase 3),
-and the copilot writing durable knowledge over MCP (the three above).
+⑤ **Phase 0's "human confirmation": one half settled, one half waits for Phase 3** — the copilot
+writing durable knowledge over MCP (the three above) is settled; whitelisted command execution
+belongs to **Phase 3, which has not started** ([roadmap.md](roadmap.md) M3).
