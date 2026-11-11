@@ -235,7 +235,9 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **修掉一个把健康 Cinder 说成坏掉的 bug。** 对话里让模型查项目列表（`repotory_projects_list`）会报「must return a JSON object」，然后模型告诉你「工具端临时故障」。实际上 Cinder 这个工具按契约返回的就是 **JSON 数组**（服务端注释还专门规定空列表要序列化成 `[]`，不能是 `null`）——是 Warden 的返回值校验一刀切要求对象，把服务端自己的契约拒了。`repotory_wiki_search`、`repotory_notes_search` 返回数组的部分同样中招。现在校验接受对象或数组，裸标量仍然拒绝；fake MCP 夹具补上了这条真实数组契约，回归测试先红后绿。
+            **修掉「Cinder 没坏却被说成坏了」的最后一族。** 上一版放行了返回 JSON 数组的工具，这一版处理剩下的两类：`repotory_context` 按服务端契约返回的是**纯文本**，Warden 却仍按 JSON 解析，报「invalid JSON: expected value at line 1 column 1」让模型去怪 Cinder——现在模型工具的答案**原样传递**（文本和 JSON 都读得懂），只有对话自身的 `repotory_chat` 路径保留对象校验，因为那个答案真的按字段读。同族第二面：服务端用 `isError: true` 拒绝非法参数时，Warden 此前当成功返回，UI 显示「✓ 已完成」下面挂着拒绝文本——现在带内失败如实报错。三个新形状由 fake MCP 夹具与回归测试钉住。
+
+            **对话终于分得清「我盯的仓库」和「知识库管的项目」。** 你问「我关注哪些仓库」，模型此前只看得见 Cinder 的星标项目，把知识库清单当成了你的关注列表。现在 Warden 把自己的监视列表（设置页里你从磁盘扫描里认领的那份）随每次发送写进系统提示词，并写明这两份不是同一个东西；保存新的选择后下一条消息即生效。没有 Cinder 的临时对话契约不变。
 
             **macOS 已签名并公证。** 产物用 Developer ID Application 签名，提交 Apple 公证，票据 stapled 进包里——Gatekeeper 不再拦，拖进 `/Applications` 直接双击就开，不用再跑 `xattr -dr com.apple.quarantine`。v0.1.7 及更早的版本没签名，那几个版本才需要放行命令；这一版起不需要了。Windows 产物未签名，SmartScreen 可能要求确认。
 
