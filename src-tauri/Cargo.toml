@@ -36,11 +36,12 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-opener = "2"
 
-# The copilot announces a newly found repository through the operating
-# system's notification centre. It is the one channel that reaches the user
-# while the window is closed, which is the whole point of a resident copilot:
-# the window is not always there, the tray is.
-tauri-plugin-notification = "2"
+# No notification plugin, on purpose. Discoveries are announced in the
+# window only (the bubble in settings); the product made the opposite call
+# — see `publish_scan` in `src/lib.rs` and the Phase 2.5 section of
+# `docs/roadmap.md`. If a system-notification path is ever built, register
+# the plugin on the builder, add its capability and a test, and update the
+# docs in the same commit.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

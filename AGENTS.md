@@ -176,10 +176,9 @@ scripts/             仓库守卫脚本
   **要重新嵌入就 `cargo clean -p repotory-agent && cargo build`**（或干脆用 `tauri dev`）。
 - **插件要在 Builder 上注册，光有依赖和权限不够**：忘了 `.plugin(...)` 时，
   `app.<plugin>()` 会在第一次调用时 panic：`state() called before manage()`。
-  **现在别拿 notification 当反例**：`tauri-plugin-notification` 还留在 `Cargo.toml`，
-  但 `builder()`（`lib.rs`）只注册了 opener 与 global-shortcut，capability 里也没有它，
-  扫描载荷的测试反而断言「没有 announcement 通道」——这是待清理的工程缺口，
-  见 `docs/roadmap.md`「工程缺口」第 3 条。
+  **notification 这条已经清理**（2026-11-12，`docs/roadmap.md`「工程缺口」第 2 条销项）：
+  `tauri-plugin-notification` 已从 `Cargo.toml` 删除——产品决定是「冒泡是唯一通道」，
+  文档、capability、测试都不指向系统通知。
   **Builder 仍然是共享函数 `builder<R>()`**：别改回 `run()` 里的一条链，
   否则测试就看不见生产代码了。
 - **macOS 默认菜单只能在主线程建**：`Builder::build` 在 macOS 上会建一个默认菜单，

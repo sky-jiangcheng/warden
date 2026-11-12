@@ -217,7 +217,7 @@ acceptance criteria; no new process.
   hand-tested; one change to the chat flow can regress them.
 - **Acceptance**: land the choice from "open question 6" in [product.md](product.md) and wire it into CI.
 
-### 2. System notification: promised in docs, absent in code
+### 2. System notification: promised in docs, absent in code — closed (2026-11-12, the "remove" side)
 
 - **Problem**: Phase 2.5 and the README promised "when the window is in the background it becomes a
   system notification" (corrected 2026-11-11), but `builder()` (`src-tauri/src/lib.rs`) registers
@@ -228,6 +228,12 @@ acceptance criteria; no new process.
   the docs promise but the app cannot deliver.
 - **Acceptance**: pick one — remove the dependency and its rationale comment, or add registration,
   permission and a test and restore the docs; docs and code in the same commit.
+- **How it was closed**: the docs and the tests both stand on "no system notification" — the
+  in-window bubble is the only channel — so removing the dependency is the fix that matches the
+  product decision. `tauri-plugin-notification` is gone from `Cargo.toml` together with its
+  rationale comment, replaced by a comment explaining why it is absent; `Cargo.lock` follows.
+  If a notification path is ever built: registration, capability, test and restored docs, all in
+  the same commit.
 
 ### 3. Put macOS in CI
 
