@@ -38,7 +38,7 @@ src/                 前端（TypeScript + Vite，无框架）
   main.ts            首屏渲染：只消费后端的 shell_status，不含任何运行时知识
   styles.css         设计令牌 + 卡片/徽章/排版
   assets/warden.png  主窗品牌标记：264px 光栅，按 36px 显示（3× 只为不留放大糊边；生成物，走主仓图标生成器）
-  assets/pet/        桌宠「霜」分层帧：body + head 表情/视线 webp，同一画布对齐，CSS 交叉淡入换帧
+  assets/pet/        桌宠「霜」分层帧：body + head 表情/视线 webp，同一画布对齐，head 向下重叠裁切防接缝（warden-cat/recut_overlap.py），CSS 交叉淡入换帧
 src-tauri/           后端（Rust）
   src/lib.rs         Tauri 命令装配与窗口生命周期
   src/mcp_client.rs  MCP stdio 客户端：initialize / tools/list / tools/call
@@ -174,12 +174,14 @@ scripts/             仓库守卫脚本
   cargo 认为没什么可做的（0.4 秒就完），二进制里嵌的**还是旧的资源**。
   `touch tauri.conf.json` 也不行——tauri-build 按配置的**内容哈希**判断要不要重新生成 codegen。
   **要重新嵌入就 `cargo clean -p repotory-agent && cargo build`**（或干脆用 `tauri dev`）。
-- **插件要在 Builder 上注册，光有依赖和权限不够**：`tauri-plugin-notification` 加进 `Cargo.toml`、
-  权限写进 `capabilities/default.json`，**但忘了 `.plugin(tauri_plugin_notification::init())`** 时，
-  `app.notification()` 会 panic：`state() called before manage()`。
-  **这条现在有测试守着**：Builder 抽成了共享函数 `builder<R>()`（`lib.rs`），
-  测试用同一个函数建 app 再取 `notification()`——插件没注册就在这里 panic。
-  **别把 Builder 改回 `run()` 里的一条链**，那样测试就看不见生产代码了。
+- **插件要在 Builder 上注册，光有依赖和权限不够**：忘了 `.plugin(...)` 时，
+  `app.<plugin>()` 会在第一次调用时 panic：`state() called before manage()`。
+  **现在别拿 notification 当反例**：`tauri-plugin-notification` 还留在 `Cargo.toml`，
+  但 `builder()`（`lib.rs`）只注册了 opener 与 global-shortcut，capability 里也没有它，
+  扫描载荷的测试反而断言「没有 announcement 通道」——这是待清理的工程缺口，
+  见 `docs/roadmap.md`「工程缺口」第 3 条。
+  **Builder 仍然是共享函数 `builder<R>()`**：别改回 `run()` 里的一条链，
+  否则测试就看不见生产代码了。
 - **macOS 默认菜单只能在主线程建**：`Builder::build` 在 macOS 上会建一个默认菜单，
   它走 `muda::Submenu` → 离开主线程就 panic（`can only be created on the main thread`）。
   **单测建 app 必须 `.enable_macos_default_menu(false)`**（tauri 自己的 `mock_builder()` 也这么做）。

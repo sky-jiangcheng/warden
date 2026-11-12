@@ -150,8 +150,10 @@ plugins**. All three are landed; each has its own boundary.
 
 **① Resident = the companion window + the tray, not "the window is always on screen"**. The companion
 window is 132×128 (`index.html?surface=companion`), the main window 480×760; clicking the companion
-opens the chat. The desk pet is a white cat ("霜", Frost): a body layer and a head layer, eyes that
-follow the pointer, self-timed blinks, and a tsundere sulk when left alone. **The window holds the cat and one speech bubble, nothing else**: the metric line,
+opens the chat. The desk pet is a white cat ("霜", Frost): a body layer and a head layer cut with a fur
+overlap (the seam hides in identical fur), eyes that follow the pointer anywhere on screen (the head
+turn fades with distance, eased per-frame), self-timed blinks, and a tsundere sulk when left alone;
+reactions like a click move the whole cat while the head only tilts about the neck, so no seam opens. **The window holds the cat and one speech bubble, nothing else**: the metric line,
 the status line and the "chat" button are gone — numbers belong to the conversation (see ②), and the
 entrances are click / `⌥Space` / the tray, so a few lines of text on top of a character were just another
 layer of interface. **Only the cat body starts a
@@ -346,3 +348,56 @@ actually writes the answer back through `repotory_handoff`.
 ⑤ **Phase 0's "human confirmation": one half settled, one half waits for Phase 3** — the copilot
 writing durable knowledge over MCP (the three above) is settled; whitelisted command execution
 belongs to **Phase 3, which has not started** ([roadmap.md](roadmap.md) M3).
+
+### 6. How the frontend state machine gets tested (open)
+
+**The original question**: `src/chat.ts` / `src/main.ts` carry the state machine — dropping stale
+revisions, one send at a time, no send while an IME is composing, keeping the draft after a failure,
+de-duplicating the 2.5-second polls — and **none of it has an automated test**. `npm run build` is a
+type check, and none of the three CI gates runs a frontend test.
+
+**Open**: which layer the tests live at.
+① Extract the transitions into pure functions and test them with vitest (fast and stable; does not
+cover the DOM or `Channel` behavior);
+② vitest + jsdom with a real DOM, mocking `invoke` / `Channel` (close to real; one fake IPC to maintain);
+③ Playwright end to end (most real; slow, and the Tauri window itself is still out of reach).
+
+**Not open**: whether to test — yes; only the shape is open. The devDependency and the fourth CI
+gate wait for that choice.
+
+**Acceptance**: four paths covered — concurrent sends to one thread keep only the last, a stale
+revision is dropped, no send during IME composition, and the draft survives a failed request.
+
+### 7. What the "human confirmation" looks like on the copilot side when durable knowledge is written back (open)
+
+**Settled** (item 5): `notes_create` / `notes_update` / `notes_organize` need one human confirmation;
+approving or rejecting wiki pages always happens in Cinder Desktop, whereas this is the confirmation
+for the copilot's own durable writes.
+
+**Open**:
+① whether confirmation happens **before** the tool call or **after** the result comes back — the
+former can prevent the write, the latter can only undo it;
+② whether it is a card in the conversation or a separate panel;
+③ where the record goes (a local audit log, or a table in the memory layer that never enters retrieval);
+④ whether a timeout or a closed window means "refuse" or "park it for next time".
+
+**Acceptance**: after the model asks for one `notes_create`, an unconfirmed call never executes and
+leaves no new record in the memory layer; both confirm and refuse leave one traceable record
+(who, when, which tool, which parameters).
+
+### 8. Collapse errors from `String` into a structured type (open)
+
+**The original question**: Tauri commands and the MCP / LLM clients all return `Result<T, String>`,
+so the frontend can only print the text and cannot branch on the class of failure (not installed /
+unreachable / auth failed / timeout / contract mismatch). Logs are `eprintln!` with no fields to query.
+
+**Open**: which layer and how coarse.
+① A `thiserror` enum inside the clients, flattened back to `String` at the IPC boundary (small change,
+small frontend gain);
+② An IPC shape of `{ code, message }`, with the frontend branching on `code` and showing `message`
+(touches every command and call site);
+③ Swap logging too (`tracing` with fields) — the largest change, paid back only in debugging.
+
+**Acceptance**: the frontend takes a different action per class ("not installed" shows install
+guidance, "auth failed" opens settings), the codes have tests, and logs can be filtered by
+code / provider / thread.

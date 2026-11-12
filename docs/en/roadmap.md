@@ -123,9 +123,9 @@ The copilot goes from "one front end of Cinder" to "an independent robot on this
   "stop asking". **A dismissed repository never surfaces again** — otherwise saying "no"
   once would still be asked a second time;
 - **A bubble for new repositories**: one repository at a time (five cards at once is a
-  form, not a question). The bubble slides down from the top of the window; when the
-  window is in the background it becomes a system notification, and **clicking the
-  notification brings the window back**;
+  form, not a question). The bubble slides down from the top of the window;
+  **and that is the only channel** — no system notification, no notification action
+  (see engineering gap 2);
 - **It keeps looking while nobody is looking**: the scan runs every five minutes even
   with the window closed. That is what makes it a robot rather than a report.
 
@@ -176,7 +176,9 @@ approving always happens in the Cinder Desktop app.
 - Show model state, latency, VRAM/RAM usage;
 - Offline-mode hints.
 
-llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen already shaped the backend registry that way (see `src-tauri/src/model_backends.rs`).
+llama.cpp / MLX would arrive through the same "one base URL" route — **never a per-vendor branch**:
+a local provider and a remote provider are the same thing. The `model_backends.rs` registry was
+deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 
 ## Phase 6: distribution and shipping (1–2 weeks)
 
@@ -203,6 +205,39 @@ llama.cpp / MLX arrive as pluggable backends, never hard-coded. The first screen
 | M5 | It installs and initializes in one step | not started |
 | M6 | It ships as a standalone product | not started |
 
+## Engineering gaps (outside the milestones, 2026-11-11 review)
+
+These three belong to no phase, yet all of them block "releasable". Close them against the
+acceptance criteria; no new process.
+
+### 1. Frontend state-machine tests
+
+- **Problem**: `npm run build` is `tsc` only; none of the three CI gates runs a frontend test.
+- **Impact**: `src/chat.ts`'s revision dropping, concurrency, IME guard and draft retention are
+  hand-tested; one change to the chat flow can regress them.
+- **Acceptance**: land the choice from "open question 6" in [product.md](product.md) and wire it into CI.
+
+### 2. System notification: promised in docs, absent in code
+
+- **Problem**: Phase 2.5 and the README promised "when the window is in the background it becomes a
+  system notification" (corrected 2026-11-11), but `builder()` (`src-tauri/src/lib.rs`) registers
+  only opener and global-shortcut; `tauri-plugin-notification` sits in `Cargo.toml` with no
+  `.plugin(...)`, no capability and no call site. The scan-payload test asserts the opposite: no
+  announcement channel.
+- **Impact**: a dependency carried for nothing (bundle size, permission audit) and a wake-up path
+  the docs promise but the app cannot deliver.
+- **Acceptance**: pick one — remove the dependency and its rationale comment, or add registration,
+  permission and a test and restore the docs; docs and code in the same commit.
+
+### 3. Put macOS in CI
+
+- **Problem**: the Rust gates run on `ubuntu-latest`; the tray (`muda` main thread), the Accessory
+  policy, the template icon and `tauri build` packaging only mean anything on macOS.
+- **Impact**: pre-release verification is manual, and "is the tray there" is self-reported through
+  `tray.installed` only.
+- **Acceptance**: a macOS CI job (fmt + clippy + test + `tauri build --debug` smoke) whose failure
+  says whether compile, tests or packaging broke; signing not required.
+
 ## The trade-off
 
 Do not turn the copilot into a "full IDE" on day one. Make it a good local assistant first: open it and chat about the project, see the memory, run commands safely, continue where the last session stopped. Once that path works, consider Claude Code, Cursor, VS Code and JetBrains — or turning it into a more general local Agent platform.
@@ -210,8 +245,8 @@ Do not turn the copilot into a "full IDE" on day one. Make it a good local assis
 **The tray is in place** (ADR-0047 decision 5): it is the carrier of "close the workbench and
 an assistant is still there". The tray icon is the copilot's wake-up entry — click it to bring the
 window back, right-click for the menu (Show / Quit).
-**Closing the window still ends the app**: the tray is a wake-up entry for a process that is
-*already running*, not a "hide the window and leave only an icon" kind of residency — that trades
-one unreachable window for one unreachable process.
-**The exact wake-up interaction is still decided by user feedback** (a global shortcut and an
-always-visible window are both not built yet).
+**Closing a window hides it; only Quit in the tray exits**: `on_window_event` does
+`prevent_close` + hide on `CloseRequested`, keeping both webviews and their in-flight chat tasks
+alive — the red button must not cut off an answer (consistent with "the resident shape" in [product.md](product.md)).
+**⌥ Space is registered** (`SHORTCUT` in `src-tauri/src/tray.rs`), and **the always-visible companion
+window has landed too**; **the exact shape is still decided by user feedback**.

@@ -114,7 +114,7 @@ the first screen says *not installed* and the rest of the app still works.
 ## ✅ What runs today
 
 - **Finds the repositories itself** — scans the directories you give it every five minutes, even with the
-  window closed; a new repository surfaces as a bubble (or a system notification when the window is hidden),
+  window closed; a new repository surfaces as a bubble in the window (no system notification),
   and **a dismissed one never surfaces again**
 - **Configures any OpenAI-compatible provider** — base URL, model list fetched from the server (Warden keeps
   no copy of anyone's catalogue), a real connection test, optional extra headers
@@ -125,7 +125,9 @@ the first screen says *not installed* and the rest of the app still works.
   another client's answer
 - **A resident companion window** — 132×128, nothing in it but the cat and a one-line bubble; click it or
   press `⌥Space` to open the chat, and only the cat drags the window. The cat follows the pointer with
-  its eyes, blinks on its own, and sulks when left alone. **Closing a window hides it**
+  its eyes anywhere on screen (the head turn fades with distance), eased per-frame, blinks on its own,
+  and sulks when left alone; head and body frames overlap in fur, so a click hops the whole cat without
+  ever opening a seam at the neck. **Closing a window hides it**
   (the red button must not cut off an answer being generated); **Quit in the tray is the way out**
 - **Numbers on demand** — ask in the chat and the model calls `repotory_metrics`, which reads what memory
   **already stores**: nothing scans the disk, runs git or refreshes a cache to answer you. A scope it cannot
