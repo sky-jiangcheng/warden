@@ -247,7 +247,9 @@ impl std::error::Error for McpError {}
 /// Dropping it kills the child process: a copilot that is closing must not
 /// leave an orphaned `repotory-mcp` holding the database.
 pub struct McpClient {
-    stdin: Mutex<ChildStdin>,
+    // Shared with the blocking write task: a ChildStdin write is a blocking
+    // pipe operation and must never run on a tokio worker thread.
+    stdin: Arc<Mutex<ChildStdin>>,
     child: Mutex<Option<Child>>,
     /// Pending requests, keyed by the JSON-RPC id we sent.
     pending: Pending,
@@ -310,7 +312,7 @@ impl McpClient {
             .map_err(McpError::Spawn)?;
 
         let mut client = Self {
-            stdin: Mutex::new(stdin),
+            stdin: Arc::new(Mutex::new(stdin)),
             child: Mutex::new(Some(child)),
             pending,
             next_id: AtomicU64::new(1),
@@ -357,7 +359,8 @@ impl McpClient {
             .and_then(|info| info.get("version"))
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
-        self.notify("notifications/initialized", serde_json::json!({}));
+        self.notify("notifications/initialized", serde_json::json!({}))
+            .await;
         Ok(version)
     }
 
@@ -447,7 +450,7 @@ impl McpClient {
             "method": method,
             "params": params,
         });
-        if let Err(err) = self.write_line(&body.to_string()) {
+        if let Err(err) = self.write_line(&body.to_string()).await {
             self.forget(id);
             return Err(err);
         }
@@ -471,7 +474,7 @@ impl McpClient {
     }
 
     /// Sends a notification — a message with no id and no answer.
-    fn notify(&self, method: &str, params: serde_json::Value) {
+    async fn notify(&self, method: &str, params: serde_json::Value) {
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -481,19 +484,30 @@ impl McpClient {
         // reported to anyone. It is logged rather than dropped silently: a
         // server that never gets `initialized` will refuse the next call, and
         // the log is where that shows up.
-        if let Err(err) = self.write_line(&body.to_string()) {
+        if let Err(err) = self.write_line(&body.to_string()).await {
             eprintln!("[mcp] the {method} notification could not be sent: {err}");
         }
     }
 
-    fn write_line(&self, line: &str) -> Result<(), McpError> {
-        let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
-        use std::io::Write;
-        writeln!(stdin, "{line}")
-            .map_err(|err| McpError::Closed(format!("the request could not be written: {err}")))?;
-        stdin
-            .flush()
-            .map_err(|err| McpError::Closed(format!("the request could not be flushed: {err}")))
+    /// Writes one JSON-RPC line off the async worker pool. The pipe is a
+    /// blocking `ChildStdin`, so the write+flush runs on the blocking pool;
+    /// the mutex guard is created inside that closure and never crosses an
+    /// await. Errors still reach the caller, so a dead server is reported.
+    async fn write_line(&self, line: &str) -> Result<(), McpError> {
+        let stdin = Arc::clone(&self.stdin);
+        let body = line.to_owned();
+        let written = tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            let mut guard = stdin.lock().unwrap_or_else(|e| e.into_inner());
+            writeln!(guard, "{body}")
+                .map_err(|err| format!("the request could not be written: {err}"))?;
+            guard
+                .flush()
+                .map_err(|err| format!("the request could not be flushed: {err}"))
+        })
+        .await
+        .map_err(|err| McpError::Closed(format!("the write task failed: {err}")))?;
+        written.map_err(McpError::Closed)
     }
 
     fn forget(&self, id: u64) {
