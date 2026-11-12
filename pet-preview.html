@@ -1,0 +1,72 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>桌宠「霜」· 预览</title>
+<link rel="stylesheet" href="/src/styles.css">
+<style>
+/* Harness layout only — every pet rule comes from the real stylesheet, so
+   this page cannot drift from the app. */
+body{margin:0;background:#F4F2EE;font-family:-apple-system,sans-serif}
+.row{display:flex;gap:26px;padding:24px;flex-wrap:wrap;align-items:flex-end}
+.cell{text-align:center}
+.cell .pet{width:220px;height:220px}
+.lbl{font-size:12px;color:#57524A;margin-top:8px}
+.note{padding:16px 24px 0;font-size:13px;color:#57524A}
+</style></head><body>
+<p class="note">浏览器预览 · 复用 src/styles.css 真实规则。最后一格移动鼠标可试视线跟随。</p>
+<div class="row" id="row"></div>
+<script>
+const views=[
+ ['idle','neutral','中性 idle'],
+ ['curious','neutral','好奇 curious'],
+ ['happy','neutral','开心 happy'],
+ ['tsundere','neutral','傲娇 tsundere'],
+ ['thinking','neutral','思考 thinking'],
+ ['surprised','neutral','惊讶 surprised'],
+ ['idle','upleft','视线 upleft'],
+ ['idle','upright','视线 upright'],
+ ['idle','downleft','视线 downleft'],
+ ['idle','downright','视线 downright'],
+ ['idle','blink','眨眼 blink'],
+ ['idle','sleepy','半眯 sleepy'],
+];
+function petHTML(mood,look){
+ return `<div class="pet" data-look="${look}" data-mood="${mood}">
+  <span class="pet__halo"></span><span class="pet__shadow"></span>
+  <div class="pet__body"><img class="pet__body-frame" src="/src/assets/pet/body-expr-neutral.webp"></div>
+  <div class="pet__head">
+   <img class="pet__frame pet__frame--neutral" src="/src/assets/pet/head-expr-neutral.webp">
+   <img class="pet__frame pet__frame--curious" src="/src/assets/pet/head-expr-curious.webp">
+   <img class="pet__frame pet__frame--happy" src="/src/assets/pet/head-expr-happy.webp">
+   <img class="pet__frame pet__frame--tsundere" src="/src/assets/pet/head-expr-tsundere.webp">
+   <img class="pet__frame pet__frame--thinking" src="/src/assets/pet/head-expr-thinking.webp">
+   <img class="pet__frame pet__frame--surprised" src="/src/assets/pet/head-expr-surprised.webp">
+   <img class="pet__frame pet__frame--upleft" src="/src/assets/pet/head-eyes-upleft.webp">
+   <img class="pet__frame pet__frame--upright" src="/src/assets/pet/head-eyes-upright.webp">
+   <img class="pet__frame pet__frame--downleft" src="/src/assets/pet/head-eyes-downleft.webp">
+   <img class="pet__frame pet__frame--downright" src="/src/assets/pet/head-eyes-downright.webp">
+   <img class="pet__frame pet__frame--blink" src="/src/assets/pet/head-eyes-blink.webp">
+   <img class="pet__frame pet__frame--sleepy" src="/src/assets/pet/head-eyes-sleepy.webp">
+  </div></div>`;
+}
+const row=document.getElementById('row');
+for(const [mood,look,lbl] of views){
+ const d=document.createElement('div');d.className='cell';
+ d.innerHTML=petHTML(mood,look)+`<div class="lbl">${lbl}</div>`;
+ row.appendChild(d);
+}
+const live=document.createElement('div');live.className='cell';
+live.innerHTML=petHTML('idle','neutral')+`<div class="lbl">视线跟随 · 移动鼠标</div>`;
+row.appendChild(live);
+const pet=live.querySelector('.pet');
+let h='left',v='up';
+addEventListener('mousemove',(e)=>{
+ const r=pet.getBoundingClientRect();
+ const x=e.clientX-(r.left+r.width/2), y=e.clientY-(r.top+r.height/2);
+ const nx=Math.max(-1,Math.min(1,x/150)), ny=Math.max(-1,Math.min(1,y/150));
+ pet.style.setProperty('--look-x',nx.toFixed(3));
+ pet.style.setProperty('--look-y',ny.toFixed(3));
+ if(Math.abs(x)<6&&Math.abs(y)<6){pet.dataset.look='neutral';return;}
+ if(Math.abs(x)>=6)h=x<0?'left':'right';
+ if(Math.abs(y)>=6)v=y<0?'up':'down';
+ pet.dataset.look=v+h;
+});
+</script></body></html>

@@ -617,6 +617,49 @@ fn window_drag<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) -> Result<(),
     window.start_dragging().map_err(|e| e.to_string())
 }
 
+/// Where the pointer is on the screen, in physical pixels, together with the
+/// pet window's own position and size.
+///
+/// The desk pet looks at the cursor, but a webview only learns about the
+/// pointer while it is over the window — and the pet is small and always on
+/// top, so it is almost never under the pointer. The screen coordinates have
+/// to come from the OS instead.
+///
+/// Both numbers come from the same coordinate system: on macOS the cursor is
+/// reported against the main display's top-left corner, with the Y axis
+/// already flipped into screen order, and the window position is reported in
+/// that same space. Adding the window's origin to the cursor position would
+/// count the offset twice.
+#[tauri::command]
+fn companion_pointer<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
+) -> Result<serde_json::Value, String> {
+    tray::check_surface(window.label())?;
+
+    let cursor = window
+        .cursor_position()
+        .map_err(|e| format!("the cursor position could not be read: {e}"))?;
+    let origin = window
+        .outer_position()
+        .map_err(|e| format!("the window position could not be read: {e}"))?;
+    let size = window
+        .outer_size()
+        .map_err(|e| format!("the window size could not be read: {e}"))?;
+    let scale = window
+        .scale_factor()
+        .map_err(|e| format!("the window scale factor could not be read: {e}"))?;
+
+    Ok(serde_json::json!({
+        "screenX": cursor.x,
+        "screenY": cursor.y,
+        "windowX": origin.x as f64,
+        "windowY": origin.y as f64,
+        "windowWidth": size.width as f64,
+        "windowHeight": size.height as f64,
+        "scaleFactor": scale,
+    }))
+}
+
 /// The builder every entry point uses.
 ///
 /// It is a function, not a chain inside `run()`, so that the test can
@@ -744,6 +787,7 @@ pub fn run() {
             companion_show_chat,
             companion_hide_chat,
             companion_hide,
+            companion_pointer,
             window_drag,
             repo_scan,
             repo_roots_add,

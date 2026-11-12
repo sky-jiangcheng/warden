@@ -123,8 +123,9 @@ the first screen says *not installed* and the rest of the app still works.
   sync, messages are immutable (same id with a different payload is an error, never an overwrite), and every
   assistant message is labelled from its own `source` — calling a plugin's reply "Warden" would be claiming
   another client's answer
-- **A resident companion window** — 132×128, nothing in it but the lantern and a one-line bubble; click it or
-  press `⌥Space` to open the chat, and only the lantern drags the window. **Closing a window hides it**
+- **A resident companion window** — 132×128, nothing in it but the cat and a one-line bubble; click it or
+  press `⌥Space` to open the chat, and only the cat drags the window. The cat follows the pointer with
+  its eyes, blinks on its own, and sulks when left alone. **Closing a window hides it**
   (the red button must not cut off an answer being generated); **Quit in the tray is the way out**
 - **Numbers on demand** — ask in the chat and the model calls `repotory_metrics`, which reads what memory
   **already stores**: nothing scans the disk, runs git or refreshes a cache to answer you. A scope it cannot

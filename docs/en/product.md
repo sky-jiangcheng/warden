@@ -150,10 +150,11 @@ plugins**. All three are landed; each has its own boundary.
 
 **① Resident = the companion window + the tray, not "the window is always on screen"**. The companion
 window is 132×128 (`index.html?surface=companion`), the main window 480×760; clicking the companion
-opens the chat. **The window holds the lantern and one speech bubble, nothing else**: the metric line,
+opens the chat. The desk pet is a white cat ("霜", Frost): a body layer and a head layer, eyes that
+follow the pointer, self-timed blinks, and a tsundere sulk when left alone. **The window holds the cat and one speech bubble, nothing else**: the metric line,
 the status line and the "chat" button are gone — numbers belong to the conversation (see ②), and the
 entrances are click / `⌥Space` / the tray, so a few lines of text on top of a character were just another
-layer of interface. **Only the lantern body starts a
+layer of interface. **Only the cat body starts a
 native window drag** (`window_drag`); no control carries `data-tauri-drag-region` — an illustration made
 into a button is a button the user cannot press, and they will blame the program. **Closing the window
 hides it; only the tray's Quit exits**: `on_window_event` answers `CloseRequested` with `prevent_close`

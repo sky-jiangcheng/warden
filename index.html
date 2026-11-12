@@ -249,8 +249,31 @@
     <div class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="idle">
       <p class="companion__bubble" id="companion-bubble" role="status" aria-live="polite"></p>
       <div class="lantern" id="companion-drag" title="点我对话 · 拖动可移动" role="button" tabindex="0" aria-label="Warden 桌宠，点击打开对话，拖动可移动窗口">
-        <img src="/src/assets/warden.png" width="80" height="80" alt="" draggable="false" />
-        <span class="lantern__glow" aria-hidden="true"></span>
+        <!-- 「霜」the white cat. The body and the head are separate layers so
+             the head can turn toward the pointer; the face frames are
+             pre-aligned to one canvas, so the CSS cross-fades between them
+             instead of swapping pictures. -->
+        <div class="pet" id="pet" data-look="neutral">
+          <span class="pet__halo" aria-hidden="true"></span>
+          <span class="pet__shadow" aria-hidden="true"></span>
+          <div class="pet__body">
+            <img class="pet__layer pet__body-frame" src="/src/assets/pet/body-expr-neutral.webp" alt="" draggable="false" />
+          </div>
+          <div class="pet__head">
+            <img class="pet__frame pet__frame--neutral" src="/src/assets/pet/head-expr-neutral.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--curious" src="/src/assets/pet/head-expr-curious.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--happy" src="/src/assets/pet/head-expr-happy.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--tsundere" src="/src/assets/pet/head-expr-tsundere.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--thinking" src="/src/assets/pet/head-expr-thinking.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--surprised" src="/src/assets/pet/head-expr-surprised.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--upleft" src="/src/assets/pet/head-eyes-upleft.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--upright" src="/src/assets/pet/head-eyes-upright.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--downleft" src="/src/assets/pet/head-eyes-downleft.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--downright" src="/src/assets/pet/head-eyes-downright.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--blink" src="/src/assets/pet/head-eyes-blink.webp" alt="" draggable="false" />
+            <img class="pet__frame pet__frame--sleepy" src="/src/assets/pet/head-eyes-sleepy.webp" alt="" draggable="false" />
+          </div>
+        </div>
       </div>
     </div>
   </body>
