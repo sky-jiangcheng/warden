@@ -235,11 +235,11 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **桌宠「霜」的注视重做：从「只看近处」变成全屏跟随指针。** 原来只有指针进到约一个猫宽（104px）以内才值得一看，更远就自顾自——那是把「小猫看不见屏幕那头」写成了行为。现在视线跟着指针走到屏幕的任何位置：躯干不动、头只绕颈做有上限的倾斜，远处幅度随距离收敛（`GAZE_REACH` 内转满、到 `GAZE_FALLOFF` 衰减到零），眼睛仍始终瞄准。指针位置由 50ms 轮询只**设目标**，一个 rAF 循环每帧按指数阻尼（`GAZE_TAU_MS`）逼近，所以是连续的一瞥而不是每次轮询跳一格；停下来后循环自停，闲置的猫不花一分钱。受惊改由「远→近的一次跳变」判定（`STARTLE_FROM` → `STARTLE_RADIUS`），不再依赖旧的注视半径。
+            **M2 收尾：聊天现在真的「懂你正在改什么」。** 带仓库范围的对话每轮生成时现场跑一次 `git --no-pager diff --stat` 加 patch 摘录，拼进 system 提示词——问「我这几行为什么这么改」不再靠猜。固定 argv、无 shell、字节上限加 5 秒看门狗：干净工作区沉默不占提示词，被截断会在文里明说（不静默降级这条纪律同样适用）。回答落库成功后，Warden 自己写一条 milestone handoff 检查点进记忆层（ADR-0054 形状：问答摘要 + 同一份 diff 快照作为「当前未完成」，按路径归属仓库）——下一个 session 打开同一个目录，`repotory_context` 就带着它开头。写回失败只进日志，绝不影响已保存的回答；这个绑定刻意不在模型工具面里，模型驱动不了它。
 
-            **分层帧无缝重做。** head 层向下重叠裁切（`warden-cat/recut_overlap.py`），全部表情与视线帧重出 webp——换表情、转头时接缝藏进同一片毛色里；点击等反应整只联动。`pet-preview.html` 复用真实样式表，预览与 app 不会漂。
+            **工程缺口三条清零，CI 从三道门变六道。** macOS 现在跑真实的 Rust 三门外加一步 `.app` 打包冒烟（托盘、Accessory 策略、图标阶梯只有 macOS 能证明）；前端状态机的四条静默回归路径（并发只留最后一次、revision 落后丢弃、IME 组合期不发送、失败保留草稿）抽成纯函数进 vitest 门禁；悬空的通知插件依赖删除——冒泡是唯一通道，这条产品决定现在和代码一致。
 
-            **文档同批更新。** product / roadmap 中英各一份（含三条新增「待定」：前端状态机的测试策略、copilot 写长期知识时的「人确认」形态、错误从 `String` 收敛到结构化类型），并记下通知插件注册落空这条待清理的工程缺口。
+            **文档同批更新。** roadmap 三条缺口销项、M2 转「已完成」、product 待确认第 6 条定案，中英镜像同提交。
 
             Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider.
           releaseDraft: false
