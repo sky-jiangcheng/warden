@@ -60,8 +60,8 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 - **首屏三态**：未安装 / 装了但连不上 / 已连接 + N 个工具，三者不混；
 - **端到端测试**：真管道 + fake MCP server，验握手、工具清单、调用往返、服务端错误、以及**进程真被杀掉**。
 
-**还没做的那一圈**：「把上下文拼进模型请求 → 回答写回 `repotory_handoff`」。
-聊天界面 Phase 2 已就位，所以这条现在是 **M2 的活**，不再是「等 Phase 2」。
+**那一圈已经闭合（2026-11-12，M2 收尾）**：「把上下文拼进模型请求 → 回答写回
+`repotory_handoff`」两头都接上了——diff 注入与 handoff 写回见 Phase 2 的收尾记录。
 「失败时降级为普通聊天」的策略**已定**（见 [product.md](product.md) 的「待确认」第 3 条）：
 **聊天继续 + 显式横幅说明**——记忆层连不上时聊天照常，但界面必须明说「这次没有记忆」，
 **上下文装配失败绝不静默**。
@@ -98,12 +98,19 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 - **流式聊天**：`tauri::ipc::Channel` 把增量推给前端，回答边写边显示；
 - **代理规则**：loopback 直连，其余走 `HTTPS_PROXY` / `HTTP_PROXY`（尊重 `NO_PROXY`）。
 
-**还没做的那一圈**：「git diff 注入」与「回答写回
-`repotory_handoff`」还没接上；仓库路径已经进了 system 提示词，只读工具面
-（`repotory_metrics` 等八个）也已在对话里接通——「当前仓库」这个概念 Phase 2.5 已经做出来了，
-所以剩下这两件仍是**可以直接接线**的事（不再是前置阻塞）。
-写回侧的分层策略**已定**（见 [product.md](product.md) 的「待确认」第 5 条）：
-`handoff` / `scan` 自动写，**长期知识（`notes_create` / `notes_update` / `notes_organize`）过一次人确认**。
+**最后一圈已接上（2026-11-12）**：
+- **git diff 注入**（`src-tauri/src/git.rs`）：带仓库范围的线程在每轮生成时现场跑一次
+  `git --no-pager diff --stat` + patch 摘录，进 system 提示词——固定 argv、无 shell、
+  字节上限 + 超时看门狗；干净工作区**沉默**，被截断**明说**（不静默降级同一条纪律）。
+  这不是 Phase 3 的工具执行层：它共享它的纪律，不共享它的 surface。
+- **回答写回 `repotory_handoff`**：assistant 回复落库成功**之后**，Warden 自己写一条
+  ADR-0054 形状的 milestone 检查点（`agent=warden`、按 `path` 归属仓库、问答摘录为 summary、
+  同一份 diff 快照作为「当前未完成」进 `next_steps`）。它是 Warden 自己的 capability 绑定，
+  **不在模型工具面里**——模型会 append 就是双写，这条写回也一样。写回失败只进 stderr，
+  **不让一次已保存的回答变成发送失败**；replay 不再补写检查点。
+- 分层策略照旧（[product.md](product.md)「待确认」第 5 条）：
+  `handoff` / `scan` 自动写，**长期知识（`notes_create` / `notes_update` / `notes_organize`）过一次人确认**。
+  长期知识那三个的确认形态是「待确认」第 7 条，仍未定——那是 M2 之后要不要开写面的决定。
 
 ## Phase 2.5：自己认仓库（1 周）—— 已完成
 
@@ -123,8 +130,9 @@ copilot 从「Cinder 的一个前端」变成「本机的一个独立机器人�
 **不写 Cinder 主库**：主库的 `projects.is_starred` 写入方是桌面端（desktop-only），
 MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是一个 copilot 该做的事**。
 
-**没做**：把仓库上下文拼进模型请求（聊天时带上哪个仓库）、git 元信息（分支 / 最后提交时间）。
-列表现在只有名字与路径。**「当前仓库」已就位，剩下的是接线不是造概念。**
+**没做**：git 元信息（分支 / 最后提交时间）——列表现在只有名字与路径。
+**已做（2026-11-12，M2 收尾）**：把仓库上下文拼进模型请求——线程的仓库路径、
+未提交的 diff 摘录进 system 提示，回答落库后写 milestone handoff（见 Phase 2 收尾记录）。
 
 ## Phase 3：工具执行层（2–3 周）
 
@@ -184,7 +192,7 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 |---|---|---|
 | M1 | 能调用 Cinder MCP | 已完成（Phase 1） |
 | M1.5 | **能自己认仓库，并让用户判断关注谁** | **已完成（Phase 2.5）** |
-| M2 | 能和模型聊当前仓库 | 进行中（Phase 2：聊天链路已通；仓库路径已进 system 提示、只读工具面已接；diff 注入与 handoff 写回未接） |
+| M2 | 能和模型聊当前仓库 | 已完成（2026-11-12：聊天链路、system 提示、只读工具面、diff 注入、handoff 写回全部接通） |
 | M3 | 能安全执行 Git / Shell 命令 | 未开始 |
 | M4 | 能看到并管理跨会话记忆 | 未开始 |
 | M5 | 能一键安装、一键初始化 | 未开始 |

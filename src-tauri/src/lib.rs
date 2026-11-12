@@ -10,6 +10,7 @@
 // this crate has a reason to reach into them.
 mod binaries;
 pub mod conversations;
+mod git;
 pub mod llm;
 pub mod mcp_client;
 pub mod memory_layer;

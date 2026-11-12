@@ -247,8 +247,8 @@ copilot 的记忆面板是**只读**的。
 **note 写完立刻进检索**（`SearchAll` 覆盖 notes），所以 copilot 能往**自己下一轮要读的记忆里**写东西；
 ADR-0015 的原话正是这个形态（"model writes into the store with no gate"）。
 **会话产物与长期知识不是同一类写**：前者自动、后者过闸。
-④ **落地时机**：copilot 自己按名绑定的仍是两个——`repotory_chat`（共享会话传输）与 `repotory_metrics`（对话里问的那几个数）；**模型**在对话里可调的是只读白名单那八个（见「常驻形态」②），全部只读，不碰这条闸；长期知识那三个写工具对模型是**客户端拒绝**，一次都不会执行。
-这条在 M2 收尾真要"回答写回 `repotory_handoff`"时落地。
+④ **落地时机**：copilot 自己按名绑定的是三个——`repotory_chat`（共享会话传输）、`repotory_metrics`（对话里问的那几个数）与 `repotory_handoff`（M2 收尾加的写回：回答落库后由 Warden 自己写 milestone 检查点，**不在模型工具面里**）；**模型**在对话里可调的是只读白名单那八个（见「常驻形态」②），全部只读，不碰这条闸；长期知识那三个写工具对模型是**客户端拒绝**，一次都不会执行。
+这条已随 M2 收尾落地（2026-11-12，见 [roadmap.md](roadmap.md) Phase 2 的收尾记录）。
 ⑤ **Phase 0 的「人工确认」一处已定、一处待 Phase 3**：copilot 通过 MCP 写长期知识
 （上面这三个）这一处已定；白名单命令执行那一处属于 **Phase 3，尚未开始**（[roadmap.md](roadmap.md) M3）。
 

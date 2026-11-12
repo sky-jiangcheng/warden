@@ -62,8 +62,9 @@ No UI polish in this phase — the data path comes first.
 - **Three states on the first screen**: not installed / installed but not answering / connected with N tools — none of them is mistaken for another;
 - **End-to-end tests**: a real pipe and a fake MCP server, covering the handshake, the tool list, the call round trip, the server's error, and **that the process really is killed**.
 
-**The one loop that is still open**: "put the context into the model request → write the answer back with `repotory_handoff`".
-The chat interface landed in Phase 2, so this is now **M2's work**, not "waiting for Phase 2".
+**That loop is closed (2026-11-12, the M2 wrap-up)**: "put the context into the model request →
+write the answer back with `repotory_handoff`" is wired on both ends — see the wrap-up notes in
+Phase 2.
 The policy for "degrade to plain chat when the connection fails" is **settled** (see "Open questions" item 3
 in [product.md](product.md)): **the chat continues and a banner says so out loud** — when the memory layer
 cannot be reached the chat still works, but the interface has to say "this turn has no memory", and
@@ -102,13 +103,24 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
 - **The proxy rule**: loopback is reached directly, everything else goes through `HTTPS_PROXY` /
   `HTTP_PROXY` (and `NO_PROXY` is honoured).
 
-**Still not done**: injecting the git diff, and writing the answer back with `repotory_handoff`; the
-repository path is already in the system prompt and the read-only tool face (`repotory_metrics` and
-its seven siblings) is already wired into the conversation. The notion of "the current repository"
-landed in Phase 2.5, so these two remain **wiring, not a blocked prerequisite**.
-The layered policy for what may be written is **settled** (see "Open questions" item 5 in
-[product.md](product.md)): `handoff` / `scan` are written automatically, while **durable knowledge
-(`notes_create` / `notes_update` / `notes_organize`) needs a human confirmation first**.
+**The last loop is wired (2026-11-12)**:
+- **Diff injection** (`src-tauri/src/git.rs`): a thread with a repository scope runs
+  `git --no-pager diff --stat` plus a patch excerpt at generation time, into the system prompt —
+  a fixed argv, no shell, byte caps and a timeout watchdog; a clean tree stays **silent**, a
+  truncated one **says so** (the same no-silent-degradation discipline). This is not Phase 3's
+  tool-execution layer: it shares the discipline, not the surface.
+- **The answer writes back with `repotory_handoff`**: once the assistant reply is durable in
+  Cinder, Warden writes an ADR-0054 milestone checkpoint itself (`agent=warden`, attributed by
+  `path`, the exchange as the summary, and the SAME diff snapshot as the unfinished work under
+  `next_steps`). It is Warden's own capability binding and deliberately **not on the model's
+  tool face** — a model that could append would double-write, and the same logic covers this
+  write. A failed writeback goes to stderr and never turns a saved reply into a failed send;
+  a replay does not re-write the checkpoint.
+- The layered policy is unchanged ("open question" item 5 in [product.md](product.md)):
+  `handoff` / `scan` are written automatically, while **durable knowledge
+  (`notes_create` / `notes_update` / `notes_organize`) needs a human confirmation first**.
+  What that confirmation looks like is open question 7 — still open; turning the durable-write
+  face on is a decision after M2.
 
 ## Phase 2.5: finding the repositories itself (1 week) — done
 
@@ -134,9 +146,10 @@ The copilot goes from "one front end of Cinder" to "an independent robot on this
 desktop app (desktop-only), and there is no MCP twin for it — **sharing it would mean
 changing the main repository, which is not a copilot's job**.
 
-**Not done**: feeding a repository into a model request (which repository the
-conversation is about), and git metadata (branch, last commit). The list carries names
-and paths for now. **"The current repository" is in place — what is left is wiring, not a new concept.**
+**Not done**: git metadata (branch, last commit). The list carries names and paths for now.
+**Done (2026-11-12, the M2 wrap-up)**: feeding a repository into a model request — the thread's
+repository path and the uncommitted diff excerpt ride in the system prompt, and the saved reply
+writes a milestone handoff (see the Phase 2 wrap-up notes).
 
 ## Phase 3: the tool execution layer (2–3 weeks)
 
@@ -199,7 +212,7 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 |---|---|---|
 | M1 | It can call Cinder MCP | done (Phase 1) |
 | M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
-| M2 | It can talk to a model about the current repository | in progress (Phase 2: the chat loop works; the repository path is in the system prompt and the read-only tool face is wired; diff injection and the handoff write-back are not) |
+| M2 | It can talk to a model about the current repository | done (2026-11-12: the chat loop, the system prompt, the read-only tool face, diff injection and the handoff write-back are all wired) |
 | M3 | It can safely run Git / Shell commands | not started |
 | M4 | It can see and manage cross-session memory | not started |
 | M5 | It installs and initializes in one step | not started |

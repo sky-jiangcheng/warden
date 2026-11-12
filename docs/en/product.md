@@ -339,12 +339,14 @@ retrievable the moment it is written** (`SearchAll` covers notes), so the copilo
 **the very memory it is about to read next**; ADR-0015's own words describe exactly that shape
 ("model writes into the store with no gate"). **A session output and durable knowledge are not the
 same kind of write**: the former is automatic, the latter goes through the gate.
-④ **When it lands**: the copilot's own by-name bindings are still two — `repotory_chat` (the shared
-conversation transport) and `repotory_metrics` (the numbers the chat asks for); **the model**, in
-conversation, can call the eight read-only whitelisted tools (see "the resident shape" ②), all
-read-only, so none of this touches the gate; the three durable-knowledge writes are **refused
-client-side** for the model and will never execute. This applies when M2
-actually writes the answer back through `repotory_handoff`.
+④ **When it lands**: the copilot's own by-name bindings are three — `repotory_chat` (the shared
+conversation transport), `repotory_metrics` (the numbers the chat asks for) and `repotory_handoff`
+(the write-back M2 added: after the reply is saved, Warden writes a milestone checkpoint itself,
+**off the model's tool face**); **the model**, in conversation, can call the eight read-only
+whitelisted tools (see "the resident shape" ②), all read-only, so none of this touches the gate;
+the three durable-knowledge writes are **refused client-side** for the model and will never
+execute. This landed with the M2 wrap-up (2026-11-12, see the Phase 2 wrap-up notes in
+[roadmap.md](roadmap.md)).
 ⑤ **Phase 0's "human confirmation": one half settled, one half waits for Phase 3** — the copilot
 writing durable knowledge over MCP (the three above) is settled; whitelisted command execution
 belongs to **Phase 3, which has not started** ([roadmap.md](roadmap.md) M3).

@@ -38,6 +38,9 @@ struct Thread {
 fn serve_chat() {
     let mut fail_save = std::env::var("REPOTORY_AGENT_FAKE_CHAT_SAVE_FAIL").is_ok();
     let bad_json = std::env::var("REPOTORY_AGENT_FAKE_CHAT_BAD_JSON").is_ok();
+    // Where a driven test wants the handoff calls written, one JSON object
+    // per line. Unset means "nobody is watching" and the file is never made.
+    let handoff_log = std::env::var("REPOTORY_AGENT_FAKE_HANDOFF_LOG").ok();
     let mut threads = BTreeMap::<String, Thread>::new();
     let mut stdout = std::io::stdout();
     for line in std::io::stdin().lock().lines() {
@@ -64,7 +67,9 @@ fn serve_chat() {
                     {"name":"repotory_context","description":"Load a project's working context",
                      "inputSchema":{"type":"object","properties":{"path":{"type":"string"}}}},
                     {"name":"repotory_notes_create","description":"create a note",
-                     "inputSchema":{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}}
+                     "inputSchema":{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}},
+                    {"name":"repotory_handoff","description":"record a session handoff",
+                     "inputSchema":{"type":"object","properties":{"summary":{"type":"string"},"path":{"type":"string"},"milestone":{"type":"boolean"}},"required":["summary"]}}
                 ]
             })),
             "tools/call" => {
@@ -96,6 +101,33 @@ fn serve_chat() {
                     Ok(text(
                         &json!({"created":true,"tool":"repotory_notes_create"}).to_string(),
                     ))
+                } else if name == "repotory_handoff" {
+                    // Warden's own reply checkpoint. The driven test reads
+                    // the log back to assert WHAT was written; the answer
+                    // mirrors the real tool's success shape (a note id).
+                    if std::env::var("REPOTORY_AGENT_FAKE_HANDOFF_FAIL").is_ok() {
+                        // The real server answers an unresolvable project
+                        // this way: in-band refusal, transport healthy.
+                        Ok(
+                            json!({"isError": true, "content": [{"type":"text","text":"project_id is required unless `path` resolves to a collected project"}]}),
+                        )
+                    } else {
+                        if let Some(path) = &handoff_log {
+                            let mut record = args.clone();
+                            record["name"] = json!(name);
+                            if let Ok(mut file) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(path)
+                            {
+                                let _ = writeln!(file, "{record}");
+                                let _ = file.flush();
+                            }
+                        }
+                        Ok(text(
+                            &json!({"note_id":77,"title":"Milestone Handoff","tags":"handoff, milestone","milestone":true,"deduped":false}).to_string(),
+                        ))
+                    }
                 } else {
                     Err("unknown tool".into())
                 }

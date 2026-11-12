@@ -14,8 +14,18 @@ const OTHER: &str = "10000000-0000-4000-8000-000000000002";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 async fn session(mode: &str) -> McpSession {
+    session_env(mode, &[]).await
+}
+
+/// Like `session`, with extra environment variables handed to the fake
+/// server — per-fixture paths (the handoff log) cannot travel through the
+/// process environment, because the harness runs these tests in parallel.
+async fn session_env(mode: &str, extra: &[(&str, &str)]) -> McpSession {
     let binary = std::env::var("CARGO_BIN_EXE_fake-mcp-server").unwrap();
-    let (client, tools) = McpClient::connect_to(Path::new(&binary), Some(mode))
+    let envs: Vec<(String, String)> = std::iter::once((mode.to_string(), "1".to_string()))
+        .chain(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())))
+        .collect();
+    let (client, tools) = McpClient::connect_with_env(Path::new(&binary), &envs)
         .await
         .unwrap();
     McpSession::from_connected(client, tools)
@@ -30,6 +40,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn new(mode: &str) -> Self {
+        Self::with_server_env(mode, &[]).await
+    }
+    async fn with_server_env(mode: &str, extra: &[(&str, &str)]) -> Self {
         let mut llm = Command::new(std::env::var("CARGO_BIN_EXE_fake-llm-server").unwrap())
             .env("REPOTORY_AGENT_FAKE_LLM", "1")
             .stdout(Stdio::piped())
@@ -61,7 +74,7 @@ impl Fixture {
             .unwrap();
         Self {
             llm,
-            session: session(mode).await,
+            session: session_env(mode, extra).await,
             state: GenerationState::default(),
             store,
             directory,
@@ -620,4 +633,180 @@ async fn a_write_tool_is_never_offered_and_a_refusal_is_its_result() {
     assert_eq!(events[0].name, "repotory_notes_create");
     assert!(!events[0].done);
     assert!(events[1].done);
+}
+
+/// Git fixture: a real repository in a temp dir, dirty or clean.
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("git is installed for the test suite");
+    assert!(status.success(), "git {args:?} failed");
+}
+
+fn make_repo(name: &str, dirty: bool) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "warden-m2-{}-{name}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create repo dir");
+    git(&dir, &["init", "-b", "main"]);
+    git(&dir, &["config", "user.email", "t@t"]);
+    git(&dir, &["config", "user.name", "t"]);
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-m", "first"]);
+    if dirty {
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    }
+    dir
+}
+
+fn read_jsonl(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+/// M2's promised "附加最近 git diff": the uncommitted working tree rides in
+/// the system prompt of a tool-enabled thread — stat, patch excerpt, and the
+/// repository path it came from.
+#[tokio::test]
+async fn the_uncommitted_diff_rides_in_the_system_prompt() {
+    let repo = make_repo("prompt-diff", true);
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+    let (result, chunks) = f.send(request("d1", "what did I change?")).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let system = messages
+        .iter()
+        .find(|m| m["role"] == "system")
+        .expect("system prompt");
+    let prompt = system["content"].as_str().unwrap();
+    assert!(prompt.contains("Current uncommitted changes"), "{prompt}");
+    assert!(prompt.contains("a.txt"), "{prompt}");
+    assert!(prompt.contains("+two"), "{prompt}");
+    // The scope line is still there — the diff supplements it, not replaces it.
+    assert!(prompt.contains(repo.to_str().unwrap()), "{prompt}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// A clean tree says nothing: no block, no "empty diff" noise in the prompt.
+#[tokio::test]
+async fn a_clean_tree_adds_no_diff_block() {
+    let repo = make_repo("prompt-clean", false);
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+    let (result, chunks) = f.send(request("d2", "how is it going?")).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let system = messages.iter().find(|m| m["role"] == "system").unwrap();
+    let prompt = system["content"].as_str().unwrap();
+    assert!(!prompt.contains("Current uncommitted changes"), "{prompt}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// M2's closing loop, "模型回答后写入 repotory_handoff": once the reply is
+/// durable in Cinder, Warden writes the structured checkpoint ITSELF — the
+/// milestone shape of ADR-0054, attributed by path, naming the exchange and
+/// the unfinished working tree as next steps.
+#[tokio::test]
+async fn a_saved_reply_writes_a_milestone_handoff() {
+    let repo = make_repo("handoff-ok", true);
+    let log = std::env::temp_dir().join(format!(
+        "warden-m2-handoff-{}-{}.jsonl",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let f = Fixture::with_server_env(
+        "REPOTORY_AGENT_FAKE_CHAT",
+        &[("REPOTORY_AGENT_FAKE_HANDOFF_LOG", log.to_str().unwrap())],
+    )
+    .await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+    let (result, chunks) = f.send(request("h1", "summarise my change")).await;
+    result.expect("send");
+    let answer_text = answer(&chunks)["requestNumber"].to_string();
+
+    let records = read_jsonl(&log);
+    assert_eq!(records.len(), 1, "{records:?}");
+    let record = &records[0];
+    assert_eq!(record["name"], "repotory_handoff");
+    assert_eq!(record["agent"], "warden");
+    assert_eq!(record["milestone"], true);
+    assert_eq!(record["path"], repo.to_str().unwrap());
+    let summary = record["summary"].as_str().unwrap();
+    assert!(summary.contains("Warden answered"), "{summary}");
+    assert!(summary.contains("summarise my change"), "{summary}");
+    // The same diff snapshot the prompt was built from travels as the
+    // unfinished work of the checkpoint.
+    let steps = record["next_steps"].as_array().unwrap();
+    assert!(!steps.is_empty());
+    assert!(steps[0].as_str().unwrap().contains("a.txt"), "{steps:?}");
+
+    // A replay of the finished messageId must not write a second checkpoint:
+    // the reply is already durable, the handoff belongs to the generation.
+    let (again, _) = f.send(request("h1", "summarise my change")).await;
+    again.expect("replay");
+    assert_eq!(
+        read_jsonl(&log).len(),
+        1,
+        "the replay re-wrote a checkpoint"
+    );
+    assert!(!answer_text.is_empty());
+    let _ = std::fs::remove_dir_all(&log);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// The checkpoint is a side effect, not part of the send contract: when the
+/// memory layer refuses it (no collected project matches the path), the
+/// reply still saves and the send still succeeds.
+#[tokio::test]
+async fn a_refused_handoff_does_not_fail_the_send() {
+    let f = Fixture::with_server_env(
+        "REPOTORY_AGENT_FAKE_CHAT",
+        &[("REPOTORY_AGENT_FAKE_HANDOFF_FAIL", "1")],
+    )
+    .await;
+    f.create(THREAD, "/repo/one").await;
+    let (result, chunks) = f.send(request("h2", "hello")).await;
+    result.expect("the handoff refusal must stay in the log, not the send");
+    assert!(!answer(&chunks)["requestNumber"].is_null());
+    let saved = f.messages().await;
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[1]["role"], "assistant");
+}
+
+/// No thread, no durable conversation, no checkpoint: a temporary exchange
+/// is exactly the case that has no session to hand off.
+#[tokio::test]
+async fn a_temporary_conversation_writes_no_handoff() {
+    let log = std::env::temp_dir().join(format!(
+        "warden-m2-handoff-none-{}.jsonl",
+        std::process::id()
+    ));
+    let f = Fixture::with_server_env(
+        "REPOTORY_AGENT_FAKE_CHAT",
+        &[("REPOTORY_AGENT_FAKE_HANDOFF_LOG", log.to_str().unwrap())],
+    )
+    .await;
+    let mut req = request("h3", "quick one-off question");
+    req.thread_id = None;
+    let (result, _) = f.send(req).await;
+    result.expect("send");
+    assert!(!log.exists(), "a temporary conversation wrote a checkpoint");
+    let _ = std::fs::remove_dir_all(&log);
 }

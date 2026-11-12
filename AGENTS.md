@@ -49,6 +49,10 @@ src-tauri/           后端（Rust）
   src/providers.rs   provider 配置：persist + 同目录 0600 文件里的 API Key
   src/llm.rs         OpenAI 兼容客户端：拉模型 / 聊天 / SSE 流式
   src/provider_commands.rs  provider 命令背后的逻辑
+  src/conversations.rs  共享会话 + 生成循环：system 提示装配（仓库路径、diff 摘录、watchlist）、
+                      只读工具面执行、回答落库后由 Warden 自己写 `repotory_handoff` 检查点
+  src/git.rs        只读 git 状态读取（diff --stat + patch 摘录）：固定 argv、无 shell、
+                      字节上限 + 超时看门狗；干净树沉默，截断明说。不是 Phase 3 的执行层。
   src/memory_layer.rs    记忆层（Cinder MCP）状态：连接 + 服务端给的工具清单
   src/repos.rs        仓库发现与收藏清单：扫盘 + watchlist 持久化
   tests/             端到端测试（真管道 + fake MCP server / fake LLM server / 真仓库目录）

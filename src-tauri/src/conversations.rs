@@ -17,6 +17,13 @@ use crate::providers::ProviderStore;
 
 // Capability bindings, not a substitute for the server's tools/list.
 const CHAT_TOOL: &str = "repotory_chat";
+// Warden's OWN write binding — deliberately outside MODEL_TOOLS. The reply
+// path writes this checkpoint itself, so the model can never drive it (the
+// double-write rule that keeps repotory_chat off the model face applies the
+// same way here). handoff is in the auto-write tier of product.md open
+// question 5: a session record, not durable knowledge, so no confirmation
+// gate stands between the reply and this write.
+const HANDOFF_TOOL: &str = "repotory_handoff";
 const MAX_INPUT_CHARS: usize = 12_000;
 const CONTEXT_CHARS: usize = 24_000;
 const CONTEXT_MESSAGES: usize = 32;
@@ -83,7 +90,7 @@ async fn model_tools(session: &McpSession) -> Result<Vec<ToolSpec>, String> {
 /// "which repositories do I watch", and the user is told their own list back
 /// wrong. Naming both, and saying which is which, costs one line and removes
 /// the confusion.
-fn system_prompt(repository: Option<&str>, watched: &[String]) -> String {
+fn system_prompt(repository: Option<&str>, watched: &[String], diff: Option<&str>) -> String {
     let mut prompt = String::from(
         "You are Warden, a local copilot. Cinder, the memory layer, offers \
          read-only tools: use them for repository facts (metrics, notes, \
@@ -93,6 +100,16 @@ fn system_prompt(repository: Option<&str>, watched: &[String]) -> String {
     );
     if let Some(path) = repository.filter(|path| !path.is_empty()) {
         prompt.push_str(&format!("\nCurrent repository: {path}"));
+    }
+    // The working tree the Phase 2 line promised: "附加最近 git diff". The
+    // block is the client's own rendering of `git diff --stat` plus an
+    // excerpt, and it names its own truncation — the model must know the
+    // patch it sees may be a head, not the whole. When there is nothing
+    // uncommitted there is nothing to say, and the absence is silent by
+    // design (git.rs).
+    if let Some(diff) = diff.filter(|diff| !diff.trim().is_empty()) {
+        prompt.push_str("\n\n");
+        prompt.push_str(diff.trim_end());
     }
     if !watched.is_empty() {
         let shown: Vec<&str> = watched.iter().map(String::as_str).take(20).collect();
@@ -552,6 +569,11 @@ async fn send_inner(
             return Ok(());
         }
     }
+    // Set when a tool-enabled thread had a repository during GENERATION:
+    // (path, the diff snapshot the prompt was built from). The reply
+    // checkpoint reuses it, and a replay leaves it None — a finished answer
+    // has already earned its checkpoint.
+    let mut checkpoint: Option<(String, Option<String>)> = None;
     if let Some(attempt) = cached {
         *text = attempt.outcome?;
     } else {
@@ -583,11 +605,35 @@ async fn send_inner(
             // thread's path is the conversation's repository scope.
             let tools = model_tools(session).await?;
             if !tools.is_empty() {
-                let repository = value["thread"]["path"].as_str().map(|p| p.to_string());
+                let repository = value["thread"]["path"]
+                    .as_str()
+                    .filter(|path| !path.trim().is_empty())
+                    .map(|path| path.to_string());
+                // One snapshot per generation, shared by the injected prompt
+                // and the reply checkpoint: what the model read and what the
+                // handoff recorded describe the SAME tree, not whatever the
+                // user saved between the two calls. The git child runs on the
+                // blocking pool — this path is an async command and a wedged
+                // git must not occupy a tokio worker (AGENTS: no blocking IO
+                // in async commands).
+                let diff = match &repository {
+                    Some(path) => {
+                        let path = path.clone();
+                        tauri::async_runtime::spawn_blocking(move || crate::git::recent_diff(&path))
+                            .await
+                            .map_err(|e| format!("the git diff task failed: {e}"))?
+                    }
+                    None => None,
+                };
                 context.insert(
                     0,
-                    ChatMessage::system(system_prompt(repository.as_deref(), &request.watched)),
+                    ChatMessage::system(system_prompt(
+                        repository.as_deref(),
+                        &request.watched,
+                        diff.as_deref(),
+                    )),
                 );
+                checkpoint = repository.map(|path| (path, diff));
             }
             (context, tools)
         } else {
@@ -772,8 +818,91 @@ async fn send_inner(
         // Without a thread there is no store to take over, so the entry stays —
         // that mode's whole dedup contract is "within this process".
         state.forget(key);
+        // M2's last loop: "模型回答后写入 repotory_handoff". Only after the
+        // answer is durable — a checkpoint about a reply that failed to save
+        // would record a conversation the next session cannot read back.
+        if let Some((repository, diff)) = checkpoint
+            && let Err(error) = write_handoff(
+                session,
+                &repository,
+                &request.message,
+                text,
+                diff.as_deref(),
+            )
+            .await
+        {
+            // The reply is saved; the checkpoint is the loss. It must not
+            // turn into a failed send, and it must not vanish quietly
+            // either: stderr is where this app's degraded paths speak.
+            eprintln!("[handoff] the session checkpoint could not be written: {error}");
+        }
     }
     Ok(())
+}
+
+/// One UTF-8-safe excerpt, in BYTES, for a bounded field. Cinder's handoff
+/// caps are byte caps (summary 4000, item 1000) — a character count would
+/// let CJK text collect a server refusal this client could have prevented.
+fn excerpt(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut cut = max_bytes;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text[..cut].to_string()
+}
+
+/// Writes the structured session record Cinder's `repotory_context` leads a
+/// future session with (ADR-0054 rolling checkpoint).
+///
+/// The shape follows the tool's own contract: `summary` is required, and at
+/// least one section must be non-empty. `milestone=true` because this is a
+/// checkpoint per work unit, not a session-end summary — and because the
+/// server dedupes a re-sent identical milestone onto the same note, so
+/// retrying this call is idempotent. `path` attributes the record to the
+/// repository the conversation is scoped to; the server resolves the project
+/// and refuses cleanly if the directory was never scanned — refusal lands
+/// in the stderr log, it is not a user-facing failure.
+///
+/// Content rules: the exchange (question + answer, bounded) and the unfinished
+/// working tree from the SAME diff snapshot the prompt was built from. The
+/// diff is what `next_steps` means under the milestone contract — "currently
+/// unfinished" — and it is what the next session standing in this repository
+/// wants to lead with.
+async fn write_handoff(
+    session: &McpSession,
+    repository: &str,
+    question: &str,
+    answer: &str,
+    diff: Option<&str>,
+) -> Result<(), String> {
+    let summary = format!(
+        "Warden answered in {repository} — Q: {} A: {}",
+        excerpt(question, 300),
+        excerpt(answer, 2_500)
+    );
+    let next_steps = match diff.filter(|diff| !diff.trim().is_empty()) {
+        Some(diff) => vec![excerpt(diff, 950)],
+        None => vec!["No uncommitted changes at checkpoint time.".to_string()],
+    };
+    // Handoff section caps are the server's: 20 items / 1000 bytes each; the
+    // summary cap is 4000 bytes. This client stays inside them instead of
+    // collecting a refusal — a truncated checkpoint is still a checkpoint.
+    call_text(
+        session,
+        HANDOFF_TOOL,
+        json!({
+            "agent": "warden",
+            "path": repository,
+            "milestone": true,
+            "summary": excerpt(&summary, 1_200),
+            "next_steps": next_steps,
+        }),
+    )
+    .await
+    .map(|_| ())
 }
 
 #[cfg(test)]

@@ -278,9 +278,27 @@ impl McpClient {
         binary: &Path,
         env_var: Option<&str>,
     ) -> Result<(Self, Vec<ToolInfo>), McpError> {
+        let envs: Vec<(String, String)> = env_var
+            .map(|name| vec![(name.to_string(), "1".to_string())])
+            .unwrap_or_default();
+        Self::connect_with_env(binary, &envs).await
+    }
+
+    /// Starts the server with environment VARIABLES AND VALUES set for it.
+    ///
+    /// The single-name `connect_to` can only say "serve"; the conversation
+    /// fixtures also need to hand the fake server a per-fixture path (where
+    /// to log the calls it answered), and the harness runs tests in
+    /// parallel — a shared process environment would race. Production
+    /// (`connect`) never comes through here: the real `repotory-mcp` is
+    /// told nothing.
+    pub async fn connect_with_env(
+        binary: &Path,
+        envs: &[(String, String)],
+    ) -> Result<(Self, Vec<ToolInfo>), McpError> {
         let mut command = Command::new(binary);
-        if let Some(name) = env_var {
-            command.env(name, "1");
+        for (name, value) in envs {
+            command.env(name, value);
         }
         let mut child = command
             .stdin(Stdio::piped())
