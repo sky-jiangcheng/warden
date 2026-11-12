@@ -3,15 +3,18 @@
 # Rationale / 背景: this repository had no CI at all — the docs-mirror guard
 # existed as a script but nothing ran it, so the ZH/EN pair could drift silently
 # and nobody would find out until a reader did. This workflow is the gate: every
-# push to master and every pull request must pass all four gates before it can
+# push to master and every pull request must pass every gate before it can
 # land.
 #
-# Four jobs, independent and parallel: a failure reads as "docs" / "brand" /
-# "frontend" / "rust" in the checks list instead of hiding inside one red job.
+# Five jobs, independent and parallel: a failure reads as "docs" / "brand" /
+# "frontend" / "rust" / "rust-macos" in the checks list instead of hiding inside
+# one red job.
 #
-# What this gate does NOT do: it does not build the Tauri application bundle.
-# Packaging (dmg/icns) needs platform SDKs and belongs in a release workflow
-# triggered by a tag, the same split the Cinder main repo uses.
+# What this gate does NOT do: it does not publish. `rust-macos` builds the debug
+# bundle as a packaging smoke — unsigned, on a throwaway runner, with nothing
+# uploaded — because the bundle graph (icns, info.plist, dmg) is the one macOS
+# thing a Linux gate can never check. Signing and notarisation stay in the
+# release workflow triggered by a tag, the same split the Cinder main repo uses.
 name: CI
 
 on:
@@ -201,3 +204,77 @@ jobs:
       - name: Run tests
         working-directory: src-tauri
         run: cargo test --all-targets --features test-fixtures
+
+  # ---------------------------------------------------------- rust-macos ----
+  # The ubuntu job cannot see the macOS half of this crate: the tray is built
+  # on `muda`, which panics off the main thread; the Accessory activation
+  # policy, the template tray icon and the .app bundle are macOS-only
+  # behaviour. Before this job existed, "is the tray there" was self-reported
+  # by `tray.installed` at runtime and the release build was the first macOS
+  # compiler to ever see a change.
+  #
+  # Separate job, not a matrix on `rust`: a macOS failure reads as
+  # "rust-macos" in the checks list, and its 20-minute cold cache does not
+  # gate the 2-minute ubuntu checks behind it.
+  #
+  # Steps are one concern each — fmt / clippy / test / bundle — so a red run
+  # says whether compilation, tests or packaging broke. No signing and no
+  # upload: the certificate secrets are not passed in, so Tauri falls back to
+  # ad-hoc signing, which is enough to prove the packaging graph resolves.
+  # The signed artifact path stays in the release workflow.
+  rust-macos:
+    name: Rust gates on macOS
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
+        with:
+          node-version-file: .nvmrc
+
+      # One truth for the toolchain version: rust-toolchain.toml, no input.
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Check formatting
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        # Same command as the ubuntu job, same fixture feature — a lint that
+        # only passes on Linux is not a passing lint.
+        run: cargo clippy --all-targets --features test-fixtures -- -D warnings
+
+      - name: Run tests
+        working-directory: src-tauri
+        # This is the job where the tray unit tests stop being hypothetical:
+        # `muda` menus and `tauri::test::mock_builder` behave for real here.
+        run: cargo test --all-targets --features test-fixtures
+
+      - name: Bundle smoke (debug, unsigned)
+        # `tauri build --debug` runs beforeBuildCommand (the frontend gate)
+        # and then the bundling graph — the .app, the icns step, the
+        # info.plist assembly. Any of those breaking reads as a packaging
+        # failure on its own step instead of surfacing only at release time.
+        #
+        # `--bundles app`, not `all`: the dmg step shells out to hdiutil,
+        # which needs disk-image privileges the runner may or may not grant
+        # that day. That flakiness would make the gate untrustworthy, and it
+        # proves nothing the .app bundle does not — the compile, the icon
+        # ladder and the plist are the same inputs for both. The dmg stays
+        # the release workflow's job.
+        run: npm run tauri build -- --debug --bundles app

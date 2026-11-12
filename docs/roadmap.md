@@ -215,13 +215,19 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
   理由注释一起删除，替换为「为什么没有它」的注释；`Cargo.lock` 随之变干净。
   将来若真要系统通知：注册、capability、测试、文档恢复，四条同一提交再做。
 
-### 3. macOS 也进 CI
+### 3. macOS 也进 CI —— 已销项（2026-11-12）
 
 - **问题**：CI 的 Rust 三道门跑在 `ubuntu-latest`；托盘（`muda` 主线程）、Accessory 策略、
   template 图标、`tauri build` 打包都只在 macOS 上有意义。
 - **影响**：发布前只能手测；托盘是否就位只能靠 `tray.installed` 自证。
 - **验收**：CI 增加 macOS job（fmt + clippy + test + `tauri build --debug` 冒烟），
   失败能定位到是编译、测试还是打包；不要求签名。
+- **销项**：`ci.yml` 新增 `rust-macos` job（`macos-14`）：fmt / clippy / test 与 Ubuntu job
+  同一组命令，再加一步 `tauri build --debug --bundles app` 打包冒烟——四步各管一件事，红了就知道是
+  编译、测试还是打包。打包只出 `.app`，不出 dmg：`hdiutil` 在 runner 上要磁盘镜像权限，
+  时好时坏，这种抖动会让门禁不可信；而编译、图标阶梯、info.plist 对两者是同一套输入。
+  不传签名 secret，Tauri 落回 ad-hoc 签名，足够证明打包图能走通；
+  签名、公证与 dmg 仍只在 tag 触发的 release 工作流里。
 
 ## 路线取舍
 

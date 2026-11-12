@@ -235,7 +235,7 @@ acceptance criteria; no new process.
   If a notification path is ever built: registration, capability, test and restored docs, all in
   the same commit.
 
-### 3. Put macOS in CI
+### 3. Put macOS in CI — closed (2026-11-12)
 
 - **Problem**: the Rust gates run on `ubuntu-latest`; the tray (`muda` main thread), the Accessory
   policy, the template icon and `tauri build` packaging only mean anything on macOS.
@@ -243,6 +243,14 @@ acceptance criteria; no new process.
   `tray.installed` only.
 - **Acceptance**: a macOS CI job (fmt + clippy + test + `tauri build --debug` smoke) whose failure
   says whether compile, tests or packaging broke; signing not required.
+- **How it was closed**: `ci.yml` gained a `rust-macos` job (`macos-14`): fmt / clippy / test run
+  the same commands as the Ubuntu job, plus a packaging smoke, `tauri build --debug --bundles app`
+  — four steps, one concern each, so a red run says whether compilation, tests or packaging broke.
+  The smoke builds the `.app` only, not the dmg: `hdiutil` needs disk-image privileges the runner
+  may or may not grant, and that flakiness would make the gate untrustworthy while proving nothing
+  the `.app` does not (same binary, icon ladder and plist inputs). No signing secrets are passed,
+  so Tauri falls back to ad-hoc signing — enough to show the packaging graph resolves. Signing,
+  notarisation and the dmg stay where they were: the tag-triggered release workflow.
 
 ## The trade-off
 

@@ -150,8 +150,11 @@ scripts/             仓库守卫脚本
   本仓的图标**全部是生成物**（`src-tauri/icons/`：Tauri 的 PNG 阶梯 + Square* 商店阶梯 +
   `icon.ico` / `icon.icns` + `tray-22.png`）。改动 `icon-warden.svg` 后必须重跑这条命令，
   否则 app 会带着旧标记上线。
-- **CI 有三道门**（`.github/workflows/ci.yml`）：docs mirror / 前端 build / Rust fmt+clippy+test。
-  **本地提交前把三条都跑一遍**——`cargo fmt` 尤其，它会改文件。
+- **CI 有五个 job**（`.github/workflows/ci.yml`）：docs mirror / brand / 前端 build /
+  Rust fmt+clippy+test（ubuntu）/ Rust 三门 + `tauri build --debug --bundles app` 冒烟（macOS，2026-11-12 补）。
+  **本地提交前把相关的都跑一遍**——`cargo fmt` 尤其，它会改文件。
+  macOS 冒烟本地等价命令是 `npm run tauri build -- --debug --bundles app`（不要 `all`：
+  dmg 那步的 `hdiutil` 在沙箱/受限环境会失败，与代码好坏无关）。
 - **Rust 版本钉在 `rust-toolchain.toml`**（1.98.0），CI 与本地共用这一份真值。
   换版本要**故意**改，不要顺手改。
 - **`cargo fmt` 会重排长行**：新增测试断言后如果 CI 的 fmt job 红了，
