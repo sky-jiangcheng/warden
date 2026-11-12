@@ -250,7 +250,11 @@ jobs:
   # The signed artifact path stays in the release workflow.
   rust-macos:
     name: Rust gates on macOS
-    runs-on: macos-14
+    # `macos-latest`, not `macos-14`: this account resolves the explicit
+    # label to a runner configuration it does not allow
+    # ("macos-14-arm64-us-default is not supported"), while `macos-latest`
+    # is what the release workflow already builds on.
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
