@@ -1043,7 +1043,7 @@ body { background: transparent; }
   height: 100%;
   --look-x: 0;
   --look-y: 0;
-  transition: rotate 240ms ease-out;
+  rotate: calc(var(--look-x) * 1.2deg);
 }
 
 .pet__body,
@@ -1053,10 +1053,11 @@ body { background: transparent; }
   width: 100%;
 }
 
-/* The head sits above the body; the body starts where the neck ruff ends,
-   which is the same cut the artwork was split on. */
-.pet__head { top: 0; height: 59%; z-index: 2; }
-.pet__body { bottom: 0; height: 41%; z-index: 1; }
+/* The head frame is cut 140 source rows INTO the body (recut_overlap.py):
+   the overlap is the same fur pixels the body draws, so the seam is invisible
+   at rest and the head can lift or tilt without exposing a gap at the neck. */
+.pet__head { top: 0; height: 66.94%; z-index: 2; }
+.pet__body { bottom: 0; height: 41.29%; z-index: 1; }
 
 .pet__body-frame {
   width: 100%;
@@ -1074,7 +1075,7 @@ body { background: transparent; }
   object-fit: contain;
   object-position: 50% 100%;
   opacity: 0;
-  transition: opacity 180ms ease;
+  transition: opacity 140ms ease;
   will-change: opacity;
 }
 
@@ -1086,38 +1087,40 @@ body { background: transparent; }
 .pet__head { animation: pet-head 6.4s ease-in-out infinite; transform-origin: 50% 100%; }
 
 /* The pointer. --look-x and --look-y are the pointer's offset from the
-   cat's centre, normalised; companion.ts sets them and CSS does the rest.
-   The gaze uses the individual rotate/translate properties on purpose: the
-   idle and mood loops animate `transform`, and an animation would override
-   a `transform` declaration on the same element — the individual properties
-   compose with it instead, so the cat can breathe and look at you at the
-   same time. */
+   cat's centre, normalised and eased per-frame by companion.ts; CSS turns
+   them into motion. The gaze uses the individual rotate/translate properties
+   on purpose: the idle and mood loops animate `transform`, and an animation
+   would override a `transform` declaration on the same element — the
+   individual properties compose with it instead, so the cat can breathe and
+   look at you at the same time. No transition here: the rAF easing is the
+   smoothing, a second one would only add lag. */
 .pet__head {
-  rotate: calc(var(--look-x) * 9deg);
-  translate: calc(var(--look-x) * 2.4%) calc(var(--look-y) * 2.2%);
-  transition: rotate 240ms ease-out, translate 240ms ease-out;
+  rotate: calc(var(--look-x) * 6deg);
+  translate: calc(var(--look-x) * 2.2%) calc(var(--look-y) * 1.6%);
 }
 .pet__body {
-  rotate: calc(var(--look-x) * 2.6deg);
-  translate: calc(var(--look-x) * 0.8%) calc(var(--look-y) * 0.8%);
-  transition: rotate 240ms ease-out, translate 240ms ease-out;
+  rotate: calc(var(--look-x) * 2deg);
+  translate: calc(var(--look-x) * 0.6%) calc(var(--look-y) * 0.6%);
 }
 
-@keyframes pet-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-@keyframes pet-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.018, .988); } }
-@keyframes pet-head { 0%, 100% { transform: rotate(-1.4deg) translateY(0); } 50% { transform: rotate(1.4deg) translateY(-1px); } }
-@keyframes pet-lean-in { 0%, 100% { transform: rotate(-2deg) translateY(0) scale(1); } 50% { transform: rotate(2.5deg) translateY(-3px) scale(1.02); } }
-@keyframes pet-hop { 0% { transform: translateY(0) scale(1); } 35% { transform: translateY(-9px) scale(1.05, .96); } 70% { transform: translateY(0) scale(.97, 1.03); } 100% { transform: translateY(0) scale(1); } }
-@keyframes pet-happy-head { 0% { transform: rotate(0) translateY(0); } 35% { transform: rotate(-5deg) translateY(-2px); } 70% { transform: rotate(3deg) translateY(1px); } 100% { transform: rotate(0) translateY(0); } }
-@keyframes pet-happy-body { 0% { transform: scale(1, 1); } 35% { transform: scale(.97, 1.04); } 70% { transform: scale(1.03, .97); } 100% { transform: scale(1, 1); } }
-@keyframes pet-think { 0%, 100% { transform: rotate(-3.5deg) translateX(-1.5%); } 50% { transform: rotate(3.5deg) translateX(1.5%); } }
-@keyframes pet-pop { 0% { transform: scale(1); } 45% { transform: scale(1.09, 1.11) translateY(-4px); } 100% { transform: scale(1); } }
-@keyframes pet-pop-head { 0% { transform: translateY(0) scale(1); } 45% { transform: translateY(-5px) scale(1.05); } 100% { transform: translateY(0) scale(1); } }
-@keyframes pet-turn-away { 0%, 100% { transform: rotate(-7deg) translateX(-2%); } 50% { transform: rotate(-9deg) translateX(-3%); } }
+/* Head-only motion stays a tilt about the neck (transform-origin 50% 100%):
+   the cut line sits at the origin, so rotation never slides the seam, and
+   the fur overlap absorbs the little lift a tilt adds. Whole-cat beats
+   (hop, pop) transform the pet so both layers move as one. */
+@keyframes pet-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes pet-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, .99); } }
+@keyframes pet-head { 0%, 100% { transform: rotate(-1.2deg) translateY(0); } 50% { transform: rotate(1.2deg) translateY(-0.5px); } }
+@keyframes pet-lean-in { 0%, 100% { transform: rotate(-1.6deg) translateY(0) scale(1); } 50% { transform: rotate(2deg) translateY(-1.5px) scale(1.015); } }
+@keyframes pet-hop { 0% { transform: translateY(0) scale(1); } 30% { transform: translateY(-5px) scale(.98, 1.03); } 55% { transform: translateY(0) scale(1.04, .96); } 78% { transform: translateY(-1.5px) scale(.99, 1.01); } 100% { transform: translateY(0) scale(1); } }
+@keyframes pet-happy-head { 0%, 100% { transform: rotate(0); } 35% { transform: rotate(-3deg); } 70% { transform: rotate(2deg); } }
+@keyframes pet-think { 0%, 100% { transform: rotate(-2.5deg) translateX(-1%); } 50% { transform: rotate(2.5deg) translateX(1%); } }
+@keyframes pet-pop { 0% { transform: scale(1); } 45% { transform: scale(1.06, 1.08) translateY(-3px); } 100% { transform: scale(1); } }
+@keyframes pet-pop-head { 0%, 100% { transform: rotate(0); } 45% { transform: rotate(2.5deg); } }
+@keyframes pet-turn-away { 0%, 100% { transform: rotate(-5deg) translateX(-1.5%); } 50% { transform: rotate(-6.5deg) translateX(-2%); } }
 @keyframes pet-dangle { 0%, 100% { transform: rotate(-3deg) translateY(0); } 50% { transform: rotate(4deg) translateY(2px); } }
 @keyframes pet-swing { 0%, 100% { transform: rotate(3deg); } 50% { transform: rotate(-3deg); } }
-@keyframes pet-shake { 0%, 100% { transform: rotate(0) translateX(0); } 25% { transform: rotate(-6deg) translateX(-3%); } 75% { transform: rotate(6deg) translateX(3%); } }
-@keyframes pet-puff { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.06, .94); } }
+@keyframes pet-shake { 0%, 100% { transform: rotate(0) translateX(0); } 25% { transform: rotate(-4deg) translateX(-2%); } 75% { transform: rotate(4deg) translateX(2%); } }
+@keyframes pet-puff { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.05, .95); } }
 
 /* ------------------------------------------------------ the gaze frames */
 /* The neutral face is the resting one; the others replace it when the
@@ -1159,10 +1162,10 @@ body { background: transparent; }
 .pet[data-mood="curious"] .pet__head { animation: pet-lean-in 1.6s ease-in-out infinite; }
 .pet[data-mood="curious"] .pet__body { animation: pet-breathe 3.2s ease-in-out infinite; }
 
-/* Happy — it hops, once, and settles. */
-.pet[data-mood="happy"] { animation: pet-hop 620ms cubic-bezier(.3, .8, .4, 1); }
-.pet[data-mood="happy"] .pet__head { animation: pet-happy-head 620ms cubic-bezier(.3, .8, .4, 1); }
-.pet[data-mood="happy"] .pet__body { animation: pet-happy-body 620ms cubic-bezier(.3, .8, .4, 1); }
+/* Happy — the whole cat hops once and settles; the head only tilts about
+   the neck, so the hop never pulls the head off the body. */
+.pet[data-mood="happy"] { animation: pet-hop 560ms cubic-bezier(.3, .8, .4, 1); }
+.pet[data-mood="happy"] .pet__head { animation: pet-happy-head 560ms cubic-bezier(.3, .8, .4, 1); }
 
 /* Thinking — the cat rocks the way a person does when working something out. */
 .pet[data-mood="thinking"] .pet__head { animation: pet-think 1.9s ease-in-out infinite; }
@@ -1233,7 +1236,7 @@ body { background: transparent; }
 .pet[data-look="sleepy"] .pet__body { animation-duration: 8s; }
 
 @media (prefers-reduced-motion: reduce) {
-  .pet, .pet__body, .pet__head { animation: none !important; transition: none !important; }
+  .pet, .pet__body, .pet__head { animation: none !important; transition: none !important; rotate: 0deg; translate: 0 0; }
   .pet__frame { transition: none; }
 }
 

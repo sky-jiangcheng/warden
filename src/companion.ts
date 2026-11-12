@@ -61,15 +61,21 @@ type PointerState = {
   scaleFactor: number;
 };
 
-/// The cat notices the pointer within roughly a cat-width of its body.
-/// Farther away it keeps to itself: a pointer on the other side of the
-/// screen is not something a small cat can see, and pretending otherwise
-/// reads as a tracking bug.
-const ATTENTION_RADIUS = 104;
-
-/// A pointer that jumps from outside the attention radius to inside this one
-/// between two polls moved fast and landed close: a startle, not a glance.
+/// A pointer that jumps from far away to inside this radius between two
+/// polls moved fast and landed close: a startle, not a glance.
 const STARTLE_RADIUS = 56;
+const STARTLE_FROM = 150;
+
+/// The gaze follows the pointer anywhere on screen. Within GAZE_REACH the
+/// turn saturates; beyond it the head turn fades with distance — a cat does
+/// not crane its neck across the room — while the eyes still aim.
+const GAZE_REACH = 160;
+const GAZE_FALLOFF = 520;
+
+/// Exponential smoothing time constant for the gaze. The poll only sets a
+/// target; a rAF loop eases toward it every frame, so the turn is continuous
+/// instead of one small step per poll.
+const GAZE_TAU_MS = 110;
 
 /// Below this an axis counts as "straight ahead", so a pointer sitting on
 /// the cat does not make it twitch. While an axis is in the dead zone the
@@ -77,10 +83,10 @@ const STARTLE_RADIUS = 56;
 /// between mirror frames.
 const DIRECTION_DEADZONE = 6;
 
-/// How often the pointer is read. The OS call is cheap, but polling it on
-/// every animation frame would burn a core for a 130-pixel window; 60ms is
-/// smooth enough for a glance and cheap enough to be invisible.
-const POINTER_POLL_MS = 60;
+/// How often the pointer target is read. The OS call is cheap, but polling
+/// it on every animation frame would burn a core for a 130-pixel window;
+/// 50ms is fresh enough for a target that the rAF loop then eases toward.
+const POINTER_POLL_MS = 50;
 
 /// The blink cycle. Cats blink roughly every few seconds; the frame swap is
 /// short enough to read as a blink rather than a change of expression.
@@ -110,10 +116,16 @@ export function initCompanion(): void {
   let look: Look = "neutral";
   /// Set while a blink frame is showing, so the poll does not fight it.
   let blinking = false;
-  /// Whether the pointer is close enough to be worth looking at.
-  let attention = false;
   let lastSide: { h: "left" | "right"; v: "up" | "down" } = { h: "left", v: "up" };
   let lastDistance = Infinity;
+  /// The gaze target (set by the poll) and the eased value (written by the
+  /// rAF loop), normalised to ±1.
+  let targetX = 0;
+  let targetY = 0;
+  let curX = 0;
+  let curY = 0;
+  let gazeRaf = 0;
+  let gazeLast = 0;
 
   function setMood(mood: Mood, ms = 0): void {
     surface.dataset.mood = mood;
@@ -146,11 +158,34 @@ export function initCompanion(): void {
     if (!blinking) pet.dataset.look = next;
   }
 
-  /// Eyes back to the centre, head straight.
-  function rest(): void {
-    pet.style.setProperty("--look-x", "0");
-    pet.style.setProperty("--look-y", "0");
-    applyLook("neutral");
+  /// The poll sets a target; the loop eases the written value toward it with
+  /// an exponential decay, so every frame moves a little and the turn reads
+  /// as one continuous glance instead of a step per poll. The loop stops
+  /// itself once settled, so an idle cat costs nothing.
+  function setTarget(x: number, y: number): void {
+    targetX = x;
+    targetY = y;
+    if (!gazeRaf) {
+      gazeLast = performance.now();
+      gazeRaf = requestAnimationFrame(tick);
+    }
+  }
+
+  function tick(now: number): void {
+    const dt = Math.min(64, now - gazeLast);
+    gazeLast = now;
+    const k = 1 - Math.exp(-dt / GAZE_TAU_MS);
+    curX += (targetX - curX) * k;
+    curY += (targetY - curY) * k;
+    if (Math.abs(targetX - curX) < 0.002 && Math.abs(targetY - curY) < 0.002) {
+      curX = targetX;
+      curY = targetY;
+      gazeRaf = 0;
+    } else {
+      gazeRaf = requestAnimationFrame(tick);
+    }
+    pet.style.setProperty("--look-x", curX.toFixed(4));
+    pet.style.setProperty("--look-y", curY.toFixed(4));
   }
 
   /// The pointer's direction, as one of the four diagonals the art covers.
@@ -163,18 +198,15 @@ export function initCompanion(): void {
     return `${lastSide.v}${lastSide.h}`;
   }
 
-  /// The cat turns toward the pointer and its eyes follow.
-  function aim(x: number, y: number): void {
-    // The turn is a plain ratio, not an angle: how far the pointer is from
-    // the cat, in units of the pet's own size, decides how much the head
-    // turns. A pointer at the edge of the neighbourhood and one just past
-    // the cat's shoulder then look different, which is what a real glance
-    // does.
-    const reach = 150;
-    const nx = Math.max(-1, Math.min(1, x / reach));
-    const ny = Math.max(-1, Math.min(1, y / reach));
-    pet.style.setProperty("--look-x", nx.toFixed(3));
-    pet.style.setProperty("--look-y", ny.toFixed(3));
+  /// The cat turns toward the pointer and its eyes follow, wherever on the
+  /// screen the pointer is. The turn is a plain ratio, not an angle: how far
+  /// the pointer is from the cat, in units of the pet's own size, decides how
+  /// much the head turns, faded down at screen-scale distances.
+  function aim(x: number, y: number, distance: number): void {
+    const falloff = 1 / (1 + Math.max(0, distance - GAZE_REACH) / GAZE_FALLOFF);
+    const nx = Math.max(-1, Math.min(1, x / GAZE_REACH)) * falloff;
+    const ny = Math.max(-1, Math.min(1, y / GAZE_REACH)) * falloff;
+    setTarget(nx, ny);
     applyLook(directionFrom(x, y));
   }
 
@@ -229,9 +261,7 @@ export function initCompanion(): void {
     sulkTimer = setTimeout(() => {
       if (dragging || opening || thinking || document.hidden) return;
       sulking = true;
-      attention = false;
-      pet.style.setProperty("--look-x", "0");
-      pet.style.setProperty("--look-y", "0");
+      setTarget(0, 0);
       setMood("tsundere");
       applyLook("sleepy");
       say(REACTIONS.tsundere, 3200);
@@ -254,17 +284,11 @@ export function initCompanion(): void {
     const dy = (state.screenY - centreY) / scale;
     const distance = Math.hypot(dx, dy);
 
-    if (distance < ATTENTION_RADIUS) {
-      if (!attention && lastDistance >= ATTENTION_RADIUS && distance < STARTLE_RADIUS && !thinking) {
-        setMood("surprised", 650);
-        say(REACTIONS.surprised, 2200);
-      }
-      attention = true;
-      aim(dx, dy);
-    } else if (attention) {
-      attention = false;
-      rest();
+    if (!thinking && lastDistance >= STARTLE_FROM && distance < STARTLE_RADIUS) {
+      setMood("surprised", 650);
+      say(REACTIONS.surprised, 2200);
     }
+    aim(dx, dy, distance);
     lastDistance = distance;
   }
 
@@ -292,10 +316,8 @@ export function initCompanion(): void {
     if (event.button !== 0 || !desktop || dragging) return;
     event.preventDefault();
     dragging = true;
-    attention = false;
     lastDistance = Infinity;
-    pet.style.setProperty("--look-x", "0");
-    pet.style.setProperty("--look-y", "0");
+    setTarget(0, 0);
     setMood("dragging");
     say(REACTIONS.dragging);
     void invoke("window_drag").catch(() => { fail(); }).finally(() => {
@@ -317,7 +339,8 @@ export function initCompanion(): void {
 
   scheduleBlink();
   resetSulk();
-  if (desktop) {
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (desktop && !reducedMotion) {
     poll(readPointer, POINTER_POLL_MS);
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {

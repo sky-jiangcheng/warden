@@ -11,7 +11,7 @@ body{margin:0;background:#F4F2EE;font-family:-apple-system,sans-serif}
 .lbl{font-size:12px;color:#57524A;margin-top:8px}
 .note{padding:16px 24px 0;font-size:13px;color:#57524A}
 </style></head><body>
-<p class="note">浏览器预览 · 复用 src/styles.css 真实规则。最后一格移动鼠标可试视线跟随。</p>
+<p class="note">浏览器预览 · 复用 src/styles.css 真实规则。倒数第二格移动鼠标试阻尼视线跟随；最后一格自动循环点击反应，可检查脖子接缝。</p>
 <div class="row" id="row"></div>
 <script>
 const views=[
@@ -54,19 +54,45 @@ for(const [mood,look,lbl] of views){
  row.appendChild(d);
 }
 const live=document.createElement('div');live.className='cell';
-live.innerHTML=petHTML('idle','neutral')+`<div class="lbl">视线跟随 · 移动鼠标</div>`;
+live.innerHTML=petHTML('idle','neutral')+`<div class="lbl">视线跟随 · 移动鼠标（阻尼）</div>`;
 row.appendChild(live);
 const pet=live.querySelector('.pet');
-let h='left',v='up';
-addEventListener('mousemove',(e)=>{
+let h='left',v='up',tx=0,ty=0,cx=0,cy=0,raf=0,last=0;
+function tick(now){
+ const dt=Math.min(64,now-last);last=now;
+ const k=1-Math.exp(-dt/110);
+ cx+=(tx-cx)*k;cy+=(ty-cy)*k;
+ if(Math.abs(tx-cx)<0.002&&Math.abs(ty-cy)<0.002){cx=tx;cy=ty;raf=0;}else raf=requestAnimationFrame(tick);
+ pet.style.setProperty('--look-x',cx.toFixed(4));
+ pet.style.setProperty('--look-y',cy.toFixed(4));
+}
+addEventListener('mousemove',(e)=>point(e.clientX,e.clientY));
+function point(px,py){
  const r=pet.getBoundingClientRect();
- const x=e.clientX-(r.left+r.width/2), y=e.clientY-(r.top+r.height/2);
- const nx=Math.max(-1,Math.min(1,x/150)), ny=Math.max(-1,Math.min(1,y/150));
- pet.style.setProperty('--look-x',nx.toFixed(3));
- pet.style.setProperty('--look-y',ny.toFixed(3));
+ const x=px-(r.left+r.width/2), y=py-(r.top+r.height/2);
+ const d=Math.hypot(x,y), f=1/(1+Math.max(0,d-160)/520);
+ tx=Math.max(-1,Math.min(1,x/160))*f; ty=Math.max(-1,Math.min(1,y/160))*f;
+ if(!raf){last=performance.now();raf=requestAnimationFrame(tick);}
  if(Math.abs(x)<6&&Math.abs(y)<6){pet.dataset.look='neutral';return;}
  if(Math.abs(x)>=6)h=x<0?'left':'right';
  if(Math.abs(y)>=6)v=y<0?'up':'down';
  pet.dataset.look=v+h;
-});
+}
+// ?sweep — a synthetic pointer orbit, so headless captures can verify the
+// damped gaze loop without a real mouse.
+if(new URLSearchParams(location.search).has('sweep')){
+ const r=pet.getBoundingClientRect();
+ const cx=r.left+r.width/2, cy=r.top+r.height/2;
+ (function sweep(now){
+  const t=now/1000;
+  point(cx+Math.cos(t*1.4)*420, cy+Math.sin(t*1.4)*260);
+  requestAnimationFrame(sweep);
+ })(performance.now());
+}
+const demo=document.createElement('div');demo.className='cell';
+demo.innerHTML=petHTML('idle','neutral')+`<div class="lbl">点击反应 · 自动循环</div>`;
+row.appendChild(demo);
+const dpet=demo.querySelector('.pet');
+function hop(){ dpet.dataset.mood='happy'; setTimeout(()=>{dpet.dataset.mood='idle';},600); }
+hop(); setInterval(hop,2200);
 </script></body></html>
