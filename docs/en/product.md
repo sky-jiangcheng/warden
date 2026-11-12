@@ -349,24 +349,24 @@ actually writes the answer back through `repotory_handoff`.
 writing durable knowledge over MCP (the three above) is settled; whitelisted command execution
 belongs to **Phase 3, which has not started** ([roadmap.md](roadmap.md) M3).
 
-### 6. How the frontend state machine gets tested (open)
+### 6. ~~How the frontend state machine gets tested~~ (settled 2026-11-12: option 1, pure functions + vitest)
 
 **The original question**: `src/chat.ts` / `src/main.ts` carry the state machine — dropping stale
 revisions, one send at a time, no send while an IME is composing, keeping the draft after a failure,
 de-duplicating the 2.5-second polls — and **none of it has an automated test**. `npm run build` is a
 type check, and none of the three CI gates runs a frontend test.
 
-**Open**: which layer the tests live at.
-① Extract the transitions into pure functions and test them with vitest (fast and stable; does not
-cover the DOM or `Channel` behavior);
-② vitest + jsdom with a real DOM, mocking `invoke` / `Channel` (close to real; one fake IPC to maintain);
-③ Playwright end to end (most real; slow, and the Tauri window itself is still out of reach).
+**Settled**: option ① — the decisions were extracted to `src/chat-state.ts` as pure functions
+(`sendBlocked`, `readIsStale`, `shouldAdoptThread`, `draftAfterSend`), tested directly with vitest
+(`src/chat-state.test.ts`, `npm run test:fe`, its own CI job). `chat.ts` calls these functions, so
+the tests exercise the production path, not a copy that can drift. The DOM bindings and `Channel`
+transport stay untested on purpose: they are the parts a type check plus the real app smoke cover
+cheaply, while the four silent-regression rules needed a gate.
 
-**Not open**: whether to test — yes; only the shape is open. The devDependency and the fourth CI
-gate wait for that choice.
-
-**Acceptance**: four paths covered — concurrent sends to one thread keep only the last, a stale
-revision is dropped, no send during IME composition, and the draft survives a failed request.
+**Acceptance — met**: four paths covered, concurrent sends to one thread keep only the last
+(`sendBlocked` on `busy`), a stale revision is dropped (`readIsStale`, including the busy case),
+no send during IME composition (`sendBlocked` plus the shared `COMPOSITION_GRACE_MS` the keydown
+guard uses too), and the draft survives a failed request (`draftAfterSend` on `failed`).
 
 ### 7. What the "human confirmation" looks like on the copilot side when durable knowledge is written back (open)
 

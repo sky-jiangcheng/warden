@@ -252,22 +252,22 @@ ADR-0015 的原话正是这个形态（"model writes into the store with no gate
 ⑤ **Phase 0 的「人工确认」一处已定、一处待 Phase 3**：copilot 通过 MCP 写长期知识
 （上面这三个）这一处已定；白名单命令执行那一处属于 **Phase 3，尚未开始**（[roadmap.md](roadmap.md) M3）。
 
-### 6. 前端状态机的测试策略（待定）
+### 6. ~~前端状态机的测试策略~~（已定 2026-11-12：选项 ①，纯函数 + vitest）
 
 **原问题**：`src/chat.ts` / `src/main.ts` 的状态机——主题 revision 丢弃、单线程并发、
 IME 组合期不发送、失败后保留草稿、2.5 秒轮询去重——目前**没有任何自动化测试**。
 `npm run build` 只做类型检查，CI 三道门里也没有前端测试。
 
-**待定**：测试停在哪一层。
-① 把状态迁移抽成纯函数，vitest 直测（快、稳；覆盖不到 DOM 与 `Channel` 的真实行为）；
-② vitest + jsdom 挂真 DOM，mock `invoke` / `Channel`（接近真实；要维护一套假 IPC）；
-③ Playwright 端到端（最真；慢，且 Tauri 窗口本身仍进不去）。
+**已定**：选项 ①——四个决策抽成纯函数放进 `src/chat-state.ts`（`sendBlocked` / `readIsStale` /
+`shouldAdoptThread` / `draftAfterSend`），vitest 直测（`src/chat-state.test.ts`、`npm run test:fe`、
+独立 CI job）。`chat.ts` 调的就是这些函数，**测的是生产路径，不是会漂的副本**。
+DOM 绑定与 `Channel` 传输**刻意不测**：那部分由类型检查加真 app 冒烟廉价覆盖，
+而会**静默回归**的正是这四条规则，它们需要门禁。
 
-**不在待定范围**：要不要测——要，问题只是形态。选型后再决定是否新增 devDependency 与
-CI 第四道门。
-
-**验收判据**：四条路径有自动化用例——同主题并发只保留最后一次、revision 落后的响应被丢弃、
-IME 组合输入期间不触发发送、请求失败后草稿仍在。
+**验收判据——已满足**：四条路径都有用例——同主题并发只保留最后一次（`sendBlocked` 的 `busy`）、
+revision 落后的响应被丢弃（`readIsStale`，含 busy 情形）、IME 组合输入期间不触发发送
+（`sendBlocked` + 共用的 `COMPOSITION_GRACE_MS`，keydown 守卫同用这一个数）、
+请求失败后草稿仍在（`draftAfterSend` 的 `failed`）。
 
 ### 7. 长期知识写回时，「人确认」在 copilot 侧长什么样（待定）
 

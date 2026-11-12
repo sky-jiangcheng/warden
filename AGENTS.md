@@ -19,6 +19,7 @@ Cinder 的 MCP 工具面在知识页上只有纯读工具，copilot 走 MCP 就�
 npm install
 npm run tauri dev        # 开发（Vite + Tauri 窗口）
 npm run build            # 前端类型检查 + 构建（CI 门之一）
+npm run test:fe          # 前端状态机测试（vitest，CI 门之一）
 npm run check:docs       # 双语文档镜像守卫（CI 门之一）
 npm run check:brand      # 品牌守门（CI 门之一）
 cd src-tauri && cargo check     # Rust 后端类型检查
@@ -36,6 +37,7 @@ cd src-tauri && cargo test --all-targets --features test-fixtures               
 ```
 src/                 前端（TypeScript + Vite，无框架）
   main.ts            首屏渲染：只消费后端的 shell_status，不含任何运行时知识
+  chat-state.ts      聊天状态机的纯决策（并发/revision 丢弃/IME 窗口/草稿保留），vitest 直测它
   styles.css         设计令牌 + 卡片/徽章/排版
   assets/warden.png  主窗品牌标记：264px 光栅，按 36px 显示（3× 只为不留放大糊边；生成物，走主仓图标生成器）
   assets/pet/        桌宠「霜」分层帧：body + head 表情/视线 webp，同一画布对齐，head 向下重叠裁切防接缝（warden-cat/recut_overlap.py），CSS 交叉淡入换帧
@@ -150,8 +152,9 @@ scripts/             仓库守卫脚本
   本仓的图标**全部是生成物**（`src-tauri/icons/`：Tauri 的 PNG 阶梯 + Square* 商店阶梯 +
   `icon.ico` / `icon.icns` + `tray-22.png`）。改动 `icon-warden.svg` 后必须重跑这条命令，
   否则 app 会带着旧标记上线。
-- **CI 有五个 job**（`.github/workflows/ci.yml`）：docs mirror / brand / 前端 build /
-  Rust fmt+clippy+test（ubuntu）/ Rust 三门 + `tauri build --debug --bundles app` 冒烟（macOS，2026-11-12 补）。
+- **CI 有六个 job**（`.github/workflows/ci.yml`）：docs mirror / brand / 前端 build /
+  前端状态机测试（`npm run test:fe`，vitest）/ Rust fmt+clippy+test（ubuntu）/
+  Rust 三门 + `tauri build --debug --bundles app` 冒烟（macOS，2026-11-12 补）。
   **本地提交前把相关的都跑一遍**——`cargo fmt` 尤其，它会改文件。
   macOS 冒烟本地等价命令是 `npm run tauri build -- --debug --bundles app`（不要 `all`：
   dmg 那步的 `hdiutil` 在沙箱/受限环境会失败，与代码好坏无关）。

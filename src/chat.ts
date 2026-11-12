@@ -1,5 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
 import { browserNote, desktop, errorText, invoke, openSheet, pick, poll } from "./ui";
+import { COMPOSITION_GRACE_MS, draftAfterSend, readIsStale, sendBlocked, shouldAdoptThread } from "./chat-state";
 
 type Thread = { id: string; title: string; path: string | null; createdAt: string; updatedAt: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; source: string; replyTo: string | null; createdAt: string; pending?: boolean; failed?: boolean };
@@ -197,7 +198,13 @@ export function initChat() {
         const topic = [...topics.values()].find((item) => item.thread?.id === thread.id);
         if (topic) {
           // A local rename/create/send can finish while this list is in flight.
-          if (revisions.get(topic.key) === topic.revision && !topic.busy && (!topic.thread || thread.updatedAt >= topic.thread.updatedAt)) {
+          if (shouldAdoptThread({
+            revisionUnchanged: revisions.get(topic.key) === topic.revision,
+            busy: topic.busy,
+            hasLocalThread: Boolean(topic.thread),
+            serverUpdatedAt: thread.updatedAt,
+            localUpdatedAt: topic.thread?.updatedAt ?? "",
+          })) {
             topic.thread = thread;
             topic.title = thread.title;
           }
@@ -223,7 +230,7 @@ export function initChat() {
     const revision = topic.revision;
     try {
       const result = await invoke<{ thread: Thread; messages: Message[] }>("conversation_read", { threadId: topic.thread.id });
-      if (topic.revision !== revision || topic.busy) return;
+      if (readIsStale({ revisionAtRequest: revision, revisionNow: topic.revision, busy: topic.busy })) return;
       topic.thread = result.thread;
       topic.title = result.thread.title;
       topic.path = result.thread.path;
@@ -234,7 +241,7 @@ export function initChat() {
       if (active === topic) { syncContext(); render(); }
       renderTopics();
     } catch (error) {
-      if (topic.revision !== revision) return;
+      if (readIsStale({ revisionAtRequest: revision, revisionNow: topic.revision, busy: topic.busy })) return;
       topic.readError = true;
       topic.error = `主题暂时无法读取，草稿已保留，将自动重试。${errorText(error)}`;
       if (active === topic) updateStatus();
@@ -289,7 +296,7 @@ export function initChat() {
     const topic = active;
     const draft = input.value;
     const text = draft.trim();
-    if (composing || Date.now() - compositionEnded < 80 || topic.busy || !text) return;
+    if (sendBlocked({ composing, msSinceCompositionEnd: Date.now() - compositionEnded, busy: topic.busy, text })) return;
     if (!desktop) { topic.error = browserNote; updateStatus(); return; }
     if (!topic.loaded || topic.readError) { topic.error = "请等待主题读取成功后再发送，草稿会保留。"; updateStatus(); return; }
     const providerId = providerSelect.value;
@@ -308,6 +315,7 @@ export function initChat() {
     let accepting = true;
     let streamError = "";
     let streamDone = false;
+    let sendFailed = false;
     try {
       // Never silently migrate a temporary exchange into a persistent thread:
       // it did not have model history or shared storage. Only an empty topic
@@ -347,10 +355,12 @@ export function initChat() {
       if (!answer.content) throw new Error("未收到模型回复，请重试。");
       // The Rust command returns after appending the assistant to Cinder.
       // A user may already be editing the next draft: never erase that work.
-      if (topic.draft === draft) topic.draft = "";
+      // The draft itself is settled once in `finally` (draftAfterSend), so the
+      // keep-on-failure rule and the keep-on-edit rule share one code path.
       if (active === topic && input.value === draft) { input.value = ""; resizeInput(); }
       pick<HTMLElement>("#chat-announcement").textContent = active === topic ? "Warden 已回复。" : `主题「${topic.title}」已收到回复。`;
     } catch (error) {
+      sendFailed = true;
       topic.error = `发送未完成，草稿已保留。${errorText(error)}`;
       if (user) user.failed = true;
       if (assistant) assistant.failed = true;
@@ -368,6 +378,11 @@ export function initChat() {
       }
       if (user) user.pending = false;
       if (assistant) assistant.pending = false;
+      // One settle point for the draft rule (chat-state): failure keeps the
+      // draft, success with a re-edited draft keeps the new work, success
+      // untouched clears it. On success topic.draft was already reset above
+      // when the input still held the sent text.
+      topic.draft = draftAfterSend({ draftNow: topic.draft, draftAtSend: draft, failed: sendFailed });
       topic.busy = false;
       topic.revision += 1;
       if (active === topic) render();
@@ -395,7 +410,7 @@ export function initChat() {
   input.addEventListener("compositionend", () => { composing = false; compositionEnded = Date.now(); });
   input.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey) return;
-    if (event.isComposing || composing || event.keyCode === 229 || Date.now() - compositionEnded < 80) return;
+    if (event.isComposing || composing || event.keyCode === 229 || Date.now() - compositionEnded < COMPOSITION_GRACE_MS) return;
     event.preventDefault();
     void sendMessage();
   });

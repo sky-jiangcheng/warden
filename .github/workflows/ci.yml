@@ -6,9 +6,9 @@
 # push to master and every pull request must pass every gate before it can
 # land.
 #
-# Five jobs, independent and parallel: a failure reads as "docs" / "brand" /
-# "frontend" / "rust" / "rust-macos" in the checks list instead of hiding inside
-# one red job.
+# Six jobs, independent and parallel: a failure reads as "docs" / "brand" /
+# "frontend" / "frontend-test" / "rust" / "rust-macos" in the checks list
+# instead of hiding inside one red job.
 #
 # What this gate does NOT do: it does not publish. `rust-macos` builds the debug
 # bundle as a packaging smoke — unsigned, on a throwaway runner, with nothing
@@ -109,6 +109,32 @@ jobs:
 
       - name: Type-check and build
         run: npm run build
+
+  # ------------------------------------------------------ frontend-test ----
+  # The state-machine gate (roadmap engineering gap 1). The four guarded
+  # paths — concurrent sends, stale-response dropping, the IME window and
+  # draft retention — are pure decisions extracted to src/chat-state.ts
+  # (product.md open question 6, option 1: pure functions, vitest direct).
+  # Separate job from the build so a failing behaviour reads as "frontend
+  # test", not as a compile error nobody can tell apart from a typo.
+  frontend-test:
+    name: Frontend state-machine tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run vitest
+        run: npm run test:fe
 
   # --------------------------------------------------------------- rust ----
   # Three checks, in the order that fails fastest:

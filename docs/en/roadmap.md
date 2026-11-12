@@ -210,12 +210,17 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 These three belong to no phase, yet all of them block "releasable". Close them against the
 acceptance criteria; no new process.
 
-### 1. Frontend state-machine tests
+### 1. Frontend state-machine tests — closed (2026-11-12, option 1 of "open question 6")
 
 - **Problem**: `npm run build` is `tsc` only; none of the three CI gates runs a frontend test.
 - **Impact**: `src/chat.ts`'s revision dropping, concurrency, IME guard and draft retention are
   hand-tested; one change to the chat flow can regress them.
 - **Acceptance**: land the choice from "open question 6" in [product.md](product.md) and wire it into CI.
+- **How it was closed**: the four decisions were extracted to `src/chat-state.ts` as pure functions,
+  and `chat.ts` calls them — so the tests exercise the production path, not a copy that can drift.
+  vitest cases cover all four acceptance paths (`src/chat-state.test.ts`, `npm run test:fe`), and CI
+  gained a `frontend-test` job. The DOM bindings and the `Channel` transport are deliberately
+  untested; see the reasoning in open question 6.
 
 ### 2. System notification: promised in docs, absent in code — closed (2026-11-12, the "remove" side)
 

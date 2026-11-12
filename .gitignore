@@ -27,3 +27,8 @@ dist-ssr
 # The archived inspection screenshots under outputs/screenshots/ ARE committed.
 .playwright/
 .playwright-cli/
+
+# Local npm cache workaround: this maintainer machine's ~/.npm is root-owned,
+# so installs run with `npm --cache ./.npm-cache`. The cache is machine
+# scratch, never an input; CI uses `npm ci` with the runner's own cache.
+.npm-cache/
