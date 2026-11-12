@@ -235,9 +235,11 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **修掉「Cinder 没坏却被说成坏了」的最后一族。** 上一版放行了返回 JSON 数组的工具，这一版处理剩下的两类：`repotory_context` 按服务端契约返回的是**纯文本**，Warden 却仍按 JSON 解析，报「invalid JSON: expected value at line 1 column 1」让模型去怪 Cinder——现在模型工具的答案**原样传递**（文本和 JSON 都读得懂），只有对话自身的 `repotory_chat` 路径保留对象校验，因为那个答案真的按字段读。同族第二面：服务端用 `isError: true` 拒绝非法参数时，Warden 此前当成功返回，UI 显示「✓ 已完成」下面挂着拒绝文本——现在带内失败如实报错。三个新形状由 fake MCP 夹具与回归测试钉住。
+            **伴侣窗里的灯换成了一只猫——桌宠「霜」。** 灯体 PNG 和一圈辉光换成分层的白猫：身体一帧、头部一层表情与视线帧（webp，同一画布预对齐，CSS 交叉淡入换帧，换脸不闪全图）。视线跟着屏幕上的指针走——webview 只在指针进入窗口时才收得到事件，而一只常驻置顶的小猫几乎永远不在指针底下，所以新增 `companion_pointer` 命令直接从 OS 读指针，连同窗口自己的位置和尺寸在同一物理像素坐标系里换算。它会自己眨眼（约 3.4 秒一循环），被冷落 12 秒就傲娇别过脸，指针猛地凑近会吓一跳——这些是「被关注才有反应」的部分，图标给不了。仓库里的 `pet-preview.html` 复用真实样式表预览全部表情帧，预览不会和 app 漂移。
 
-            **对话终于分得清「我盯的仓库」和「知识库管的项目」。** 你问「我关注哪些仓库」，模型此前只看得见 Cinder 的星标项目，把知识库清单当成了你的关注列表。现在 Warden 把自己的监视列表（设置页里你从磁盘扫描里认领的那份）随每次发送写进系统提示词，并写明这两份不是同一个东西；保存新的选择后下一条消息即生效。没有 Cinder 的临时对话契约不变。
+            **MCP 的写管道挪出 tokio worker。** `ChildStdin` 的 write+flush 是阻塞管道操作，此前直接跑在 async worker 上——慢或写满的管道会把 worker 钉住。现在走 `spawn_blocking`，stdin 用 Arc 共享，锁只在闭包内创建、绝不跨 await；失败照常报给调用方，死掉的服务端不会被吞掉。
+
+            **CSP 从 null 换成显式白名单。** `csp: null` 意味着 WebView 没有任何默认限制。现在生产与开发各一份逐源放行的白名单（图片放行 Tauri asset 协议、连接放行 ipc；开发档多放 Vite dev server 和它注入的内联样式脚本），`object-src` 与 `frame-ancestors` 双双关死。
 
             **macOS 已签名并公证。** 产物用 Developer ID Application 签名，提交 Apple 公证，票据 stapled 进包里——Gatekeeper 不再拦，拖进 `/Applications` 直接双击就开，不用再跑 `xattr -dr com.apple.quarantine`。v0.1.7 及更早的版本没签名，那几个版本才需要放行命令；这一版起不需要了。Windows 产物未签名，SmartScreen 可能要求确认。
 
