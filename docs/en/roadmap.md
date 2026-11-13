@@ -200,9 +200,14 @@ confirmation step**. Four rules:
   and a larger output cap (16 KB);
 - Refusals and approvals both land in the same `exec-audit.jsonl`.
 
-**Not done**: "every output can be collapsed" is still a one-line status, not an expandable
-full-output panel. Arbitrary commands (`mysql -e`, any other shell) stay off the face — the
-whitelist is exactly four write tools and eight read tools.
+**"Every output can be collapsed" has landed (same day)**: the tool line is a `<details>`, and
+expanding it shows the exact text the model received — **not a re-run**, because running the same
+command again could return something different and the panel would then be lying about what
+happened. Collapsed it shows a one-line summary (ellipsised); the body is height-capped, so no
+output length can push the composer away, and a re-render does not close a panel the user opened.
+
+**Not done**: arbitrary commands (`mysql -e`, any other shell) stay off the face — the whitelist
+is exactly four write tools and eight read tools.
 
 ## Phase 4: the memory panels (1–2 weeks)
 
@@ -250,7 +255,7 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 | M1 | It can call Cinder MCP | done (Phase 1) |
 | M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
 | M2 | It can talk to a model about the current repository | done (2026-11-12: the chat loop, the system prompt, the read-only tool face, diff injection and the handoff write-back are all wired) |
-| M3 | It can safely run Git / Shell commands | in progress (eight read tools + four write tools, the write side behind a confirmation card; audit log and full-command display are in place; arbitrary shell and a collapsible output panel are not) |
+| M3 | It can safely run Git / Shell commands | in progress (eight read tools + four write tools, the write side behind a confirmation card; audit log, full-command display and a collapsible output panel are in place; arbitrary shell is not) |
 | M4 | It can see and manage cross-session memory | not started |
 | M5 | It installs and initializes in one step | not started |
 | M6 | It ships as a standalone product | not started |

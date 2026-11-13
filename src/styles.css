@@ -867,6 +867,20 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
    the point, so it gets monospace and full width instead of being tucked in
    a tooltip. Refuse is the quiet button, Run is the only loud one: the safe
    answer should not be the one that looks inviting. */
+/* The collapsible output panel: what the model actually read from a local
+   command. A <details> because the browser already owns that interaction
+   (keyboard, aria, open state) — rebuilding it would only add bugs. The
+   summary is one line and the body is capped, so expanding cannot push the
+   composer off screen no matter how long the output is. */
+.tool-panel { margin: 7px 0 2px; border: 1px solid var(--border-subtle, var(--border-default)); border-radius: 8px; background: var(--bg-sunken, rgba(0,0,0,.16)); overflow: hidden; }
+.tool-panel[data-ok="false"] { border-color: var(--danger-border, var(--border-default)); }
+.tool-panel__summary { cursor: pointer; padding: 6px 9px; font-size: 10px; color: var(--text-tertiary); list-style: none; user-select: none; }
+.tool-panel__summary::-webkit-details-marker { display: none; }
+.tool-panel__summary::before { content: "▸ "; }
+.tool-panel[open] .tool-panel__summary::before { content: "▾ "; }
+.tool-panel__summary:hover { color: var(--text-secondary); }
+.tool-panel__label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tool-panel__body { margin: 0; padding: 0 9px 8px; max-height: 220px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval { border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-card); padding: 11px 12px 10px; margin: 0 4px 9px; box-shadow: var(--shadow-md); }
 .approval[hidden] { display: none; }
 .approval__title { margin: 0 0 7px; font-size: 11px; font-weight: 600; color: var(--text-primary); }

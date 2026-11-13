@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMPOSITION_GRACE_MS,
   draftAfterSend,
+  outline,
   readIsStale,
   sendBlocked,
   shouldAdoptThread,
@@ -126,5 +127,23 @@ describe("draftAfterSend — failure keeps the draft", () => {
 
   it("clears the draft after an untouched successful send", () => {
     expect(draftAfterSend({ draftNow: "sent text", draftAtSend: "sent text", failed: false })).toBe("");
+  });
+});
+
+describe("outline — the collapsed panel's one-line summary", () => {
+  it("takes the first non-empty line, trimmed", () => {
+    expect(outline("\n\n  M a.txt\nM b.txt")).toBe("M a.txt");
+  });
+
+  it("caps a long first line so the collapsed state stays one line", () => {
+    // A collapsed panel taller than the expanded one defeats the point.
+    const got = outline("x".repeat(500), 10);
+    expect(got).toBe("xxxxxxxxxx…");
+    expect(got.length).toBe(11);
+  });
+
+  it("says so when there is nothing to show", () => {
+    expect(outline("")).toBe("空");
+    expect(outline("   \n\t\n")).toBe("空");
   });
 });

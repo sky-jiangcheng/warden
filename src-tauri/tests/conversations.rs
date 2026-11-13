@@ -904,6 +904,14 @@ async fn a_local_read_only_tool_runs_audited_and_shows_its_command() {
         finish.command.as_deref(),
         Some("git --no-pager status --short --branch")
     );
+    // Phase 3: 所有输出必须可折叠查看. The literal output travels to the UI
+    // so the panel can expand exactly what the model read — never a re-run,
+    // which could differ.
+    let output = finish
+        .output
+        .as_deref()
+        .expect("the output must travel to the UI");
+    assert!(output.contains("a.txt"), "{output}");
 
     // The model read the real answer: the dirty file is named in the tool
     // result it was handed back.
@@ -1019,6 +1027,10 @@ async fn an_approved_write_command_runs_and_is_audited() {
         .expect("a finished tool event");
     assert!(finish.ok, "{:?}", finish.error);
     assert_eq!(finish.command.as_deref(), Some(card_command));
+    assert!(
+        finish.output.as_ref().is_some_and(|o| !o.is_empty()),
+        "an executed command must hand its output back to the UI"
+    );
 
     // It actually staged: the working tree still shows the change, but the
     // index now has it, which is what `git add` means.
@@ -1086,6 +1098,9 @@ async fn a_refused_write_command_does_not_run() {
         .find(|e| e.done)
         .expect("a finished tool event");
     assert!(!finish.ok);
+    // Nothing ran, so there is nothing to expand: the chip shows the
+    // refusal, and the panel must not appear offering an empty body.
+    assert!(finish.output.is_none(), "a refusal has no output to expand");
     // The card's command still travels to the UI: the user should see what
     // they declined, not a blank chip.
     // The command shown is the argv joined with spaces — no shell quoting,

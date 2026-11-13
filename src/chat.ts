@@ -1,12 +1,12 @@
 import { Channel } from "@tauri-apps/api/core";
 import { browserNote, desktop, errorText, invoke, openSheet, pick, poll } from "./ui";
-import { COMPOSITION_GRACE_MS, draftAfterSend, readIsStale, sendBlocked, shouldAdoptThread } from "./chat-state";
+import { COMPOSITION_GRACE_MS, draftAfterSend, outline, readIsStale, sendBlocked, shouldAdoptThread } from "./chat-state";
 
 type Thread = { id: string; title: string; path: string | null; createdAt: string; updatedAt: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; source: string; replyTo: string | null; createdAt: string; pending?: boolean; failed?: boolean };
 // A tool call belongs to one topic's reply; different threads can generate at
 // the same time, so this state cannot live in a shared closure.
-type ToolState = { name: string; done: boolean; ok?: boolean; error?: string; command?: string };
+type ToolState = { name: string; done: boolean; ok?: boolean; error?: string; command?: string; output?: string; open?: boolean };
 type Topic = {
   key: string; thread: Thread | null; title: string; path: string | null;
   messages: Message[]; draft: string; busy: boolean; error: string; loaded: boolean;
@@ -16,7 +16,7 @@ type Topic = {
 type Provider = { id: string; name: string; defaultModel: string | null; active: boolean };
 type Repo = { path: string; name: string; missing: boolean };
 type Model = { id: string; name: string | null };
-type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string; command?: string } | null;
+type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string; command?: string; output?: string } | null;
   approval?: { id: string; tool: string; command: string; seconds: number } | null };
 
 export function initChat() {
@@ -177,28 +177,80 @@ export function initChat() {
       // Only the latest assistant reply carries this topic's tool state.
       const lastMessage = active.messages[active.messages.length - 1] === message;
       const tool = active.tool;
+      // The tool line is a DISCLOSURE, not a static label: when the model ran
+      // a local command, `output` holds the literal text it received, and the
+      // line becomes a button that expands exactly that -- never a re-run,
+      // because a second read could return something else and the panel would
+      // then be lying about what happened. Fields are written with
+      // textContent everywhere: command and output are untrusted.
+      const toolHere = Boolean(tool) && message.role === "assistant" && lastMessage;
       let tooling = "";
-      if (tool && message.role === "assistant" && lastMessage) {
-        // Phase 3: 所有命令必须显示完整命令. A local execution reports the
-        // argv it really ran, so the chip reads `git --no-pager status …`
-        // instead of just a tool name. MCP tools carry no local command and
-        // keep the name-only form.
+      if (tool && toolHere) {
         const what = tool.command ? `${tool.name}（${tool.command}）` : tool.name;
         tooling = !tool.done ? ` · 调用 ${what}…`
           : tool.ok === false ? ` · ${tool.name} 失败：${tool.error ?? "未知错误"}`
           : ` · ✓ ${what} 已完成`;
       }
       const meta = `${label}${source}${tooling || (message.failed ? " · 未完成" : "")}`;
-      if (node.firstElementChild!.textContent !== meta) node.firstElementChild!.textContent = meta;
+      const metaEl = node.firstElementChild as HTMLElement;
+      if (metaEl.textContent !== meta) metaEl.textContent = meta;
       // Plain text is deliberate: model output, titles, paths and sources are
       // untrusted. Never interpolate them into markup, selectors, or URLs.
-      if (node.lastElementChild!.textContent !== message.content) node.lastElementChild!.textContent = message.content;
+      const textEl = node.lastElementChild as HTMLElement;
+      if (textEl.textContent !== message.content) textEl.textContent = message.content;
+      renderToolPanel(node, textEl, toolHere ? tool : null);
     }
     pick<HTMLElement>("#chat-loading").hidden = active.loaded || !active.thread;
     pick<HTMLElement>("#chat-empty").hidden = active.messages.length > 0 || !active.loaded;
     log.scrollTop = keepBottom ? log.scrollHeight : oldTop;
     pick<HTMLButtonElement>("#jump-latest").hidden = keepBottom || active.messages.length === 0;
     updateStatus();
+  }
+
+  /// Draws (or removes) the collapsible output panel under one assistant
+  /// message.
+  ///
+  /// Only local commands have `output`: an MCP answer is already the reply
+  /// text, and expanding it twice would show the same prose in two places.
+  /// The panel is rebuilt only when its content changed, so a render pass
+  /// that fires during streaming does not fight the user's open/closed
+  /// state — `tool.open` is the single owner of that bit.
+  function renderToolPanel(node: HTMLElement, textEl: HTMLElement, tool: ToolState | null): void {
+    const existing = node.querySelector<HTMLDetailsElement>(".tool-panel");
+    const output = tool?.done ? tool.output : undefined;
+    if (!tool || output === undefined) {
+      existing?.remove();
+      return;
+    }
+    let panel: HTMLDetailsElement | null = existing;
+    if (!panel) {
+      panel = document.createElement("details");
+      panel.className = "tool-panel";
+      const summary = document.createElement("summary");
+      summary.className = "tool-panel__summary";
+      const label = document.createElement("span");
+      label.className = "tool-panel__label";
+      const body = document.createElement("pre");
+      body.className = "tool-panel__body";
+      panel.append(summary, body);
+      summary.append(label);
+      // Insert after the message text so it reads as part of the reply, not
+      // as something the next message owns.
+      textEl.after(panel);
+      panel.addEventListener("toggle", () => {
+        if (tool) tool.open = panel!.open;
+      });
+    }
+    const label = panel.querySelector<HTMLElement>(".tool-panel__label")!;
+    const body = panel.querySelector<HTMLElement>(".tool-panel__body")!;
+    const text = output.length > 0 ? output : "（没有输出）";
+    if (body.textContent !== text) body.textContent = text;
+    const summaryText = `输出 · ${outline(text)}`;
+    if (label.textContent !== summaryText) label.textContent = summaryText;
+    // Restore the user's choice after a re-render (the DOM node persists, but
+    // this keeps the flag authoritative if a future render recreates it).
+    if (panel.open !== Boolean(tool.open)) panel.open = Boolean(tool.open);
+    panel.dataset.ok = String(tool.ok !== false);
   }
 
   function renderTopics(): void {
@@ -417,6 +469,10 @@ export function initChat() {
             ok: chunk.toolCall.ok,
             error: chunk.toolCall.error,
             command: chunk.toolCall.command,
+            output: chunk.toolCall.output,
+            // A re-render must not close a panel the user opened: the open
+            // flag lives on the topic's tool state, which survives renders.
+            open: topic.tool?.open ?? false,
           };
         }
         if (chunk.approval) showApproval(chunk.approval);

@@ -170,6 +170,19 @@ pub struct ToolEvent {
     /// absent for them (skip_serializing keeps old payloads byte-identical).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// Phase 3: 所有输出必须可折叠查看. The LITERAL output of a local
+    /// command — stdout for a success, the refusal sentence for a failure —
+    /// so the UI can show the collapse chevron and hand back what really
+    /// ran. Absent for MCP tools (their answer is already in the model's
+    /// tool result, and re-sending it would put the same text in two places
+    /// that can drift) and absent while the call is still running.
+    ///
+    /// This is the full text the model received, capped by the same byte
+    /// limit: "collapsible" means "expand what the model saw", never "fetch
+    /// more later", because a second read could return different output for
+    /// the same command and the panel would be lying about what happened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 /// Turns a client error into something a person can act on.

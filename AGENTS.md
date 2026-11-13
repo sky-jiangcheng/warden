@@ -60,6 +60,8 @@ src-tauri/           后端（Rust）
                       `exec-audit.jsonl` 审计（0600，记完整 argv 与退出码）。
                       **`plan_write` 是卡片与执行的同一个真相**：先规划、把命令给人看、批准后照同一个 planner 跑。
                       **别把写工具改成自动执行**，也别持久化批准——一次批准只覆盖一条命令。
+                      `ToolEvent.output` 把同一份原文交给前端做可折叠面板（只给本地命令；MCP 答案不复制，
+                      否则同一段文字有两处会漂）。**面板展开的是模型收到的那份文本，不是重跑一遍**。
   src/memory_layer.rs    记忆层（Cinder MCP）状态：连接 + 服务端给的工具清单
   src/repos.rs        仓库发现与收藏清单：扫盘 + watchlist 持久化
   tests/             端到端测试（真管道 + fake MCP server / fake LLM server / 真仓库目录）

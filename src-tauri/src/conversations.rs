@@ -166,19 +166,14 @@ async fn route_tool(
     arguments: Value,
     scope: Option<&GenerationScope>,
     mut ask: impl FnMut(&crate::provider_commands::ApprovalRequest),
-) -> (String, bool, Option<String>, Option<String>) {
+) -> Routed {
     if crate::exec::is_local(name) {
         let Some(scope) = scope else {
             // The local face was never offered without a repository (the
             // tool list is assembled per generation); a model inventing a
             // warden_* name here gets the honest sentence, no execution.
             let message = format!("tool {name} is not available in this conversation");
-            return (
-                json!({"error": message}).to_string(),
-                false,
-                Some(message),
-                None,
-            );
+            return Routed::refused(message);
         };
         let repository = std::path::PathBuf::from(&scope.repository);
         let audit = state.audit.clone();
@@ -202,27 +197,14 @@ async fn route_tool(
         .await
         .map_err(|e| format!("the local tool task failed: {e}"));
         return match executed {
-            Ok(out) => {
-                let ExecutedBranch { content, ok, error } = branch_answer(name, out.text, out.ok);
-                (content, ok, error, Some(out.command))
-            }
-            Err(message) => (
-                json!({"error": message}).to_string(),
-                false,
-                Some(message),
-                None,
-            ),
+            Ok(out) => Routed::executed(name, out),
+            Err(message) => Routed::refused(message),
         };
     }
     if crate::exec::is_write(name) {
         let Some(scope) = scope else {
             let message = format!("tool {name} is not available in this conversation");
-            return (
-                json!({"error": message}).to_string(),
-                false,
-                Some(message),
-                None,
-            );
+            return Routed::refused(message);
         };
         let repository = std::path::PathBuf::from(&scope.repository);
         // Plan FIRST: the card must show the exact command, and a bad
@@ -230,14 +212,7 @@ async fn route_tool(
         // user with a dialog for something that cannot run anyway.
         let command = match crate::exec::plan_write(name, &arguments, &repository) {
             Ok(command) => command,
-            Err(reason) => {
-                return (
-                    json!({"error": reason.clone()}).to_string(),
-                    false,
-                    Some(reason),
-                    None,
-                );
-            }
+            Err(reason) => return Routed::refused(reason),
         };
         // The card. `approvals` is the single source of truth for whether a
         // card is still open: pending is a state, not a missing entry.
@@ -277,50 +252,57 @@ async fn route_tool(
                 .await
                 .map_err(|e| format!("the write tool task failed: {e}"));
                 return match executed {
-                    Ok(out) => {
-                        let ExecutedBranch { content, ok, error } =
-                            branch_answer(name, out.text, out.ok);
-                        (content, ok, error, Some(out.command))
-                    }
-                    Err(message) => (
-                        json!({"error": message}).to_string(),
-                        false,
-                        Some(message),
-                        Some(command),
-                    ),
+                    Ok(out) => Routed::executed(name, out),
+                    // The task itself failed (a panic in the worker), not
+                    // the command: the card's command still belongs on the
+                    // chip so the user sees what was approved.
+                    Err(message) => Routed {
+                        content: json!({"error": message}).to_string(),
+                        ok: false,
+                        error: Some(message),
+                        command: Some(command),
+                        output: None,
+                    },
                 };
             }
             Some(Decision::Refused) => "the user refused this command; nothing was run",
             _ => "nobody approved this command in time; nothing was run",
         };
-        return (
-            json!({"error": refusal}).to_string(),
-            false,
-            Some(refusal.to_string()),
-            Some(command),
-        );
+        return Routed {
+            content: json!({"error": refusal}).to_string(),
+            ok: false,
+            error: Some(refusal.to_string()),
+            command: Some(command),
+            // Nothing ran, so there is no output to expand. The refusal
+            // sentence is already the error shown on the chip.
+            output: None,
+        };
     }
     if MODEL_TOOLS.contains(&name) {
         // The server's answer travels to the model verbatim — prose from
         // repotory_context, JSON from the rest. The model reads both; a
         // client-side parse would reject the prose contract outright.
         return match call_model_tool(session, name, arguments).await {
-            Ok(text) => (text, true, None, None),
-            Err(error) => (
-                json!({"error": error.clone()}).to_string(),
-                false,
-                Some(error),
-                None,
-            ),
+            // No `output`: an MCP answer is already in the model's tool
+            // result, and copying it here would put the same text in two
+            // places that can drift.
+            Ok(text) => Routed {
+                content: text,
+                ok: true,
+                error: None,
+                command: None,
+                output: None,
+            },
+            Err(error) => Routed {
+                content: json!({"error": error.clone()}).to_string(),
+                ok: false,
+                error: Some(error),
+                command: None,
+                output: None,
+            },
         };
     }
-    let message = format!("tool {name} is not available to the model");
-    (
-        json!({"error": message.clone()}).to_string(),
-        false,
-        Some(message),
-        None,
-    )
+    Routed::refused(format!("tool {name} is not available to the model"))
 }
 
 /// A card id that names what it is: repository, tool and the exact command,
@@ -332,6 +314,51 @@ fn uuid_like(seed: &str) -> String {
     seed.hash(&mut hasher);
     let a = hasher.finish();
     format!("card-{a:016x}")
+}
+
+/// One routed tool call: what the model is told, what the chip shows, and
+/// what the collapsible panel can expand.
+///
+/// A struct rather than a four-tuple because the fields now carry distinct
+/// meanings that a positional return made easy to swap: `content` goes to
+/// the model, `output` goes to the USER, and `command` goes to both the
+/// chip and the audit.
+struct Routed {
+    content: String,
+    ok: bool,
+    error: Option<String>,
+    command: Option<String>,
+    /// The literal text the model received from a LOCAL command. `None` for
+    /// MCP tools (the answer is already in their tool result) and for
+    /// refusals that never ran, so the UI shows the chevron only when there
+    /// is something behind it.
+    output: Option<String>,
+}
+
+impl Routed {
+    /// A command that ran: the model and the user get the same bytes.
+    fn executed(name: &str, out: crate::exec::Executed) -> Self {
+        let ExecutedBranch { content, ok, error } = branch_answer(name, out.text.clone(), out.ok);
+        Self {
+            content,
+            ok,
+            error,
+            command: Some(out.command),
+            output: Some(out.text),
+        }
+    }
+
+    /// A call that never executed — an unknown tool, a bad argument, a
+    /// refusal. There is nothing to expand, so `output` stays None.
+    fn refused(message: String) -> Self {
+        Self {
+            content: json!({"error": message.clone()}).to_string(),
+            ok: false,
+            error: Some(message),
+            command: None,
+            output: None,
+        }
+    }
 }
 
 /// Shapes one executed local tool's answer for the model. A refusal is
@@ -1064,6 +1091,7 @@ async fn send_inner(
                         // the start chip carries the tool name, the finish
                         // chip carries the command (Phase 3's display rule).
                         command: None,
+                        output: None,
                     }),
                     approval: None,
                 });
@@ -1094,7 +1122,13 @@ async fn send_inner(
                 } else {
                     serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| json!({}))
                 };
-                let (content, ok, error, command) = route_tool(
+                let Routed {
+                    content,
+                    ok,
+                    error,
+                    command,
+                    output,
+                } = route_tool(
                     session,
                     state,
                     &tool_call.name,
@@ -1128,6 +1162,7 @@ async fn send_inner(
                         ok,
                         error,
                         command,
+                        output,
                     }),
                     approval: None,
                 });

@@ -75,3 +75,19 @@ export function draftAfterSend(args: {
   if (args.failed) return args.draftNow;
   return args.draftNow === args.draftAtSend ? "" : args.draftNow;
 }
+
+/** One short line describing a command's output, for the collapsed state.
+ *
+ *  Pure and tested because a bad outline is a silent bug: the panel still
+ *  opens, it just tells the user the wrong thing about what is inside. The
+ *  rules are the ones the UI needs — first non-empty line, trimmed, capped —
+ *  and nothing about rendering.
+ */
+export function outline(output: string, max = 80): string {
+  const first = output
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  const text = first ?? "空";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
