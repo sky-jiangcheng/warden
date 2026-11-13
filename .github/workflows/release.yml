@@ -241,6 +241,8 @@ jobs:
 
             **工具输出可折叠，且展开的是模型收到的那份原文。** 本地命令的输出原样交给前端做折叠面板；MCP 工具的答案不复制（同一段文字两处会漂）。面板展开的是模型看到的文本，不是把命令重跑一遍。
 
+            **这次是 0.2.0 而不是 0.1.x。** 之前的版本都在打磨「聊天 + 记忆」这条线；从这一版起，模型第一次能在你的机器上真的执行动作。那是一个新的能力等级，也是一个新的信任等级——版本号跟着跳。
+
             **边界**：任意 shell 仍未做（M3 仍在进行中），命令面是白名单，不是任意执行。roadmap 的 M3 状态、AGENTS 目录说明等文档中英同批更新。
 
             Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider.
