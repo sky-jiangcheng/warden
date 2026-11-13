@@ -1,6 +1,6 @@
 [package]
 name = "repotory-agent"
-version = "0.2.0"
+version = "0.2.1"
 description = "A local copilot that reads the Cinder memory layer"
 authors = ["sky-jiangcheng"]
 edition = "2024"
