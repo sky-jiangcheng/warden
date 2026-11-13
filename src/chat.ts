@@ -638,5 +638,9 @@ export function initChat() {
     setProviders,
     setRepos(next: Repo[]) { repos = next; syncContext(); },
     retrySync() { listPoll.refresh(); readPoll.refresh(); },
+    /// The repository the conversation is currently scoped to, for the
+    /// memory page. Read-only on purpose: the memory page must not be able
+    /// to change what the conversation is about.
+    currentRepository(): string | null { return active.path; },
   };
 }

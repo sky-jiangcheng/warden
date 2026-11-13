@@ -434,7 +434,7 @@ async fn call_model_tool(
 }
 
 /// The transport both paths share: ensure, advertise-check, call, evict.
-async fn call_text(
+pub(crate) async fn call_text(
     session: &McpSession,
     name: &str,
     mut arguments: Value,

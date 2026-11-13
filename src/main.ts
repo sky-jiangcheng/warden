@@ -341,13 +341,19 @@ function unsavedSelection(): boolean {
 /// Show one page of the main window. The window itself never changes; only
 /// which surface is visible. Used by the quiet header button, the settings
 /// back button and the tray's navigation event — one switch, no drift.
-type View = "chat" | "settings";
+type View = "chat" | "settings" | "memory";
 function showView(view: View, tab?: SettingsTab): void {
   // Dialogs are body-level children; one left open would float over settings.
   for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
   document.documentElement.dataset.view = view;
   pick<HTMLElement>("#main-surface").hidden = view !== "chat";
   pick<HTMLElement>("#settings-view").hidden = view !== "settings";
+  pick<HTMLElement>("#memory-view").hidden = view !== "memory";
+  if (view === "memory") {
+    void loadMemoryPanels();
+    pick<HTMLElement>("#memory-heading").focus();
+    return;
+  }
   if (view === "chat") {
     // Leaving settings drops an editor left half-filled.
     pick<HTMLElement>("#provider-editor").hidden = true;
@@ -709,6 +715,135 @@ function renderTray(status: ShellStatus) {
   }
 }
 
+/// The three Phase 4 panels. Rendered as three separate blocks with their
+/// own states: a dead memory layer greys out the two Cinder panels and
+/// leaves the local context panel fully readable, which is the whole reason
+/// the backend returns three independent `problem` fields instead of one.
+type Panels = {
+  context: { repository: string | null; branch: string | null; diffStat: string | null; problem: string | null };
+  knowledge: { pages: { id: number; title: string; slug: string; kind: string; projectId: number; updatedAt: string; snippet: string }[]; connected: boolean; problem: string | null };
+  memory: { briefing: string | null; connected: boolean; problem: string | null };
+};
+
+async function loadMemoryPanels(): Promise<void> {
+  const contextBody = pick<HTMLElement>("#memory-context-body");
+  const knowledgeBody = pick<HTMLElement>("#memory-knowledge-body");
+  const sessionBody = pick<HTMLElement>("#memory-session-body");
+  for (const body of [contextBody, knowledgeBody, sessionBody]) body.replaceChildren(hint("读取中…"));
+  // The page follows the conversation: whichever repository the chat is
+  // scoped to is the one whose memory the user came to see.
+  const repository = chat?.currentRepository() ?? null;
+  let panels: Panels;
+  try {
+    panels = await invoke<Panels>("memory_panels", { repository });
+  } catch (error) {
+    for (const body of [contextBody, knowledgeBody, sessionBody]) {
+      body.replaceChildren(hint(`读取失败：${errorText(error)}`));
+    }
+    return;
+  }
+  renderContext(contextBody, panels.context);
+  renderKnowledge(knowledgeBody, panels.knowledge);
+  renderSession(sessionBody, panels.memory);
+}
+
+function hint(text: string): HTMLElement {
+  const p = document.createElement("p");
+  p.className = "memory-hint";
+  p.textContent = text;
+  return p;
+}
+
+function row(label: string, value: string, mono = false): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "memory-row";
+  const key = document.createElement("span");
+  key.className = "memory-row__key";
+  key.textContent = label;
+  const val = document.createElement("span");
+  val.className = mono ? "memory-row__value memory-row__value--mono" : "memory-row__value";
+  // Everything here is server or filesystem text: textContent only.
+  val.textContent = value;
+  div.append(key, val);
+  return div;
+}
+
+function renderContext(body: HTMLElement, panel: Panels["context"]): void {
+  body.replaceChildren();
+  if (!panel.repository) {
+    body.append(hint(panel.problem ?? "这个对话没有附加仓库。"));
+    return;
+  }
+  body.append(row("仓库", panel.repository, true));
+  body.append(row("分支", panel.branch ?? "未知"));
+  if (panel.diffStat) {
+    const pre = document.createElement("pre");
+    pre.className = "memory-diff";
+    pre.textContent = panel.diffStat;
+    body.append(pre);
+  }
+  if (panel.problem) body.append(hint(panel.problem));
+}
+
+function renderKnowledge(body: HTMLElement, panel: Panels["knowledge"]): void {
+  body.replaceChildren();
+  if (!panel.connected) {
+    body.append(hint(panel.problem ?? "记忆层未连接，看不到已批准知识。"));
+    return;
+  }
+  if (panel.problem) {
+    body.append(hint(panel.problem));
+    return;
+  }
+  if (panel.pages.length === 0) {
+    // "Nothing approved yet" is a state, not an error — and it is the
+    // normal state on a fresh machine, so it must not read as broken.
+    body.append(hint("还没有已批准的知识页。"));
+    return;
+  }
+  const list = document.createElement("ul");
+  list.className = "memory-pages";
+  for (const page of panel.pages) {
+    const item = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = page.title;
+    const meta = document.createElement("small");
+    // projectId 0 is a GLOBAL page (ADR-0031): which scope a page speaks for
+    // is a fact the reader must see, not infer from an empty field.
+    meta.textContent = [page.kind, page.projectId === 0 ? "全局" : "项目", page.updatedAt.slice(0, 10)]
+      .filter(Boolean)
+      .join(" · ");
+    item.append(title, meta);
+    if (page.snippet) {
+      const snippet = document.createElement("p");
+      snippet.className = "memory-hint";
+      snippet.textContent = page.snippet;
+      item.append(snippet);
+    }
+    list.append(item);
+  }
+  body.append(list);
+}
+
+function renderSession(body: HTMLElement, panel: Panels["memory"]): void {
+  body.replaceChildren();
+  if (!panel.connected) {
+    body.append(hint(panel.problem ?? "记忆层未连接，看不到跨会话记忆。"));
+    return;
+  }
+  if (!panel.briefing) {
+    body.append(hint(panel.problem ?? "记忆层没有给出这个仓库的上下文。"));
+    return;
+  }
+  // The briefing is Markdown the server rendered. It is shown as PLAIN TEXT:
+  // this client has no Markdown renderer, and half-rendering untrusted prose
+  // would be worse than showing it verbatim.
+  const pre = document.createElement("pre");
+  pre.className = "memory-briefing";
+  pre.textContent = panel.briefing;
+  body.append(pre);
+}
+
 function main() {
   initThemeToggle();
   if (new URLSearchParams(location.search).get("surface") === "companion") {
@@ -776,6 +911,8 @@ function main() {
   showView("chat");
   pick<HTMLButtonElement>("#settings-open").addEventListener("click", () => showView("settings"));
   pick<HTMLButtonElement>("#settings-back").addEventListener("click", () => showView("chat"));
+  pick<HTMLButtonElement>("#memory-open").addEventListener("click", () => showView("memory"));
+  pick<HTMLButtonElement>("#memory-back").addEventListener("click", () => showView("chat"));
   pick<HTMLElement>("#settings-view").addEventListener("keydown", (event) => {
     if (event.key === "Escape") showView("chat");
   });

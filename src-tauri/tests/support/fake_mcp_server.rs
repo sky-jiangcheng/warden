@@ -66,6 +66,8 @@ fn serve_chat() {
                      "inputSchema":{"type":"object","properties":{}}},
                     {"name":"repotory_context","description":"Load a project's working context",
                      "inputSchema":{"type":"object","properties":{"path":{"type":"string"}}}},
+                    {"name":"repotory_wiki_search","description":"Search approved knowledge pages",
+                     "inputSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"number"}}}},
                     {"name":"repotory_notes_create","description":"create a note",
                      "inputSchema":{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}},
                     {"name":"repotory_handoff","description":"record a session handoff",
@@ -88,6 +90,21 @@ fn serve_chat() {
                     Ok(text(
                         &json!([{"id":1,"name":"cinder"},{"id":2,"name":"warden"}]).to_string(),
                     ))
+                } else if name == "repotory_wiki_search" {
+                    if std::env::var("REPOTORY_AGENT_FAKE_WIKI_BROKEN").is_ok() {
+                        // A healthy transport with an unexpected shape: the
+                        // panel must report a contract problem, NOT "no
+                        // pages approved".
+                        Ok(text(&json!({"not": "an array"}).to_string()))
+                    } else {
+                        Ok(text(
+                            &json!([
+                                {"id":3,"slug":"knot","title":"The Knot","kind":"concept","project_id":0,"updated_at":"2026-11-12T00:00:00Z","snippet":"eight-fold mark"},
+                                {"id":4,"slug":"handoff-rule","title":"Handoff rules","kind":"synthesis","project_id":1,"updated_at":"2026-11-11T00:00:00Z","snippet":"append-only"}
+                            ])
+                            .to_string(),
+                        ))
+                    }
                 } else if name == "repotory_context" {
                     // The real Cinder contract: a PLAIN-TEXT briefing, not
                     // JSON — BuildProjectContext returns a string.

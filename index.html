@@ -20,6 +20,10 @@
         <nav class="brand__actions" aria-label="窗口操作">
           <button class="icon-btn" id="topics-open" type="button" aria-label="切换对话主题" title="对话历史" aria-haspopup="dialog" aria-controls="topics-sheet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h12M4 19h8" /></svg></button>
           <button class="icon-btn" id="topic-new" type="button" aria-label="新建对话主题" title="新建对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
+          <!-- The memory page: what Cinder remembers about this repository.
+               Read-only by construction — the button opens a view, it does
+               not offer to change anything. -->
+          <button class="icon-btn icon-btn--quiet" id="memory-open" type="button" aria-label="查看记忆" title="记忆"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a4 4 0 0 1 4 4v1.2A3.4 3.4 0 0 1 18 12v.6A3.4 3.4 0 0 1 16 16v1a4 4 0 0 1-8 0v-1a3.4 3.4 0 0 1-2-3.4V12a3.4 3.4 0 0 1 2-3.8V7a4 4 0 0 1 4-4z" /></svg></button>
           <!-- Deliberately quiet: settings are a page, not a modal. The tray's
                right-click menu and ⌥ Space reach the same page. -->
           <button class="icon-btn icon-btn--quiet" id="settings-open" type="button" aria-label="切换到设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM19.4 13a7.7 7.7 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.7 7.7 0 0 0-1.7-1L15 3.4h-4l-.3 2.6a7.7 7.7 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.7 7.7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.7 7.7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7.7 7.7 0 0 0 1.7-1l2.4 1 2-3.4z" /></svg></button>
@@ -78,6 +82,28 @@
          tab carries the state of its own blocks as a dot, so the problem is
          visible from the tab you are standing on. Panels hide by [hidden];
          the last tab visited is remembered. -->
+    <!-- The memory page: the three Phase 4 panels, all READ-ONLY. Approval
+         happens in Cinder Desktop (ADR-0015) — there is no approve button
+         here and there must never be one, because the MCP tool face this
+         page reads through has no such tool to call. -->
+    <section class="view view--memory" id="memory-view" role="region" aria-live="polite" aria-labelledby="memory-heading" hidden>
+      <header class="sheet__head"><div><span class="eyebrow">WHAT IT REMEMBERS</span><h2 id="memory-heading" tabindex="-1">记忆</h2></div><button class="icon-btn" id="memory-back" type="button" aria-label="返回对话" title="返回对话">×</button></header>
+      <div class="memory-panels" id="memory-panels">
+        <section class="memory-block" aria-labelledby="memory-context-title">
+          <h3 id="memory-context-title">当前上下文</h3>
+          <div id="memory-context-body"><p class="memory-hint">读取中…</p></div>
+        </section>
+        <section class="memory-block" aria-labelledby="memory-knowledge-title">
+          <h3 id="memory-knowledge-title">已批准知识</h3>
+          <p class="memory-hint">只读视图。待批准的页不在这里——审批在 Cinder Desktop 做。</p>
+          <div id="memory-knowledge-body"><p class="memory-hint">读取中…</p></div>
+        </section>
+        <section class="memory-block" aria-labelledby="memory-session-title">
+          <h3 id="memory-session-title">跨会话记忆</h3>
+          <div id="memory-session-body"><p class="memory-hint">读取中…</p></div>
+        </section>
+      </div>
+    </section>
     <section class="view view--settings" id="settings-view" role="region" aria-live="polite" aria-labelledby="settings-heading" hidden>
       <header class="sheet__head"><div><span class="eyebrow">MAKE IT YOURS</span><h2 id="settings-heading" tabindex="-1">设置与连接</h2></div><button class="icon-btn" id="settings-back" type="button" aria-label="返回对话" title="返回对话">×</button></header>
       <nav class="settings-tabs" id="settings-tabs" role="tablist" aria-label="设置分类">

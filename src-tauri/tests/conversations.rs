@@ -521,10 +521,22 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
         ],
         "the memory whitelist leads: {names:?}"
     );
+    // The memory tools offered are exactly (what the server advertises) ∩
+    // (the whitelist). The fixture advertises four readable tools, so four
+    // appear — counting them rather than hardcoding a number keeps this
+    // assertion about the RULE when a fixture grows a tool.
+    let memory_offered: Vec<&&str> = names
+        .iter()
+        .filter(|n| n.starts_with("repotory_"))
+        .collect();
     assert_eq!(
-        names.iter().filter(|n| n.starts_with("repotory_")).count(),
-        3,
-        "only whitelisted memory tools are offered: {names:?}"
+        memory_offered.len(),
+        4,
+        "the fixture advertises four whitelisted memory tools: {names:?}"
+    );
+    assert!(
+        memory_offered.contains(&&"repotory_wiki_search"),
+        "{names:?}"
     );
     assert_eq!(
         names.iter().filter(|n| n.starts_with("warden_")).count(),
@@ -1157,4 +1169,92 @@ async fn an_unanswered_card_refuses_the_command() {
         "{tool_message}"
     );
     let _ = std::fs::remove_dir_all(&repo);
+}
+
+// ------------------------------------------------------------------ Phase 4
+// The memory panels. Three independent reads, three independent failure
+// reports — a dead memory layer must not blank the local panel.
+
+/// All three panels come back from real MCP calls, with the local one
+/// describing the actual working tree.
+#[tokio::test]
+async fn the_memory_panels_read_all_three_sources() {
+    let repo = make_repo("panels-ok", true);
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+
+    let panels = repotory_agent_lib::panels::load(&f.session, Some(repo.to_str().unwrap())).await;
+
+    // Context: the local tree, not a Cinder fact.
+    assert_eq!(
+        panels.context.repository.as_deref(),
+        Some(repo.to_str().unwrap())
+    );
+    assert_eq!(panels.context.branch.as_deref(), Some("main"));
+    assert!(
+        panels
+            .context
+            .diff_stat
+            .as_deref()
+            .is_some_and(|d| d.contains("a.txt")),
+        "the panel must show the real uncommitted diff: {:?}",
+        panels.context.diff_stat
+    );
+    assert!(panels.context.problem.is_none());
+
+    // Knowledge: the approved browse feed, with the global page marked as
+    // global (project_id 0) rather than as missing.
+    assert!(panels.knowledge.connected, "{:?}", panels.knowledge.problem);
+    assert_eq!(panels.knowledge.pages.len(), 2);
+    assert_eq!(panels.knowledge.pages[0].title, "The Knot");
+    assert_eq!(panels.knowledge.pages[0].project_id, 0);
+
+    // Memory: Cinder's own briefing, which leads with the last handoff.
+    assert!(panels.memory.connected, "{:?}", panels.memory.problem);
+    assert!(
+        panels
+            .memory
+            .briefing
+            .as_deref()
+            .is_some_and(|b| b.contains("Project: warden")),
+        "{:?}",
+        panels.memory.briefing
+    );
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// A conversation with no repository still gets the memory panel: the
+/// question "what did the last session leave" is not repository-only.
+#[tokio::test]
+async fn panels_without_a_repository_still_read_cinder() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    let panels = repotory_agent_lib::panels::load(&f.session, None).await;
+    assert!(panels.context.repository.is_none());
+    assert!(
+        panels.context.problem.is_some(),
+        "the panel must say why it is empty"
+    );
+    assert!(panels.knowledge.connected);
+    assert!(panels.memory.connected);
+}
+
+/// A contract change is NOT reported as "nothing approved": a healthy server
+/// that answered a different shape must read as a problem, because telling
+/// the user they have no knowledge pages when they do is the worse failure.
+#[tokio::test]
+async fn an_unexpected_knowledge_shape_is_a_problem_not_an_empty_list() {
+    let f = Fixture::with_server_env(
+        "REPOTORY_AGENT_FAKE_CHAT",
+        &[("REPOTORY_AGENT_FAKE_WIKI_BROKEN", "1")],
+    )
+    .await;
+    let panels = repotory_agent_lib::panels::load(&f.session, None).await;
+    assert!(panels.knowledge.pages.is_empty());
+    assert!(
+        panels.knowledge.problem.is_some(),
+        "an unexpected shape must be reported, not swallowed"
+    );
+    // `connected` stays true: the server DID answer, so "install Cinder"
+    // would be the wrong advice.
+    assert!(panels.knowledge.connected);
 }

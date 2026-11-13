@@ -209,7 +209,7 @@ output length can push the composer away, and a re-render does not close a panel
 **Not done**: arbitrary commands (`mysql -e`, any other shell) stay off the face — the whitelist
 is exactly four write tools and eight read tools.
 
-## Phase 4: the memory panels (1–2 weeks)
+## Phase 4: the memory panels (1–2 weeks) — done (2026-11-13)
 
 Three panels:
 
@@ -218,6 +218,27 @@ Three panels:
   invisible to the copilot — that is the workbench's business**, see
   [product.md, open question 2](product.md#2-phase-4s-approve--reject-collides-with-adr-0015s-human-gate-resolved-option-c));
 - **Cross-session memory**: last session's conclusions, handoff summary, tasks that can continue.
+
+**Landed** (`src-tauri/src/panels.rs` plus a "memory" page in the main window):
+
+- **Each panel reports its own failure.** When the memory layer is down, only the two Cinder panels
+  say so; the local context panel stays fully readable. The price of one combined payload is that a
+  single dead optional dependency blanks a screen full of working facts.
+- **The context panel is not a Cinder fact**: repository path, branch
+  (`git rev-parse --abbrev-ref`) and `git diff --stat` come from this machine's working tree. A
+  clean tree says **"the working tree is clean"** rather than showing a blank.
+- **Approved knowledge** calls `repotory_wiki_search` with an EMPTY query — the browse feed the
+  server's own docs describe, not a failed search. Pages with `project_id == 0` are labelled
+  **global** (ADR-0031), because that scope is a fact the reader must see.
+- **Cross-session memory** is `repotory_context`'s briefing verbatim (the last handoff leads it),
+  shown as plain text: this client has no Markdown renderer, and half-rendering untrusted prose
+  would be worse than showing it as it is.
+- **A changed shape is an error, never an empty list**: a non-array answer reports "unexpected
+  shape" instead of "no approved pages yet" — telling someone their knowledge store is empty when
+  it is not is the worse failure.
+
+**No approve / reject button exists here, and none will**: the MCP face this page reads through has
+no such tools.
 
 This is the phase that separates the copilot from a plain chat tool. **The panels are read-only** —
 approving always happens in the Cinder Desktop app.
@@ -256,7 +277,7 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 | M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
 | M2 | It can talk to a model about the current repository | done (2026-11-12: the chat loop, the system prompt, the read-only tool face, diff injection and the handoff write-back are all wired) |
 | M3 | It can safely run Git / Shell commands | in progress (eight read tools + four write tools, the write side behind a confirmation card; audit log, full-command display and a collapsible output panel are in place; arbitrary shell is not) |
-| M4 | It can see and manage cross-session memory | not started |
+| M4 | It can see and manage cross-session memory | done (three read-only panels; "manage" happens in Cinder Desktop — the gate is not here) |
 | M5 | It installs and initializes in one step | not started |
 | M6 | It ships as a standalone product | not started |
 

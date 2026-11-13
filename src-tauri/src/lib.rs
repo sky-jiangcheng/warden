@@ -15,6 +15,7 @@ mod git;
 pub mod llm;
 pub mod mcp_client;
 pub mod memory_layer;
+pub mod panels;
 mod provider_commands;
 pub mod providers;
 pub mod repos;
@@ -559,6 +560,25 @@ async fn chat_send<R: tauri::Runtime>(
     outcome
 }
 
+/// The three Phase 4 panels, in one round trip.
+///
+/// One command rather than three because the frontend shows them together
+/// and three parallel invokes would race their loading states against each
+/// other. Each panel still carries its OWN problem: a memory layer that is
+/// down must not blank the local context panel, and this payload is what
+/// makes that possible.
+#[tauri::command]
+async fn memory_panels<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    repository: Option<String>,
+) -> Result<panels::Panels, String> {
+    Ok(panels::load(
+        &app.state::<mcp_client::McpSession>(),
+        repository.as_deref(),
+    )
+    .await)
+}
+
 #[tauri::command]
 async fn conversation_list<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -816,6 +836,7 @@ pub fn run() {
             provider_fetch_models,
             provider_test_connection,
             chat_send,
+            memory_panels,
             approve_command,
             refuse_command,
             conversation_list,

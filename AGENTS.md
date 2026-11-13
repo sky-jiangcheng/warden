@@ -62,6 +62,11 @@ src-tauri/           后端（Rust）
                       **别把写工具改成自动执行**，也别持久化批准——一次批准只覆盖一条命令。
                       `ToolEvent.output` 把同一份原文交给前端做可折叠面板（只给本地命令；MCP 答案不复制，
                       否则同一段文字有两处会漂）。**面板展开的是模型收到的那份文本，不是重跑一遍**。
+  src/panels.rs      Phase 4 三面板的只读数据源：本地上下文（分支/diff，不经 Cinder）、
+                      已批准知识（`repotory_wiki_search` 空 query 的 browse feed）、
+                      跨会话记忆（`repotory_context` 简报原文）。**三块各报各的错**——
+                      别合并成一个 problem，那会让一个死掉的可选依赖白掉整屏。
+                      **这里没有 approve/reject，也不许加**：MCP 工具面本来就没有那两个工具。
   src/memory_layer.rs    记忆层（Cinder MCP）状态：连接 + 服务端给的工具清单
   src/repos.rs        仓库发现与收藏清单：扫盘 + watchlist 持久化
   tests/             端到端测试（真管道 + fake MCP server / fake LLM server / 真仓库目录）
