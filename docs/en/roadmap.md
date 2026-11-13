@@ -278,18 +278,21 @@ llama.cpp / MLX would arrive through the same "one base URL" route — **never a
 a local provider and a remote provider are the same thing. The `model_backends.rs` registry was
 deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 
-## Phase 6: distribution and shipping (1–2 weeks)
+## Phase 6: distribution and shipping (1–2 weeks) — in progress
 
-- macOS dmg packaging;
-- Optional Homebrew cask;
-- The App Store build ships no model and points at Ollama;
-- A `repotory-agent init` one-shot initializer;
-- A README that says it plainly: the copilot is the entry point, Cinder is the memory, MCP is the
-  open protocol;
-- **The version coupling written down**: which Agent version pairs with which **memory-layer contract
-  version** (the contract version is the main repo's `internal/version/core.go` `CoreVersion`; it
-  answers "did the tool surface change" — without a capability handshake that coupling is implicit —
-  see [product.md, open question 4](product.md#4-version-coupling-with-cinder)).
+- ~~macOS dmg packaging~~ — already produced by the release workflow (since v0.2.0: dmg / app.tar.gz / msi / exe / deb / rpm / AppImage);
+- **Optional Homebrew cask** — pending. A cask belongs in a separate tap repo (this repo produces binaries only, no tap);
+- **App Store build** — undecided. Store review constrains a resident tray app with a local model, and a
+  model-less default has to point at Ollama; current releases ship via Releases, not the Store;
+- ~~A `repotory-agent init` one-shot initializer~~ — landed (2026-11-13): checks config / memory layer /
+  local model one by one, `✓` fine, `!` worth attention (does not block), `✗` needs fixing, and the exit
+  code is non-zero only on a `✗`. It reuses the GUI's real paths (`config_or_default` for the default
+  config, `memory_layer::status` for the handshake, `local_models::probe` for the model) — no second
+  initialization logic;
+- ~~A README that says it plainly: the copilot is the entry point, Cinder is the memory, MCP is the open protocol~~ — long written;
+- ~~**The version coupling written down**~~ — landed: both READMEs add a "version coupling" section.
+  **Read the "memory layer vX.Y.Z" on the first screen, not the build number** — that contract version
+  answers "did the tool surface change", warns across a major, and never hard-blocks.
 
 ## Milestones
 

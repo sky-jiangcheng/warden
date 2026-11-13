@@ -97,6 +97,40 @@ The chat works with any provider the moment Warden is installed. The **memory** 
 [Cinder](https://github.com/sky-jiangcheng/cinder) releases, or from Cinder Desktop's installer. Without it
 the first screen says *not installed* and the rest of the app still works.
 
+### Run `init` once after install
+
+To confirm a machine is ready without opening the window, from a terminal:
+
+```bash
+repotory-agent init
+```
+
+It checks **config, memory layer, local model** one by one and marks each — `✓` fine,
+`!` worth attention (does not block), `✗` needs fixing. The exit code is non-zero only
+when something is `✗` (so scripts can decide):
+
+```text
+Warden initialization check
+────────────────────────────────────────────────────────
+✓ config: 1 provider, current Ollama (local)
+✓ memory layer: connected, 20 tools, memory layer v1.1.0 (/usr/local/bin/repotory-mcp)
+! local model: Ollama is installed but http://127.0.0.1:11434/v1 did not answer. Run `ollama serve`
+```
+
+A `!` does not block: a stopped local model does not stop you from connecting a
+cloud provider. `init` **does not decide for you** — it writes the default config a
+first run would write anyway and reports the state; choosing a model is still yours.
+
+### Version coupling: read "memory layer vX.Y.Z" on the first screen, not the build number
+
+Warden and Cinder have no hard version pin — the interface is MCP, and the **contract version**
+shown on the first screen comes from the memory layer's own `initialize` answer. **That X.Y.Z
+answers "did the tool surface change", not "is the build new"**: release numbers climb daily and
+UI changes happen daily, but the tool surface changes a few times a year — a 2.30.0 tells you
+nothing about whether the tools you depend on moved. So the first screen says "memory layer
+vX.Y.Z", and only a major bump means the surface may have changed. Out of range gets a plain
+sentence, never a hard block.
+
 ---
 
 ## ⚡ Quick start

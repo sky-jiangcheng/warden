@@ -47,7 +47,7 @@ pub const DEFAULT_MODEL: &str = "qwen3:8b";
 /// service the user may not even have installed.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalModels {
     /// The endpoint this report is about — the conversation surface is

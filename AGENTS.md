@@ -62,6 +62,11 @@ src-tauri/           后端（Rust）
                       **别把写工具改成自动执行**，也别持久化批准——一次批准只覆盖一条命令。
                       `ToolEvent.output` 把同一份原文交给前端做可折叠面板（只给本地命令；MCP 答案不复制，
                       否则同一段文字有两处会漂）。**面板展开的是模型收到的那份文本，不是重跑一遍**。
+  src/init.rs        Phase 6 `repotory-agent init` 子命令：逐项检查配置 / 记忆层 / 本机模型，
+                      `✓` 正常、`!` 注意（不阻塞）、`✗` 需处理，退出码只在有 `✗` 时非零。
+                      **复用 GUI 的同一条真实路径**（`config_or_default` / `memory_layer::status` /
+                      `local_models::probe`），不另开一套初始化逻辑。配置目录无 app handle 时
+                      按平台自己解析（`cli_config_dir`），与 Tauri 的路径一致。
   src/local_models.rs  Phase 5 本机模型：四态（未安装/装了没跑/缺默认模型/就绪）、
                       每个状态一条可执行的话、2 秒探测预算、一键拉默认模型。
                       **不要为某个厂商开分支**：判断一律是「这个 base URL 答不答」；

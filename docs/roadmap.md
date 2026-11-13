@@ -243,16 +243,21 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 本地 provider 与云端 provider 是同一件事。`model_backends.rs` 这个注册表已经在 Phase 2 删掉
 （见 [product.md](product.md) 的「Phase 0 定死的决议」）。
 
-## Phase 6：分发与上架（1–2 周）
+## Phase 6：分发与上架（1–2 周）—— 进行中
 
 让 copilot 能真正被用起来。
 
-- macOS dmg 打包；
-- 可选 Homebrew cask；
-- App Store 版本默认不带模型，引导用户安装 Ollama；
-- 提供 `repotory-agent init` 一键初始化；
-- README 里写清楚：copilot 是入口，Cinder 是记忆层，MCP 是开放协议；
-- **写清版本耦合**：哪个 Agent 版本配哪个**记忆层契约版本**（契约版本是主仓 `internal/version/core.go` 的 `CoreVersion`，它答的是「工具面变了没」；不做能力协商的话这个耦合是隐式的，见 [product.md 待确认 4](product.md#4-与-cinder-的版本耦合)）。
+- ~~macOS dmg 打包~~ —— 已在 Release workflow 产出（v0.2.0 起，dmg / app.tar.gz / msi / exe / deb / rpm / AppImage 全套）；
+- **可选 Homebrew cask** —— 待做。cask 要落在单独的 tap 仓里（本仓只产二进制，不自带 tap）；
+- **App Store 版本** —— 待定。App Store 审核对常驻托盘 + 本地模型有约束，且默认不带模型要引导装 Ollama；
+  现版本走 Release 分发，未走 App Store；
+- ~~提供 `repotory-agent init` 一键初始化~~ —— 已落地（2026-11-13）：逐项检查配置 / 记忆层 / 本机模型，
+  `✓` 正常、`!` 注意（不阻塞）、`✗` 需处理，退出码只在有 `✗` 时非零。复用 GUI 同一条真实路径
+  （`config_or_default` 写默认配置、`memory_layer::status` 握手、`local_models::probe`），
+  不另开一套初始化逻辑；
+- ~~README 里写清楚：copilot 是入口，Cinder 是记忆层，MCP 是开放协议~~ —— 早已写明；
+- ~~**写清版本耦合**~~ —— 已落地：README（中英）新增「版本耦合」小节，
+  **看首屏的「记忆层 vX.Y.Z」而不是构建号**，那个契约版本答「工具面变了没」，跨 major 才提示，不硬拦。
 
 ## 里程碑
 

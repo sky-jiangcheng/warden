@@ -12,6 +12,7 @@ mod binaries;
 pub mod conversations;
 pub mod exec;
 mod git;
+pub mod init;
 pub mod llm;
 pub mod local_models;
 pub mod mcp_client;
