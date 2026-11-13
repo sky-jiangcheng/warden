@@ -235,17 +235,23 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **M3：模型现在能在一个你批准的边界内，自己跑本地命令。** 新增 `exec.rs` 执行层，把命令分成两半，纪律完全不同：读八件（`git status / diff / log / branch / show`、列目录、读文件、`grep`）模型点名就直接跑，因为它们只读、不改任何东西；写四件（`git add / commit`、`npm run build`、`cargo test`）必须过确认卡——模型**只能规划**，`plan_write` 是卡片与执行的同一个真相，命令先展示给人看，批准后才照同一个 planner 跑，**一次批准只覆盖一条命令、不持久化**，模型也改不了审批规则。
+            **M4：记忆层有了只读的三块面板。** 上下文（分支与未提交 diff，不经 Cinder）、已批准知识（`repotory_wiki_search` 的 browse feed）、跨会话记忆（`repotory_context` 简报原文）。三块各报各的错——一块可选依赖死掉，不会白掉整屏。
 
-            **安全不是靠提示词，是靠参数校验与运行器。** 禁开关、禁绝对路径、禁上跳与区间，逐仓库做包含性检查（命令不能越出当前仓库目录）；所有子进程共用一个运行器（`run_confined`），字节上限加看门狗只写一次。每次执行落一条 `exec-audit.jsonl`（0600，记完整 argv 与退出码），出了事能还原「模型当时到底请求了什么」。
+            **M5：本机模型，不用折腾也能跑。** 设置页新增「本机模型」卡，把状态分成四态：未安装 / 装了没运行 / 有运行时但缺默认模型 / 就绪，**每个状态给一条可执行的话**（`ollama serve` 还是 `ollama pull qwen3:8b`）——把「装了没跑」报成「未安装」，会让用户去下载他电脑上已有的东西。探测有 2 秒预算，本机端点要么立刻答要么没在跑；延迟直接显示，因为本机模型上这是用户真正感觉得到的数字。**没有为 Ollama 开分支**：判断一律是「这个 base URL 答不答」，本地与云端同一件事。唯一走原生 API 的是拉模型（OpenAI 兼容面里没有下载这件事），URL 从配置的 base URL 推出来，不是第二个硬编码主机。
 
-            **工具输出可折叠，且展开的是模型收到的那份原文。** 本地命令的输出原样交给前端做折叠面板；MCP 工具的答案不复制（同一段文字两处会漂）。面板展开的是模型看到的文本，不是把命令重跑一遍。
+            **Phase 6：`repotory-agent init` 一键初始化。** 不开窗口，在终端逐项检查配置 / 记忆层 / 本机模型，`✓` 正常、`!` 注意（不阻塞）、`✗` 需处理，退出码只在有 `✗` 时非零。复用 GUI 的同一条真实路径，不另开一套初始化逻辑；报告里带记忆层**契约版本**。
 
-            **这次是 0.2.0 而不是 0.1.x。** 之前的版本都在打磨「聊天 + 记忆」这条线；从这一版起，模型第一次能在你的机器上真的执行动作。那是一个新的能力等级，也是一个新的信任等级——版本号跟着跳。
+            **长期知识写回，现在过一道人确认。** 模型可以发起 `notes_create / notes_update / notes_organize`，但**调用前硬拦截**：对话内确认卡，写入参数**可编辑**——你可以改完再点运行，批准的是修订版（部分同意）；写入 `knowledge-audit.jsonl` **独立追加式审计**（谁、何时、哪个工具、什么参数、是否修订），不进检索层；超时 / 关窗**默认拒绝**，Fail-Closed，不静默放行。
 
-            **边界**：任意 shell 仍未做（M3 仍在进行中），命令面是白名单，不是任意执行。roadmap 的 M3 状态、AGENTS 目录说明等文档中英同批更新。
+            **错误收敛到结构化类型。** IPC 边界序列化稳定 `{ code, message, data? }`，内部用 thiserror 枚举，未知错误兜底 `INTERNAL_ERROR`；`LlmError` / `McpError` 按变体映射（不靠英文短语子串）；IPC 边界一条带 `code` / `provider` / `thread` 的 tracing 事件，日志可按这三者过滤。前端按 code 分支，不再对文本做正则。
 
-            Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider.
+            **版本耦合写进 README。** 看首屏的「记忆层 vX.Y.Z」而不是构建号——契约版本答「工具面变了没」，跨 major 才提示，不硬拦。
+
+            **版本号 0.2.1**：0.2.0 起模型第一次能在本机执行动作；这一版把「装得起来、跑得起来、写得有确认、出错说得清」补齐，是同一条能力线上的收尾。
+
+            **边界**：任意 shell 仍未做（M3 进行中），命令面是白名单；Homebrew cask 与 App Store 版未做。roadmap、product.md、AGENTS 等文档中英同批更新。
+
+            Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider. Run `repotory-agent init` from a terminal to check this machine before opening the app.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
