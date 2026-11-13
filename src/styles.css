@@ -862,6 +862,19 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .composer-foot { display: flex; justify-content: space-between; gap: 8px; margin: 9px 4px 0; color: var(--text-tertiary); font-size: 9px; }
 #chat-chip { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #compose-help { flex-shrink: 0; }
+/* The confirmation card: a command the user is about to run. Deliberately
+   NOT a modal — it belongs beside the answer it unblocks, and the command is
+   the point, so it gets monospace and full width instead of being tucked in
+   a tooltip. Refuse is the quiet button, Run is the only loud one: the safe
+   answer should not be the one that looks inviting. */
+.approval { border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-card); padding: 11px 12px 10px; margin: 0 4px 9px; box-shadow: var(--shadow-md); }
+.approval[hidden] { display: none; }
+.approval__title { margin: 0 0 7px; font-size: 11px; font-weight: 600; color: var(--text-primary); }
+.approval__command { margin: 0 0 9px; padding: 8px 9px; border-radius: 8px; background: var(--bg-sunken, rgba(0,0,0,.28)); color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+.approval__actions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+.approval__run { border: 1px solid var(--accent-border, var(--border-default)); background: var(--accent-bg, transparent); color: var(--text-primary); border-radius: 8px; padding: 5px 13px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.approval__run:hover { border-color: var(--accent, var(--border-strong)); }
+.approval__note { margin: 7px 0 0; color: var(--text-tertiary); font-size: 9px; }
 .chat-error, .model-error { color: var(--danger); overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; margin: 0 4px 8px; max-height: 80px; overflow: auto; }
 .chat-error:empty, .model-error:empty { display: none; }
 .model-error { margin-top: 5px; }

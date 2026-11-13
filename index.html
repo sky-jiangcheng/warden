@@ -46,6 +46,19 @@
           <button class="jump-latest" id="jump-latest" type="button" hidden>回到最新消息 ↓</button>
         </div>
         <div class="composer-area">
+          <!-- A command waiting for a yes/no. It sits above the composer, in
+               the flow the user is already reading, because it blocks the
+               answer: the conversation cannot continue until this is
+               answered (or its countdown runs out, which refuses). -->
+          <section class="approval" id="chat-approval" role="alertdialog" aria-labelledby="approval-title" hidden>
+            <p class="approval__title" id="approval-title">这条命令需要你确认</p>
+            <pre class="approval__command" id="approval-command"></pre>
+            <div class="approval__actions">
+              <button class="text-btn" id="approval-refuse" type="button">拒绝</button>
+              <button class="approval__run" id="approval-run" type="button">运行</button>
+            </div>
+            <p class="approval__note" id="approval-note"></p>
+          </section>
           <p class="chat-error" id="chat-error" role="alert"></p>
           <form class="chat__form" id="chat-form">
             <label class="sr-only" for="chat-input">给 Warden 的消息</label><textarea id="chat-input" rows="3" placeholder="有什么想一起想一想？" aria-describedby="compose-help" spellcheck="false"></textarea>

@@ -94,6 +94,41 @@ impl Fixture {
             .await;
         (result, chunks)
     }
+
+    /// Sends and answers confirmation cards as they arrive.
+    ///
+    /// The card is delivered mid-generation, so a test cannot collect the
+    /// chunks first and answer after: the generation is blocked on the
+    /// answer. This drives the same `GenerationState::decide` path the
+    /// approve/refuse commands call, and records every card it saw so the
+    /// test can assert what the user was shown.
+    async fn send_and_answer(
+        &self,
+        request: ChatRequest,
+        approve: bool,
+    ) -> (Result<(), String>, Vec<ChatChunk>, Vec<Value>) {
+        let cards = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let seen = std::sync::Arc::clone(&cards);
+        let state = &self.state;
+        let mut chunks = Vec::new();
+        let result = conversations::send(&self.session, state, &self.store, request, |chunk| {
+            if let Some(card) = &chunk.approval {
+                seen.lock()
+                    .unwrap()
+                    .push(serde_json::to_value(card).expect("a card serialises"));
+                let decision = if approve {
+                    conversations::Decision::Approved
+                } else {
+                    conversations::Decision::Refused
+                };
+                assert!(state.decide(&card.id, decision), "the card id must be live");
+            }
+            chunks.push(chunk)
+        })
+        .await;
+        let cards = cards.lock().unwrap().clone();
+        (result, chunks, cards)
+    }
     async fn messages(&self) -> Vec<Value> {
         conversations::read(&self.session, THREAD.into())
             .await
@@ -493,8 +528,8 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
     );
     assert_eq!(
         names.iter().filter(|n| n.starts_with("warden_")).count(),
-        repotory_agent_lib::exec::LOCAL_TOOLS.len(),
-        "the local read-only face rides along: {names:?}"
+        repotory_agent_lib::exec::LOCAL_TOOLS.len() + repotory_agent_lib::exec::WRITE_TOOLS.len(),
+        "the read-only face and the approval-gated set both ride along: {names:?}"
     );
     assert!(!names.contains(&"repotory_notes_create"), "{names:?}");
     assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
@@ -940,6 +975,170 @@ async fn a_local_tool_outside_the_whitelist_is_refused() {
             .as_str()
             .unwrap()
             .contains("not available"),
+        "{tool_message}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// ---------------------------------------------------------------- Phase 3b
+// The confirmation gate: a write/build command runs ONLY after the user says
+// yes to the exact command. Three paths, and the two that matter most are
+// the ones where nothing runs.
+
+/// An approved command runs, its output reaches the model, the full command
+/// is on both the card and the finish chip, and the run is audited.
+#[tokio::test]
+async fn an_approved_write_command_runs_and_is_audited() {
+    let repo = make_repo("write-approved", true);
+    let audit = std::env::temp_dir().join(format!(
+        "warden-m3b-audit-{}-{}.jsonl",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+    f.state.audit.attach(audit.clone());
+
+    let mut req = request("w1", "stage my changes");
+    req.model = Some("tools:warden_git_add".into());
+    let (result, chunks, cards) = f.send_and_answer(req, true).await;
+    result.expect("send");
+
+    // The card showed exactly what ran — same string, no re-derivation.
+    assert_eq!(cards.len(), 1, "one card for one command: {cards:?}");
+    let card = &cards[0];
+    assert_eq!(card["tool"], "warden_git_add");
+    let card_command = card["command"].as_str().unwrap();
+    assert_eq!(card_command, "git add --all");
+    assert!(card["seconds"].as_u64().unwrap() > 0);
+
+    let finish = chunks
+        .iter()
+        .filter_map(|c| c.tool_call.as_ref())
+        .find(|e| e.done)
+        .expect("a finished tool event");
+    assert!(finish.ok, "{:?}", finish.error);
+    assert_eq!(finish.command.as_deref(), Some(card_command));
+
+    // It actually staged: the working tree still shows the change, but the
+    // index now has it, which is what `git add` means.
+    let staged = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .unwrap();
+    let staged = String::from_utf8_lossy(&staged.stdout);
+    assert!(staged.contains("a.txt"), "nothing was staged: {staged}");
+
+    let lines = read_jsonl(&audit);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["tool"], "warden_git_add");
+    assert_eq!(lines[0]["argv"], card_command);
+
+    let _ = std::fs::remove_file(&audit);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// A refused command does NOT run — the whole point of the gate — and the
+/// model is told so, so it can propose something else instead of assuming
+/// success.
+#[tokio::test]
+async fn a_refused_write_command_does_not_run() {
+    let repo = make_repo("write-refused", true);
+    let its_head = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+
+    let mut req = request("w2", "commit this for me");
+    req.model = Some("tools:warden_git_commit".into());
+    let (result, chunks, cards) = f.send_and_answer(req, false).await;
+    result.expect("a refusal is not a failed send");
+
+    let events: Vec<(&str, bool)> = chunks
+        .iter()
+        .filter_map(|c| c.tool_call.as_ref())
+        .map(|e| (e.name.as_str(), e.ok))
+        .collect();
+    assert_eq!(cards.len(), 1, "cards: {cards:?} events: {events:?}");
+    assert_eq!(cards[0]["tool"], "warden_git_commit");
+
+    // Nothing was committed: HEAD is byte-identical.
+    let after = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    assert_eq!(its_head, after, "a refused command must not run");
+
+    let finish = chunks
+        .iter()
+        .filter_map(|c| c.tool_call.as_ref())
+        .find(|e| e.done)
+        .expect("a finished tool event");
+    assert!(!finish.ok);
+    // The card's command still travels to the UI: the user should see what
+    // they declined, not a blank chip.
+    // The command shown is the argv joined with spaces — no shell quoting,
+    // because no shell runs. The message is ONE argument.
+    assert_eq!(
+        finish.command.as_deref(),
+        Some("git commit -m commit this for me")
+    );
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages.iter().find(|m| m["role"] == "tool").unwrap();
+    let content = tool_message["content"].as_str().unwrap();
+    assert!(content.contains("refused"), "{content}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// The card is not a yes-by-default: with nobody answering, the wait ends
+/// and the command is refused. This exercises the same code path the real
+/// timeout takes, with a short card so the test stays fast.
+#[tokio::test]
+async fn an_unanswered_card_refuses_the_command() {
+    let repo = make_repo("write-unanswered", true);
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+
+    // Nobody calls decide: collect the card and let the turn end. The
+    // timeout is shortened here so the test drives the same path the
+    // product takes after its real 180 seconds.
+    f.state
+        .set_approval_timeout(std::time::Duration::from_millis(150));
+    let mut req = request("w3", "build it");
+    req.model = Some("tools:warden_npm_build".into());
+    let (result, chunks) = f.send(req).await;
+    // The card never gets an answer, so the send ends with a refusal the
+    // model can read — not an error and not a hang.
+    result.expect("send");
+
+    let finish = chunks
+        .iter()
+        .filter_map(|c| c.tool_call.as_ref())
+        .find(|e| e.done)
+        .expect("a finished tool event");
+    assert!(!finish.ok);
+    assert_eq!(finish.command.as_deref(), Some("npm run build"));
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages.iter().find(|m| m["role"] == "tool").unwrap();
+    assert!(
+        tool_message["content"]
+            .as_str()
+            .unwrap()
+            .contains("nothing was run"),
         "{tool_message}"
     );
     let _ = std::fs::remove_dir_all(&repo);

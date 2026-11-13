@@ -81,6 +81,10 @@ async fn model_tools(session: &McpSession, local: bool) -> Result<Vec<ToolSpec>,
         .collect();
     if local {
         specs.extend(crate::exec::tool_specs());
+        // The write/build set rides with the read-only face because both
+        // need a repository to run in — but the loop gates every call to
+        // this half behind the user's yes, so offering them costs nothing.
+        specs.extend(crate::exec::write_specs());
     }
     Ok(specs)
 }
@@ -161,6 +165,7 @@ async fn route_tool(
     name: &str,
     arguments: Value,
     scope: Option<&GenerationScope>,
+    mut ask: impl FnMut(&crate::provider_commands::ApprovalRequest),
 ) -> (String, bool, Option<String>, Option<String>) {
     if crate::exec::is_local(name) {
         let Some(scope) = scope else {
@@ -209,6 +214,92 @@ async fn route_tool(
             ),
         };
     }
+    if crate::exec::is_write(name) {
+        let Some(scope) = scope else {
+            let message = format!("tool {name} is not available in this conversation");
+            return (
+                json!({"error": message}).to_string(),
+                false,
+                Some(message),
+                None,
+            );
+        };
+        let repository = std::path::PathBuf::from(&scope.repository);
+        // Plan FIRST: the card must show the exact command, and a bad
+        // argument is a refusal the model gets back without troubling the
+        // user with a dialog for something that cannot run anyway.
+        let command = match crate::exec::plan_write(name, &arguments, &repository) {
+            Ok(command) => command,
+            Err(reason) => {
+                return (
+                    json!({"error": reason.clone()}).to_string(),
+                    false,
+                    Some(reason),
+                    None,
+                );
+            }
+        };
+        // The card. `approvals` is the single source of truth for whether a
+        // card is still open: pending is a state, not a missing entry.
+        let id = uuid_like(&format!("{}|{}|{command}", scope.repository, name));
+        state.open_card(&id);
+        ask(&crate::provider_commands::ApprovalRequest {
+            id: id.clone(),
+            tool: name.to_string(),
+            command: command.clone(),
+            seconds: APPROVAL_TIMEOUT.as_secs(),
+        });
+        let decision = state.await_decision(&id).await;
+        state.close_card(&id);
+        // A timeout and a "no" are the same answer: nothing runs. The model
+        // is told which it was, because "nobody answered" and "the user
+        // refused" mean different things to a plan.
+        let refusal = match decision {
+            Some(Decision::Approved) => {
+                let audit = state.audit.clone();
+                let repo_text = scope.repository.clone();
+                let name_owned = name.to_string();
+                let executed = tauri::async_runtime::spawn_blocking(move || {
+                    let out = crate::exec::run_write(&name_owned, &arguments, &repository);
+                    let at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(-1);
+                    audit.record(&crate::exec::audit_entry(
+                        at,
+                        &repo_text,
+                        &name_owned,
+                        &out,
+                        out.text.len(),
+                    ));
+                    out
+                })
+                .await
+                .map_err(|e| format!("the write tool task failed: {e}"));
+                return match executed {
+                    Ok(out) => {
+                        let ExecutedBranch { content, ok, error } =
+                            branch_answer(name, out.text, out.ok);
+                        (content, ok, error, Some(out.command))
+                    }
+                    Err(message) => (
+                        json!({"error": message}).to_string(),
+                        false,
+                        Some(message),
+                        Some(command),
+                    ),
+                };
+            }
+            Some(Decision::Refused) => "the user refused this command; nothing was run",
+            _ => "nobody approved this command in time; nothing was run",
+        };
+        return (
+            json!({"error": refusal}).to_string(),
+            false,
+            Some(refusal.to_string()),
+            Some(command),
+        );
+    }
     if MODEL_TOOLS.contains(&name) {
         // The server's answer travels to the model verbatim — prose from
         // repotory_context, JSON from the rest. The model reads both; a
@@ -230,6 +321,17 @@ async fn route_tool(
         Some(message),
         None,
     )
+}
+
+/// A card id that names what it is: repository, tool and the exact command,
+/// hashed. Two different commands never share an id, so a stale click can
+/// only ever answer the command it was looking at.
+fn uuid_like(seed: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    seed.hash(&mut hasher);
+    let a = hasher.finish();
+    format!("card-{a:016x}")
 }
 
 /// Shapes one executed local tool's answer for the model. A refusal is
@@ -518,7 +620,34 @@ pub struct GenerationState {
     /// path is attached once at setup, next to the provider config. The
     /// OnceLock is why a resident process can wire it after `manage()`.
     pub audit: crate::exec::AuditLog,
+    /// The approvals the user has granted or refused, keyed by the id the
+    /// confirmation card carried. A write tool sends the card, then WAITS
+    /// on this map for exactly this decision — a missing entry is "not
+    /// decided yet", which is why the wait has a timeout rather than a
+    /// default. Nothing here is persisted: an approval belongs to the one
+    /// command the user looked at, and dies with the turn.
+    approvals: Mutex<HashMap<String, Decision>>,
+    /// How long a card stays open. A field rather than the constant so the
+    /// suite can drive the timeout path in milliseconds instead of minutes
+    /// — the behaviour under test is "unanswered means refused", not the
+    /// exact number the product ships.
+    approval_timeout: Mutex<Option<std::time::Duration>>,
 }
+
+/// What the user did with a confirmation card.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    /// The card is open; nobody has answered yet.
+    Pending,
+    Approved,
+    Refused,
+}
+
+/// How long a write tool waits for the user. Long enough to read a command
+/// and think, short enough that a card hidden behind another window does not
+/// hold the conversation open forever. A timeout is a REFUSAL, never an
+/// implicit yes.
+const APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 struct GenerationGuard<'a> {
     state: &'a GenerationState,
@@ -555,6 +684,75 @@ impl GenerationState {
     fn forget(&self, key: (Option<String>, String)) {
         if let Ok(mut attempts) = self.attempts.lock() {
             attempts.remove(&key);
+        }
+    }
+
+    /// Records the user's answer to one confirmation card.
+    ///
+    /// An unknown id is ignored rather than stored: ids are minted per
+    /// command by the generation that asked, so anything else is a stale
+    /// click on a card whose turn is over — keeping it would be a memory
+    /// leak that also happens to grant nothing.
+    pub fn decide(&self, id: &str, decision: Decision) -> bool {
+        let Ok(mut pending) = self.approvals.lock() else {
+            return false;
+        };
+        if !pending.contains_key(id) {
+            return false;
+        }
+        pending.insert(id.to_string(), decision);
+        true
+    }
+
+    /// Waits for the decision on `id`. `None` on timeout — which callers
+    /// must treat as a refusal. Polling rather than a channel because the
+    /// map is the single source of truth for "is a card still open", and a
+    /// channel per card would need its own registry with its own leaks.
+    async fn await_decision(&self, id: &str) -> Option<Decision> {
+        let timeout = self
+            .approval_timeout
+            .lock()
+            .ok()
+            .and_then(|value| *value)
+            .unwrap_or(APPROVAL_TIMEOUT);
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if let Ok(pending) = self.approvals.lock()
+                && let Some(decision) = pending.get(id)
+                && *decision != Decision::Pending
+            {
+                return Some(*decision);
+            }
+            if std::time::Instant::now() >= deadline {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Overrides the card timeout (tests only).
+    pub fn set_approval_timeout(&self, timeout: std::time::Duration) {
+        if let Ok(mut slot) = self.approval_timeout.lock() {
+            *slot = Some(timeout);
+        }
+    }
+
+    /// Mints a card: the id exists as PENDING until `decide` answers it.
+    ///
+    /// Pending is a distinct state, not a placeholder decision — a map that
+    /// only held answers could not tell "nobody has clicked yet" from "the
+    /// user said no", and the two must never be conflated: one keeps
+    /// waiting, the other refuses immediately.
+    fn open_card(&self, id: &str) {
+        if let Ok(mut pending) = self.approvals.lock() {
+            pending.insert(id.to_string(), Decision::Pending);
+        }
+    }
+
+    /// Drops a card's entry once its turn is over, decided or not.
+    fn close_card(&self, id: &str) {
+        if let Ok(mut pending) = self.approvals.lock() {
+            pending.remove(id);
         }
     }
 }
@@ -632,6 +830,7 @@ pub async fn send_with_cancel(
         done: true,
         error: outcome.as_ref().err().cloned(),
         tool_call: None,
+        approval: None,
     });
     outcome
 }
@@ -821,6 +1020,7 @@ async fn send_inner(
                         done: false,
                         error: None,
                         tool_call: None,
+                        approval: None,
                     });
                 })
                 .await
@@ -865,6 +1065,7 @@ async fn send_inner(
                         // chip carries the command (Phase 3's display rule).
                         command: None,
                     }),
+                    approval: None,
                 });
             }
             // Echo the assistant turn WITH its calls — the protocol pairs every
@@ -893,8 +1094,28 @@ async fn send_inner(
                 } else {
                     serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| json!({}))
                 };
-                let (content, ok, error, command) =
-                    route_tool(session, state, &tool_call.name, arguments, scope.as_ref()).await;
+                let (content, ok, error, command) = route_tool(
+                    session,
+                    state,
+                    &tool_call.name,
+                    arguments,
+                    scope.as_ref(),
+                    |card: &crate::provider_commands::ApprovalRequest| {
+                        // The card travels on the same channel as the stream:
+                        // the window drawing it is the one that asked for the
+                        // answer, and no other window may approve a command
+                        // this one is waiting on.
+                        emit(ChatChunk {
+                            delta: String::new(),
+                            text: String::new(),
+                            done: false,
+                            error: None,
+                            tool_call: None,
+                            approval: Some(card.clone()),
+                        });
+                    },
+                )
+                .await;
                 messages.push(ChatMessage::tool_result(tool_call.id.clone(), content));
                 emit(ChatChunk {
                     delta: String::new(),
@@ -908,6 +1129,7 @@ async fn send_inner(
                         error,
                         command,
                     }),
+                    approval: None,
                 });
             }
         };

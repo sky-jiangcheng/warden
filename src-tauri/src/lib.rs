@@ -594,6 +594,31 @@ async fn conversation_rename<R: tauri::Runtime>(
     conversations::rename(&app.state::<mcp_client::McpSession>(), thread_id, title).await
 }
 
+/// Answers a confirmation card: the user's yes or no for one exact command.
+///
+/// The decision travels by id and nowhere else — the command itself is not
+/// sent back, because the generation already knows what it is waiting on and
+/// a round-tripped string could disagree with what runs. `false` means the id
+/// was unknown (the turn already ended), which the UI shows as a stale card
+/// rather than pretending the click counted.
+#[tauri::command]
+async fn approve_command<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+) -> Result<bool, String> {
+    let state = app.state::<conversations::GenerationState>();
+    Ok(state.decide(&id, conversations::Decision::Approved))
+}
+
+#[tauri::command]
+async fn refuse_command<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+) -> Result<bool, String> {
+    let state = app.state::<conversations::GenerationState>();
+    Ok(state.decide(&id, conversations::Decision::Refused))
+}
+
 #[tauri::command]
 fn companion_show_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     // The pet is a conversation entry: opening from it goes to the chat
@@ -791,6 +816,8 @@ pub fn run() {
             provider_fetch_models,
             provider_test_connection,
             chat_send,
+            approve_command,
+            refuse_command,
             conversation_list,
             conversation_create,
             conversation_read,

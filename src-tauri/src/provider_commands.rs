@@ -129,6 +129,27 @@ pub struct ChatChunk {
     /// marks the call finished; a fresh answer round follows it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call: Option<ToolEvent>,
+    /// A command waiting for the user's yes/no. The generation blocks on
+    /// the answer, so this chunk is how the card reaches the window that
+    /// has to draw it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalRequest>,
+}
+
+/// A confirmation card: the exact command, and the id the answer must quote.
+///
+/// The command travels WITH the request rather than being looked up by the
+/// UI: the user approves a string, and a string read from anywhere else
+/// could drift from what runs. `id` is the only handle back.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalRequest {
+    pub id: String,
+    pub tool: String,
+    pub command: String,
+    /// Seconds the card stays open. After this the command is refused, not
+    /// silently run — the countdown is shown so "it closed" is not a mystery.
+    pub seconds: u64,
 }
 
 /// One function-calling event, for the UI's tool chip.

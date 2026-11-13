@@ -111,6 +111,19 @@ pub fn recent_diff(repository: &str) -> Option<String> {
 /// watchdog does hold the lock across kill+wait — bounded, because its own
 /// kill is what ends `wait`.
 pub fn run_confined(dir: &std::path::Path, argv: &[&str], cap: usize) -> Option<ProcOut> {
+    run_confined_within(dir, argv, cap, GIT_TIMEOUT)
+}
+
+/// `run_confined` with an explicit time budget. A build/test command needs a
+/// longer leash than a git query (a cold `cargo test` is minutes, not
+/// seconds), and a single hard-coded constant would either cut builds short
+/// or leave git able to hang for minutes. Same guarantees either way.
+pub fn run_confined_within(
+    dir: &std::path::Path,
+    argv: &[&str],
+    cap: usize,
+    timeout: std::time::Duration,
+) -> Option<ProcOut> {
     let (program, args) = argv.split_first()?;
     let child = std::process::Command::new(program)
         .current_dir(dir)
@@ -126,7 +139,7 @@ pub fn run_confined(dir: &std::path::Path, argv: &[&str], cap: usize) -> Option<
     {
         let shared = Arc::clone(&shared);
         std::thread::spawn(move || {
-            std::thread::sleep(GIT_TIMEOUT);
+            std::thread::sleep(timeout);
             if let Some(mut wedged) = lock(&shared).take() {
                 let _ = wedged.kill();
                 let _ = wedged.wait();

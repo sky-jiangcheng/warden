@@ -10,6 +10,7 @@
 // reason the fake MCP server is: Cargo's `CARGO_BIN_EXE_<name>` is set for
 // binaries and not for test targets, and a test fixture has no business in a
 // shipped build.
+use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -151,11 +152,21 @@ fn handle(mut stream: TcpStream, served: usize) {
             m if m == "tools" || m.starts_with("tools:") => {
                 let tool = m.strip_prefix("tools:").unwrap_or("repotory_metrics");
                 if served == 1 {
-                    let arguments = if tool == "repotory_metrics" {
-                        r#"{\"path\":\"/repo/one\"}"#
-                    } else {
-                        "{}"
-                    };
+                    // Each tool needs arguments its REAL schema accepts —
+                    // a fixture that sends `{}` to a tool requiring `message`
+                    // tests the refusal path by accident, not on purpose.
+                    //
+                    // The value is the model's `arguments` field, i.e. a JSON
+                    // string CONTAINING JSON. `json!` would escape it again,
+                    // so the object is built and stringified explicitly:
+                    // double-escaping here silently turned every argument
+                    // object into `{}` and made the gate look broken.
+                    let arguments = match tool {
+                        "repotory_metrics" => json!({"path": "/repo/one"}),
+                        "warden_git_commit" => json!({"message": "commit this for me"}),
+                        _ => json!({}),
+                    }
+                    .to_string();
                     let chunk = serde_json::json!({
                         "choices": [{
                             "delta": {"tool_calls": [{

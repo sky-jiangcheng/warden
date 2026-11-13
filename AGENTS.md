@@ -54,10 +54,12 @@ src-tauri/           后端（Rust）
   src/git.rs        只读 git 状态读取（diff --stat + patch 摘录）：固定 argv、无 shell、
                       字节上限 + 超时看门狗；干净树沉默，截断明说。不是 Phase 3 的执行层。
                       `run_confined` 同时是 exec.rs 的子进程运行器——上限与看门狗只写一次。
-  src/exec.rs       Phase 3 只读执行层：八个 `warden_*` 工具（git status/diff/log/branch/show、
-                      列目录、读文件、grep）、参数校验（禁开关/绝对路径/上跳/区间）、
-                      仓库内包含性检查、`exec-audit.jsonl` 审计（0600，记完整 argv 与退出码）。
-                      写操作与构建命令**不在这里**——它们等确认卡。
+  src/exec.rs       Phase 3 执行层：读八件（git status/diff/log/branch/show、列目录、读文件、grep）
+                      直接跑；写四件（git add/commit、npm run build、cargo test）过确认卡。
+                      参数校验（禁开关/绝对路径/上跳/区间）、仓库内包含性检查、共用运行器、
+                      `exec-audit.jsonl` 审计（0600，记完整 argv 与退出码）。
+                      **`plan_write` 是卡片与执行的同一个真相**：先规划、把命令给人看、批准后照同一个 planner 跑。
+                      **别把写工具改成自动执行**，也别持久化批准——一次批准只覆盖一条命令。
   src/memory_layer.rs    记忆层（Cinder MCP）状态：连接 + 服务端给的工具清单
   src/repos.rs        仓库发现与收藏清单：扫盘 + watchlist 持久化
   tests/             端到端测试（真管道 + fake MCP server / fake LLM server / 真仓库目录）

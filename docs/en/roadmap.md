@@ -151,7 +151,7 @@ changing the main repository, which is not a copilot's job**.
 repository path and the uncommitted diff excerpt ride in the system prompt, and the saved reply
 writes a milestone handoff (see the Phase 2 wrap-up notes).
 
-## Phase 3: the tool execution layer (2–3 weeks) — the read-only half has started (2026-11-13)
+## Phase 3: the tool execution layer (2–3 weeks) — both halves wired (2026-11-13)
 
 Whitelisted tools first:
 
@@ -185,10 +185,24 @@ confirmation step**. Four rules:
 - **The complete command reaches the UI**: `ToolEvent` carries `command`, so the chip shows the
   line that really ran.
 
-**Not done**: writes and the commands that execute repo-controlled scripts (`npm run build`,
-`cargo test`) — they wait for the confirmation card, the Human-in-the-loop half, the same order
-product.md set for the MCP write face. "Every output can be collapsed" is still a one-line status,
-not an expandable full-output panel.
+**The write/build half is wired too (same day)** — a confirmation gate over four tools:
+`warden_git_add` · `warden_git_commit` · `warden_npm_build` · `warden_cargo_test`.
+
+- **Plan, ask, then run**: the card shows the command `plan_write` computed, and execution goes
+  through the same planner — **the string on the card and the string that runs have one source**,
+  so "what you approved" and "what ran" cannot diverge;
+- **No answer means no**: the card counts down (180s) and a timeout REFUSES; it is never an
+  implicit yes. The model is told which happened — "nobody answered" and "the user refused" lead
+  to different next steps;
+- **An approval covers one command once**: decisions live in memory keyed by card id and are
+  dropped when the turn ends. There is no persisted allowlist and no "always allow";
+- **Write tools run confined too**: the same `run_confined_within`, with a longer leash (300s)
+  and a larger output cap (16 KB);
+- Refusals and approvals both land in the same `exec-audit.jsonl`.
+
+**Not done**: "every output can be collapsed" is still a one-line status, not an expandable
+full-output panel. Arbitrary commands (`mysql -e`, any other shell) stay off the face — the
+whitelist is exactly four write tools and eight read tools.
 
 ## Phase 4: the memory panels (1–2 weeks)
 
@@ -236,7 +250,7 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 | M1 | It can call Cinder MCP | done (Phase 1) |
 | M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
 | M2 | It can talk to a model about the current repository | done (2026-11-12: the chat loop, the system prompt, the read-only tool face, diff injection and the handoff write-back are all wired) |
-| M3 | It can safely run Git / Shell commands | in progress (the eight read-only tools have landed — git status/diff/log/branch/show, listing, file reads, grep — with an audit log and full-command display; writes and build commands wait for the confirmation card) |
+| M3 | It can safely run Git / Shell commands | in progress (eight read tools + four write tools, the write side behind a confirmation card; audit log and full-command display are in place; arbitrary shell and a collapsible output panel are not) |
 | M4 | It can see and manage cross-session memory | not started |
 | M5 | It installs and initializes in one step | not started |
 | M6 | It ships as a standalone product | not started |

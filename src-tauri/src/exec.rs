@@ -62,9 +62,33 @@ pub const LOCAL_TOOLS: &[&str] = &[
 /// Byte cap per command output. Big enough for a status or a focused read,
 /// small enough that one tool round cannot flood the context.
 const OUT_BYTES: usize = 6_000;
+/// Build output is often a screenful of warnings before the answer. Big
+/// enough to keep the failing test's name, still bounded.
+const BUILD_OUT_BYTES: usize = 16_000;
 const LIST_ENTRIES: usize = 200;
 /// A pathspec list longer than this is the model losing the plot.
 const MAX_PATH_ITEMS: usize = 8;
+
+/// The write/build half of Phase 3 — the tools whose execution the user
+/// must approve first. They are a CLOSED set, not a shell: each entry is
+/// one fixed argv shape with values the model supplies, and nothing here
+/// can be turned into "run whatever I say".
+///
+/// Why these and not arbitrary commands: `npm run build` and `cargo test`
+/// execute code the REPOSITORY controls (a `package.json` script, a build
+/// script, a test harness). That is exactly why they need the human gate
+/// Phase 3 names, and exactly why the gate — not a sandbox — is the right
+/// answer: the user already trusts that repository enough to work in it.
+pub const WRITE_TOOLS: &[&str] = &[
+    "warden_npm_build",
+    "warden_cargo_test",
+    "warden_git_add",
+    "warden_git_commit",
+];
+
+/// The ceiling for a build/test command. A cold `cargo test` on a real
+/// crate is minutes; anything past this is not "slow", it is stuck.
+const BUILD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub struct Executed {
     /// The answer handed to the model — an error sentence when the command
@@ -177,9 +201,172 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
-/// Whether a tool name belongs to this layer.
+/// Whether a tool name belongs to the read-only layer.
 pub fn is_local(name: &str) -> bool {
     LOCAL_TOOLS.contains(&name)
+}
+
+/// Whether a tool name belongs to the confirmation-gated layer.
+pub fn is_write(name: &str) -> bool {
+    WRITE_TOOLS.contains(&name)
+}
+
+/// Whether the name belongs to Warden's own local face at all.
+pub fn is_warden_tool(name: &str) -> bool {
+    is_local(name) || is_write(name)
+}
+
+/// The model-facing specs for the write/build set. Every one of them is
+/// marked as needing approval, both in the description the model reads and
+/// in the enforcement (the loop asks before it runs anything here).
+pub fn write_specs() -> Vec<ToolSpec> {
+    let entries: Vec<(&str, &str, Value)> = vec![
+        (
+            "warden_git_add",
+            "Stage paths for the next commit. REQUIRES USER APPROVAL: the user sees the exact command and accepts or refuses it before anything runs.",
+            object(
+                json!({"paths": {"type": "array", "items": {"type": "string"}, "description": "Relative paths to stage; omit for all changes in the repository"}}),
+                &[],
+            ),
+        ),
+        (
+            "warden_git_commit",
+            "Create a commit from the staged changes. REQUIRES USER APPROVAL. The message is used verbatim.",
+            object(
+                json!({"message": string_prop("The commit message, one line and a body if needed")}),
+                &["message"],
+            ),
+        ),
+        (
+            "warden_npm_build",
+            "Run `npm run build` in the repository. REQUIRES USER APPROVAL: it executes the repository's own build script.",
+            object(json!({}), &[]),
+        ),
+        (
+            "warden_cargo_test",
+            "Run `cargo test` in the repository. REQUIRES USER APPROVAL: it compiles and runs the repository's tests.",
+            object(
+                json!({"package": string_prop("Optional package name to test (--package)")}),
+                &[],
+            ),
+        ),
+    ];
+    entries
+        .into_iter()
+        .map(|(name, description, parameters)| ToolSpec {
+            kind: "function".to_string(),
+            function: ToolFunctionSpec {
+                name: name.to_string(),
+                description: description.to_string(),
+                parameters: Some(parameters),
+            },
+        })
+        .collect()
+}
+
+/// The exact command a write/build tool WOULD run, for the confirmation card.
+///
+/// This is what the user approves, so it is computed by the same planner the
+/// execution uses — a card that showed something different from what runs
+/// would be worse than no card. `Err` carries the refusal (bad arguments),
+/// which the loop hands back to the model instead of asking the user.
+pub fn plan_write(name: &str, args: &Value, repository: &Path) -> Result<String, String> {
+    let argv = build_write(name, args, repository)?;
+    Ok(argv.join(" "))
+}
+
+fn build_write(name: &str, args: &Value, _repository: &Path) -> Result<Vec<String>, String> {
+    let argv = match name {
+        "warden_git_add" => {
+            // `--all` is an OPTION, so it must precede `--`: `git add --
+            // --all` stages the file literally named "--all" (which is what
+            // the first version did, and it staged nothing).
+            let mut argv = owned(&["git", "add"]);
+            match args.get("paths") {
+                None | Some(Value::Null) => argv.push("--all".to_string()),
+                Some(Value::Array(items)) => {
+                    if items.is_empty() {
+                        return Err(
+                            "paths must not be an empty array; omit it to stage everything".into(),
+                        );
+                    }
+                    if items.len() > MAX_PATH_ITEMS {
+                        return Err(format!("at most {MAX_PATH_ITEMS} paths"));
+                    }
+                    for item in items {
+                        let path = item.as_str().ok_or("paths must be strings")?;
+                        validate_rel(path, _repository)?;
+                    }
+                    argv.push("--".to_string());
+                    argv.extend(
+                        items
+                            .iter()
+                            .map(|item| item.as_str().expect("validated").to_string()),
+                    );
+                }
+                Some(_) => return Err("paths must be an array of strings".into()),
+            }
+            argv
+        }
+        "warden_git_commit" => {
+            let message = args
+                .get("message")
+                .and_then(Value::as_str)
+                .ok_or("message is required")?;
+            let message = message.trim();
+            if message.is_empty() || message.len() > 5_000 {
+                return Err("message must be 1–5000 bytes".into());
+            }
+            // One `-m` with the message as a single argv element: no shell,
+            // no newline tricks, no second message the card would not show.
+            owned(&["git", "commit", "-m", message])
+        }
+        "warden_npm_build" => owned(&["npm", "run", "build"]),
+        "warden_cargo_test" => {
+            let mut argv = owned(&["cargo", "test"]);
+            if let Some(package) = args.get("package").and_then(Value::as_str) {
+                if package.is_empty()
+                    || package.len() > 200
+                    || package.starts_with('-')
+                    || !package
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+                {
+                    return Err(format!("package contains unsafe characters: {package}"));
+                }
+                argv.push("--package".to_string());
+                argv.push(package.to_string());
+            }
+            argv
+        }
+        other => return Err(format!("unknown write tool {other}")),
+    };
+    Ok(argv)
+}
+
+/// Runs an APPROVED write/build tool. The caller has already shown the user
+/// `plan_write`'s exact command and received a yes; this function does not
+/// ask again — it re-plans (same arguments, same command) and executes.
+pub fn run_write(name: &str, args: &Value, repository: &Path) -> Executed {
+    let argv = match build_write(name, args, repository) {
+        Ok(argv) => argv,
+        Err(reason) => return refused(reason),
+    };
+    let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let command = refs.join(" ");
+    // A build writes a lot: keep the tail-sized cap generous but bounded,
+    // and let the longer timeout be the build-specific part.
+    let executed = git::run_confined_within(repository, &refs, BUILD_OUT_BYTES, BUILD_TIMEOUT);
+    match executed {
+        Some(out) => child_answer(name, out, command),
+        None => Executed {
+            text: format!("the command could not run or timed out: {command}"),
+            command,
+            ok: false,
+            truncated: false,
+            exit: None,
+        },
+    }
 }
 
 /// Runs one local tool for a repository-scoped conversation.
@@ -805,6 +992,46 @@ mod tests {
         }
         let _ = std::fs::remove_file(&log);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plan_write_shows_the_exact_command_for_every_tool() {
+        let args = json!({"message": "commit this for me"});
+        assert_eq!(
+            plan_write("warden_git_commit", &args, Path::new("/r")).unwrap(),
+            "git commit -m commit this for me"
+        );
+        assert_eq!(
+            plan_write("warden_git_add", &json!({}), Path::new("/r")).unwrap(),
+            "git add --all"
+        );
+        assert_eq!(
+            plan_write(
+                "warden_git_add",
+                &json!({"paths": ["a.txt"]}),
+                Path::new("/r")
+            )
+            .unwrap(),
+            "git add -- a.txt"
+        );
+        assert_eq!(
+            plan_write("warden_npm_build", &json!({}), Path::new("/r")).unwrap(),
+            "npm run build"
+        );
+        assert_eq!(
+            plan_write("warden_cargo_test", &json!({}), Path::new("/r")).unwrap(),
+            "cargo test"
+        );
+        // A bad argument is a refusal BEFORE the user is asked anything.
+        assert!(plan_write("warden_git_commit", &json!({}), Path::new("/r")).is_err());
+        assert!(
+            plan_write(
+                "warden_git_add",
+                &json!({"paths": ["../x"]}),
+                Path::new("/r")
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -16,7 +16,8 @@ type Topic = {
 type Provider = { id: string; name: string; defaultModel: string | null; active: boolean };
 type Repo = { path: string; name: string; missing: boolean };
 type Model = { id: string; name: string | null };
-type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string; command?: string } | null };
+type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string; command?: string } | null;
+  approval?: { id: string; tool: string; command: string; seconds: number } | null };
 
 export function initChat() {
   const input = pick<HTMLTextAreaElement>("#chat-input");
@@ -39,6 +40,73 @@ export function initChat() {
   let composing = false;
   let compositionEnded = 0;
   let renameBusy = false;
+  // One card at a time: the generation is blocked on this answer, so a second
+  // card could not be acted on anyway. `approvalTimer` is what makes the
+  // countdown visible instead of leaving a dead card on screen.
+  let approvalOpen: { id: string; tool: string } | null = null;
+  let approvalTimer: ReturnType<typeof setInterval> | undefined;
+
+  function closeApproval(): void {
+    clearInterval(approvalTimer);
+    approvalTimer = undefined;
+    approvalOpen = null;
+    pick<HTMLElement>("#chat-approval").hidden = true;
+    pick<HTMLElement>("#approval-note").textContent = "";
+  }
+
+  // Draws the card for one command. The countdown is honest about what will
+  // happen: when it reaches zero the command is REFUSED, not run — the
+  // backend enforces that with its own timeout, and this is the same number.
+  function showApproval(card: { id: string; tool: string; command: string; seconds: number }): void {
+    clearInterval(approvalTimer);
+    approvalOpen = { id: card.id, tool: card.tool };
+    const cardEl = pick<HTMLElement>("#chat-approval");
+    const command = pick<HTMLElement>("#approval-command");
+    const note = pick<HTMLElement>("#approval-note");
+    const run = pick<HTMLButtonElement>("#approval-run");
+    const refuse = pick<HTMLButtonElement>("#approval-refuse");
+    command.textContent = card.command;
+    run.disabled = false;
+    refuse.disabled = false;
+    cardEl.hidden = false;
+    let left = card.seconds;
+    const paint = (): void => {
+      note.textContent = `不回答将在 ${left} 秒后视为拒绝；拒绝的命令不会执行。`;
+    };
+    paint();
+    approvalTimer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval(approvalTimer);
+        approvalTimer = undefined;
+        note.textContent = "已超时，命令未执行。";
+        run.disabled = true;
+        refuse.disabled = true;
+        approvalOpen = null;
+        return;
+      }
+      paint();
+    }, 1000);
+    run.focus({ preventScroll: true });
+  }
+
+  async function answerApproval(approved: boolean): Promise<void> {
+    const open = approvalOpen;
+    if (!open) return;
+    // Disable first: a double click must not send two answers, and the
+    // backend only accepts the first one that arrives for a live card.
+    pick<HTMLButtonElement>("#approval-run").disabled = true;
+    pick<HTMLButtonElement>("#approval-refuse").disabled = true;
+    clearInterval(approvalTimer);
+    approvalTimer = undefined;
+    approvalOpen = null;
+    try {
+      await invoke<boolean>(approved ? "approve_command" : "refuse_command", { id: open.id });
+      pick<HTMLElement>("#approval-note").textContent = approved ? "已批准，正在运行…" : "已拒绝，命令未执行。";
+    } catch (error) {
+      pick<HTMLElement>("#approval-note").textContent = `回执未能送达：${errorText(error)}`;
+    }
+  }
   // The tool state lives on Topic (see above), not here: concurrent replies on
   // different threads must not overwrite one shared variable.
   const modelCache = new Map<string, Model[]>();
@@ -351,6 +419,7 @@ export function initChat() {
             command: chunk.toolCall.command,
           };
         }
+        if (chunk.approval) showApproval(chunk.approval);
         if (chunk.error) streamError = chunk.error;
         if (chunk.done || chunk.error) streamDone = true;
         // Captured topic, not whichever topic is visible when a late chunk arrives.
@@ -389,6 +458,11 @@ export function initChat() {
       // untouched clears it. On success topic.draft was already reset above
       // when the input still held the sent text.
       topic.draft = draftAfterSend({ draftNow: topic.draft, draftAtSend: draft, failed: sendFailed });
+      // The turn is over, so any card it opened is moot: a card left on
+      // screen would offer to run a command whose conversation already
+      // moved on. Closing it here is what keeps the UI honest after an
+      // error, a cancel, or a timeout.
+      closeApproval();
       topic.busy = false;
       topic.revision += 1;
       if (active === topic) render();
@@ -443,6 +517,8 @@ export function initChat() {
       input.focus();
     });
   }
+  pick<HTMLButtonElement>("#approval-run").addEventListener("click", () => void answerApproval(true));
+  pick<HTMLButtonElement>("#approval-refuse").addEventListener("click", () => void answerApproval(false));
   pick<HTMLButtonElement>("#topics-open").addEventListener("click", showTopics);
   pick<HTMLButtonElement>("#topic-title").addEventListener("click", showTopics);
   for (const id of ["#topic-new", "#topic-new-in-sheet"]) pick<HTMLButtonElement>(id).addEventListener("click", () => selectTopic(makeTopic()));
