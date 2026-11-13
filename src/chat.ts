@@ -17,7 +17,7 @@ type Provider = { id: string; name: string; defaultModel: string | null; active:
 type Repo = { path: string; name: string; missing: boolean };
 type Model = { id: string; name: string | null };
 type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string; command?: string; output?: string } | null;
-  approval?: { id: string; tool: string; command: string; seconds: number } | null };
+  approval?: { id: string; tool: string; command: string; kind: "command" | "knowledgeWrite"; arguments?: unknown; seconds: number } | null };
 
 export function initChat() {
   const input = pick<HTMLTextAreaElement>("#chat-input");
@@ -43,7 +43,7 @@ export function initChat() {
   // One card at a time: the generation is blocked on this answer, so a second
   // card could not be acted on anyway. `approvalTimer` is what makes the
   // countdown visible instead of leaving a dead card on screen.
-  let approvalOpen: { id: string; tool: string } | null = null;
+  let approvalOpen: { id: string; tool: string; kind: "command" | "knowledgeWrite"; arguments?: unknown } | null = null;
   let approvalTimer: ReturnType<typeof setInterval> | undefined;
 
   function closeApproval(): void {
@@ -57,21 +57,36 @@ export function initChat() {
   // Draws the card for one command. The countdown is honest about what will
   // happen: when it reaches zero the command is REFUSED, not run — the
   // backend enforces that with its own timeout, and this is the same number.
-  function showApproval(card: { id: string; tool: string; command: string; seconds: number }): void {
+  //
+  // A knowledge write additionally shows its arguments editable: the user can
+  // adjust the content before approving, and what is sent back is the revised
+  // payload (partial agreement). A local command is approved as-is.
+  function showApproval(card: { id: string; tool: string; command: string; kind: "command" | "knowledgeWrite"; arguments?: unknown; seconds: number }): void {
     clearInterval(approvalTimer);
-    approvalOpen = { id: card.id, tool: card.tool };
+    approvalOpen = { id: card.id, tool: card.tool, kind: card.kind, arguments: card.arguments };
     const cardEl = pick<HTMLElement>("#chat-approval");
     const command = pick<HTMLElement>("#approval-command");
     const note = pick<HTMLElement>("#approval-note");
     const run = pick<HTMLButtonElement>("#approval-run");
     const refuse = pick<HTMLButtonElement>("#approval-refuse");
+    const edit = pick<HTMLElement>("#approval-edit");
+    const argsBox = pick<HTMLTextAreaElement>("#approval-arguments");
     command.textContent = card.command;
+    const editable = card.kind === "knowledgeWrite" && card.arguments != null;
+    edit.hidden = !editable;
+    if (editable) {
+      // Pre-fill the proposed payload; the user edits from there. Shown
+      // verbatim as JSON — the arguments are the model's, untrusted.
+      argsBox.value = JSON.stringify(card.arguments, null, 2);
+    }
     run.disabled = false;
     refuse.disabled = false;
     cardEl.hidden = false;
     let left = card.seconds;
     const paint = (): void => {
-      note.textContent = `不回答将在 ${left} 秒后视为拒绝；拒绝的命令不会执行。`;
+      note.textContent = editable
+        ? `不回答将在 ${left} 秒后视为拒绝；拒绝的写入不会落库。`
+        : `不回答将在 ${left} 秒后视为拒绝；拒绝的命令不会执行。`;
     };
     paint();
     approvalTimer = setInterval(() => {
@@ -79,7 +94,7 @@ export function initChat() {
       if (left <= 0) {
         clearInterval(approvalTimer);
         approvalTimer = undefined;
-        note.textContent = "已超时，命令未执行。";
+        note.textContent = "已超时，未执行。";
         run.disabled = true;
         refuse.disabled = true;
         approvalOpen = null;
@@ -88,6 +103,22 @@ export function initChat() {
       paint();
     }, 1000);
     run.focus({ preventScroll: true });
+  }
+
+  // Reads the edited arguments back, returning null when there are none to
+  // send (a local command) or when the JSON is not valid (the approval is
+  // held back with a message rather than sending garbage to the backend).
+  function approvalArguments(): unknown | undefined {
+    const open = approvalOpen;
+    if (!open || open.kind !== "knowledgeWrite") return undefined;
+    const raw = pick<HTMLTextAreaElement>("#approval-arguments").value.trim();
+    if (raw === "") return undefined;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      pick<HTMLElement>("#approval-note").textContent = "写入内容不是合法 JSON，请修正后再运行。";
+      return undefined;
+    }
   }
 
   async function answerApproval(approved: boolean): Promise<void> {
@@ -101,8 +132,13 @@ export function initChat() {
     approvalTimer = undefined;
     approvalOpen = null;
     try {
-      await invoke<boolean>(approved ? "approve_command" : "refuse_command", { id: open.id });
-      pick<HTMLElement>("#approval-note").textContent = approved ? "已批准，正在运行…" : "已拒绝，命令未执行。";
+      if (approved) {
+        const args = approvalArguments();
+        await invoke<boolean>("approve_command", { id: open.id, arguments: args });
+      } else {
+        await invoke<boolean>("refuse_command", { id: open.id });
+      }
+      pick<HTMLElement>("#approval-note").textContent = approved ? "已批准，正在写入…" : "已拒绝，未写入。";
     } catch (error) {
       pick<HTMLElement>("#approval-note").textContent = `回执未能送达：${errorText(error)}`;
     }

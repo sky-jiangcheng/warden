@@ -269,30 +269,52 @@ revision 落后的响应被丢弃（`readIsStale`，含 busy 情形）、IME 组
 （`sendBlocked` + 共用的 `COMPOSITION_GRACE_MS`，keydown 守卫同用这一个数）、
 请求失败后草稿仍在（`draftAfterSend` 的 `failed`）。
 
-### 7. 长期知识写回时，「人确认」在 copilot 侧长什么样（待定）
+### 7. ~~长期知识写回时，「人确认」在 copilot 侧长什么样~~（已定并落地）
 
 **已定**（第 5 条）：`notes_create` / `notes_update` / `notes_organize` 必须过一次人确认；
 知识页的 approve / reject 永远在 Cinder Desktop，这里说的是 copilot 自己写长期知识的那道确认。
 
-**待定**：
-① 确认发生在工具调用**前**还是结果回填**后**——前者能阻止写入，后者只能撤销；
-② 形态是对话流里的确认卡，还是独立面板；
-③ 确认记录放哪（本地审计，还是记忆层里一张不进检索的表）；
-④ 超时 / 关窗时默认拒绝，还是挂起等下次。
+**已定（2026-11-13）并已落地**：
 
-**验收判据**：模型发起一次 `notes_create`，用户未确认时工具不执行、记忆层无新记录；
-确认与拒绝都留一条可追溯记录（谁、何时、哪个工具、什么参数）。
+- **确认时机：工具调用前硬拦截。** 模型发起写入时先弹确认卡，用户批准后才执行。
+  写后只能撤销，而那时内容已经进了检索库——**污染已经发生**，所以拦截必须在调用前。
+- **形态：对话流内嵌确认卡，支持编辑与部分同意。** 卡片就画在对话里，不割裂体验；
+  写入参数以 JSON 可编辑区展示，用户可以直接改内容再点「运行」——**批准的是修订后的版本**，
+  不是只能照单全收。审计用 `revised` 字段区分「批准原样」与「批准修订」。
+- **记录位置：独立追加式审计日志，不进检索层。** 写进 app 配置目录下的
+  `knowledge-audit.jsonl`（0600，追加式），与命令执行日志、检索库都分开——
+  知识与元数据隔离，满足可追溯。每条记录：谁、何时、哪个工具、什么参数、是否修订、结果。
+- **超时 / 关窗：默认拒绝，会话内挂起，关闭后留审计并可下次礼貌重提。** Fail-Closed：
+  不静默放行。超时与拒绝都记进审计（错误原因不同，一条「用户拒绝」、一条「超时无人应答」），
+  模型下一轮会收到「未批准、未写入」的明确结果，可以礼貌重提。
 
-### 8. 错误从 `String` 收敛到结构化类型（待定）
+**验收判据——已满足**：模型发起一次 `notes_create`，用户未确认时工具不执行、记忆层无新记录
+（端到端测试断言工具结果不含 `created`，且审计里有一条 `ok=false` 的拒绝记录）；
+确认与拒绝都留一条可追溯记录（测试断言 `who` / `tool` / `arguments` / `revised` / `ok`）。
+
+### 8. ~~错误从 `String` 收敛到结构化类型~~（已定并落地：选项 2）
 
 **原问题**：Rust 命令与 MCP / LLM 客户端一律 `Result<T, String>`，前端只能原样显示，
 无法按类别分支（未安装 / 连不上 / 鉴权失败 / 超时 / 契约不匹配）；日志只有 `eprintln!`，
 没有可检索字段。
 
-**待定**：收敛到哪一层、什么粒度。
-① 只在客户端内部用 `thiserror` 枚举，IPC 边界仍摊平成 `String`（改动小，前端收益也小）；
-② IPC 改成 `{ code, message }`，前端按 `code` 分支、`message` 直出（要改所有命令与调用点）；
-③ 连日志一起换（`tracing` + 字段），代价最大，收益在排障。
+**已定（2026-11-13）：选项 2，IPC 改为 `{ code, message, data? }`。**
+选项 1 前端无收益，选项 3 的可观测性不必与契约改造绑定。
 
-**验收判据**：前端能按错误类别给出不同动作（例如「未安装」给安装指引、「鉴权失败」跳设置），
-错误码有测试，日志能按 code / provider / thread 过滤。
+**落地**：
+
+- **内部用 `thiserror` 枚举**（`src-tauri/src/errors.rs` 的 `AppError`：`NotInstalled` /
+  `Connection` / `Authentication` / `Timeout` / `ContractMismatch` / `InvalidInput` /
+  `NotFound` / `Denied` / `Failed` / `Internal`）；
+- **IPC 边界序列化稳定 `code`**（`ApiError { code, message, data? }`，`SCREAMING_SNAKE_CASE`），
+  前端按 `code` 分支、`message` 直出；
+- **未知错误统一兜底为 `INTERNAL_ERROR`**（`From<String>` 的落点，不假装懂一个没分类的错误）；
+- **`LlmError` / `McpError` 按变体映射**，不靠英文短语子串匹配——`Transport` 与 `Status 401/403`
+  是需要不同动作的两类，按子串会误判；
+- **日志：在 IPC 边界补一条带 `code` / `provider` / `thread` 的 `tracing` 事件**
+  （`errors::boundary`），满足按 code / provider / thread 过滤，不要求全量改造。
+
+**验收判据——已满足**：前端能按错误类别给出不同动作（`errorHint(code)`：
+「未安装」给安装指引、「鉴权失败」给检查 Key 的提示，接到 provider 错误显示处）；
+错误码有测试（`errors.rs` 的 wire 拼写、变体映射、未知兜底、payload 形状，以及前端 `ui.test.ts`）；
+日志事件带 `code` / `provider` / `thread` 字段。

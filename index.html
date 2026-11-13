@@ -57,6 +57,14 @@
           <section class="approval" id="chat-approval" role="alertdialog" aria-labelledby="approval-title" hidden>
             <p class="approval__title" id="approval-title">这条命令需要你确认</p>
             <pre class="approval__command" id="approval-command"></pre>
+            <!-- Phase 6 open question 7: a knowledge write's arguments are
+                 shown editable, so the user can agree to a revised version
+                 (partial agreement) rather than only the original. Hidden for
+                 local commands, which are approved as-is. -->
+            <div class="approval__edit" id="approval-edit" hidden>
+              <label class="approval__edit-label" for="approval-arguments">可编辑的写入内容（JSON）</label>
+              <textarea id="approval-arguments" rows="6" spellcheck="false"></textarea>
+            </div>
             <div class="approval__actions">
               <button class="text-btn" id="approval-refuse" type="button">拒绝</button>
               <button class="approval__run" id="approval-run" type="button">运行</button>

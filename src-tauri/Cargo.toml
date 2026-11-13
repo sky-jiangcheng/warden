@@ -45,6 +45,13 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Phase 6 open question 8: errors converge on structured codes at the IPC
+# boundary. `thiserror` for the internal enum, `tracing` for the one event
+# per boundary failure (code / provider / thread), so the log is filterable
+# without a full logging migration.
+thiserror = "2"
+tracing = "0.1"
+
 # The model client speaks the OpenAI-compatible API (GET {base}/models and
 # POST {base}/chat/completions), which every provider the user might pick
 # exposes: OpenRouter, OpenAI, DeepSeek, SiliconFlow, vLLM, LM Studio and

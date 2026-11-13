@@ -136,17 +136,39 @@ pub struct ChatChunk {
     pub approval: Option<ApprovalRequest>,
 }
 
+/// What a confirmation card is asking approval for.
+///
+/// The two kinds need different UI: a local command is approved as-is (the
+/// user reads the exact argv), while a knowledge write is approved with
+/// editable arguments — the user may adjust the content before it reaches
+/// the memory layer, because once written it enters retrieval.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ApprovalKind {
+    Command,
+    KnowledgeWrite,
+}
+
 /// A confirmation card: the exact command, and the id the answer must quote.
 ///
 /// The command travels WITH the request rather than being looked up by the
 /// UI: the user approves a string, and a string read from anywhere else
 /// could drift from what runs. `id` is the only handle back.
+///
+/// `arguments` carries the proposed payload for a knowledge write, so the
+/// card can render it editable and the approval can carry a revised version
+/// back (partial agreement: approve a modified write, not just the original).
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalRequest {
     pub id: String,
     pub tool: String,
     pub command: String,
+    /// Which kind of card this is, so the UI renders the right controls.
+    pub kind: ApprovalKind,
+    /// The proposed arguments for a knowledge write, `None` for a command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<serde_json::Value>,
     /// Seconds the card stays open. After this the command is refused, not
     /// silently run — the countdown is shown so "it closed" is not a mystery.
     pub seconds: u64,

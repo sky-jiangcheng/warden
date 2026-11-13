@@ -119,8 +119,9 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
 - The layered policy is unchanged ("open question" item 5 in [product.md](product.md)):
   `handoff` / `scan` are written automatically, while **durable knowledge
   (`notes_create` / `notes_update` / `notes_organize`) needs a human confirmation first**.
-  What that confirmation looks like is open question 7 — still open; turning the durable-write
-  face on is a decision after M2.
+  What that confirmation looks like is open question 7 — **decided and landed with Phase 6**
+  (hard interception before the call, an editable in-conversation card, a separate append-only
+  audit, and refuse-by-default on timeout).
 
 ## Phase 2.5: finding the repositories itself (1 week) — done
 
@@ -293,6 +294,16 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 - ~~**The version coupling written down**~~ — landed: both READMEs add a "version coupling" section.
   **Read the "memory layer vX.Y.Z" on the first screen, not the build number** — that contract version
   answers "did the tool surface change", warns across a major, and never hard-blocks.
+- ~~**The human confirmation for durable-knowledge writes** ([product.md](product.md) open question 7)~~ —
+  landed: `notes_create` / `notes_update` / `notes_organize` go through a **hard interception before the
+  call** in an in-conversation card with **editable arguments** (partial agreement: approve a revision),
+  written to a separate append-only `knowledge-audit.jsonl` (who, when, which tool, which arguments,
+  whether revised), and **refuse by default on timeout / closed window** (fail-closed) — never in the
+  retrieval layer.
+- ~~**Errors collapsed to a structured type** ([product.md](product.md) open question 8, option 2)~~ —
+  landed: a `thiserror` enum internally, a stable `{ code, message, data? }` serialised at the IPC
+  boundary, unknown errors falling back to `INTERNAL_ERROR`, the frontend branching on `code`
+  (`errorHint`), and one `tracing` event at the boundary carrying `code` / `provider` / `thread`.
 
 ## Milestones
 

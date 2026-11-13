@@ -5,7 +5,7 @@
 // directly to the backend, which writes it to a 0600 file beside the provider
 // config. It is never sent back — `hasApiKey` is all the UI ever learns.
 import { listen } from "@tauri-apps/api/event";
-import { browserNote, desktop, errorText, initSheets, invoke, pick } from "./ui";
+import { browserNote, desktop, errorCode, errorHint, errorText, initSheets, invoke, pick } from "./ui";
 import { initChat } from "./chat";
 import { initCompanion } from "./companion";
 
@@ -686,7 +686,7 @@ function renderProviders(list: ProviderList) {
           void invoke<ProviderList>("provider_set_active", { id: provider.id }).then(
             (list: ProviderList) => renderProviders(list),
             (err: unknown) => {
-              pick<HTMLElement>("#provider-error").textContent = String(err);
+              pick<HTMLElement>("#provider-error").textContent = errorText(err) + errorHint(errorCode(err));
             },
           );
         }),
@@ -700,7 +700,7 @@ function renderProviders(list: ProviderList) {
         void invoke<ProviderList>("provider_remove", { id: provider.id }).then(
           (list: ProviderList) => renderProviders(list),
           (err: unknown) => {
-            pick<HTMLElement>("#provider-error").textContent = String(err);
+            pick<HTMLElement>("#provider-error").textContent = errorText(err) + errorHint(errorCode(err));
           },
         );
       }),
@@ -965,7 +965,7 @@ function main() {
     try { renderProviders(await invoke<ProviderList>("provider_list")); }
     catch (error) {
       setChip(pick<HTMLElement>("#provider-chip"), "未连接", "warn");
-      pick<HTMLElement>("#provider-error").textContent = errorText(error);
+      pick<HTMLElement>("#provider-error").textContent = errorText(error) + errorHint(errorCode(error));
     } finally { loadingProviders = false; }
   };
   pick<HTMLButtonElement>("#provider-retry").addEventListener("click", () => { void loadProviders(); });
@@ -1143,7 +1143,7 @@ function main() {
       },
       (err: unknown) => {
         editorDetail.textContent = "";
-        editorError.textContent = err instanceof Error ? err.message : String(err);
+        editorError.textContent = errorText(err) + errorHint(errorCode(err));
       },
     );
   });
@@ -1177,7 +1177,7 @@ function main() {
       },
       (err: unknown) => {
         editorDetail.textContent = "";
-        editorError.textContent = err instanceof Error ? err.message : String(err);
+        editorError.textContent = errorText(err) + errorHint(errorCode(err));
       },
     );
   });

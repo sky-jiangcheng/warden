@@ -52,6 +52,18 @@ pub(crate) const MODEL_TOOLS: &[&str] = &[
     "repotory_wiki_read",
 ];
 
+// Phase 6 open question 7: the three long-knowledge writes. They are offered
+// to the model like the read-only face, but every call is gated behind a
+// human confirmation card — a note written here enters retrieval immediately,
+// so the model writing into the store it will read next is exactly the case
+// ADR-0015's gate exists for. The card carries the proposed arguments and the
+// user may edit them before approving (partial agreement).
+pub(crate) const KNOWLEDGE_WRITE_TOOLS: &[&str] = &[
+    "repotory_notes_create",
+    "repotory_notes_update",
+    "repotory_notes_organize",
+];
+
 /// How many model→tool→model rounds one reply may spend before the next call
 /// is forced text-only. The same bound the Cinder desktop loop applies.
 const MAX_TOOL_ROUNDS: usize = 5;
@@ -79,6 +91,29 @@ async fn model_tools(session: &McpSession, local: bool) -> Result<Vec<ToolSpec>,
             },
         })
         .collect();
+    // The knowledge writes ride with the read-only face: their schemas still
+    // come verbatim from the server, but the description gets one line that
+    // tells the model every call is confirmed by the user first. That is a
+    // capability note, not a rewrite of the server's contract.
+    specs.extend(
+        tools
+            .iter()
+            .filter(|tool| KNOWLEDGE_WRITE_TOOLS.contains(&tool.name.as_str()))
+            .map(|tool| {
+                let description = format!(
+                    "{} This call writes into long-term knowledge and is CONFIRMED BY THE USER before it runs; propose it when it is what the user asked for.",
+                    tool.description
+                );
+                ToolSpec {
+                    kind: "function".to_string(),
+                    function: ToolFunctionSpec {
+                        name: tool.name.clone(),
+                        description,
+                        parameters: tool.input_schema.clone(),
+                    },
+                }
+            }),
+    );
     if local {
         specs.extend(crate::exec::tool_specs());
         // The write/build set rides with the read-only face because both
@@ -222,6 +257,8 @@ async fn route_tool(
             id: id.clone(),
             tool: name.to_string(),
             command: command.clone(),
+            kind: crate::provider_commands::ApprovalKind::Command,
+            arguments: None,
             seconds: APPROVAL_TIMEOUT.as_secs(),
         });
         let decision = state.await_decision(&id).await;
@@ -230,7 +267,11 @@ async fn route_tool(
         // is told which it was, because "nobody answered" and "the user
         // refused" mean different things to a plan.
         let refusal = match decision {
-            Some(Decision::Approved) => {
+            // The warden_* write tools are local commands: the card shows the
+            // exact argv and the user approves it as-is, so any argument
+            // payload on the decision is not used here (it is for the
+            // knowledge writes below, which are editable).
+            Some(Decision::Approved(_)) => {
                 let audit = state.audit.clone();
                 let repo_text = scope.repository.clone();
                 let name_owned = name.to_string();
@@ -278,6 +319,96 @@ async fn route_tool(
             output: None,
         };
     }
+    if KNOWLEDGE_WRITE_TOOLS.contains(&name) {
+        // Phase 6 open question 7: the human confirmation gate for a write
+        // into long-term knowledge. The card carries the proposed arguments
+        // so the user can edit them before approving (partial agreement); the
+        // decision's payload is what actually executes. A timeout, a refusal
+        // and a closed window are all the same answer — nothing runs, and the
+        // refusal is audited. Fail-closed: no implicit yes.
+        let summary = summarize_arguments(name, &arguments);
+        let id = uuid_like(&format!("knowledge|{name}|{summary}"));
+        state.open_card(&id);
+        ask(&crate::provider_commands::ApprovalRequest {
+            id: id.clone(),
+            tool: name.to_string(),
+            command: summary.clone(),
+            kind: crate::provider_commands::ApprovalKind::KnowledgeWrite,
+            arguments: Some(arguments.clone()),
+            seconds: APPROVAL_TIMEOUT.as_secs(),
+        });
+        let decision = state.await_decision(&id).await;
+        state.close_card(&id);
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(-1);
+        return match decision {
+            Some(Decision::Approved(approved)) => {
+                // The arguments the user agreed to: the revised payload when
+                // they edited, the original otherwise. Both are audited, and
+                // the audit says which one ran.
+                let revised = approved.is_some();
+                let executed_arguments = approved.unwrap_or_else(|| arguments.clone());
+                let result = call_model_tool(session, name, executed_arguments.clone()).await;
+                state.knowledge_audit.record(&knowledge_audit_entry(
+                    at,
+                    name,
+                    &summary,
+                    &executed_arguments,
+                    revised,
+                    result.is_ok(),
+                    result.as_ref().err().map(String::as_str),
+                ));
+                return match result {
+                    Ok(text) => Routed {
+                        content: text,
+                        ok: true,
+                        error: None,
+                        command: Some(summary),
+                        output: None,
+                    },
+                    Err(error) => Routed {
+                        content: json!({"error": error.clone()}).to_string(),
+                        ok: false,
+                        error: Some(error),
+                        command: Some(summary),
+                        output: None,
+                    },
+                };
+            }
+            Some(Decision::Refused) => {
+                state.knowledge_audit.record(&knowledge_audit_entry(
+                    at,
+                    name,
+                    &summary,
+                    &arguments,
+                    false,
+                    false,
+                    Some("refused by the user"),
+                ));
+                Routed::refused(
+                    "the user refused this knowledge write; nothing was stored".to_string(),
+                )
+            }
+            _ => {
+                // Timeout (or the card was closed): fail-closed. Audit it so
+                // "nobody answered" is distinguishable from "the user said no".
+                state.knowledge_audit.record(&knowledge_audit_entry(
+                    at,
+                    name,
+                    &summary,
+                    &arguments,
+                    false,
+                    false,
+                    Some("no decision before the timeout"),
+                ));
+                Routed::refused(
+                    "nobody approved this knowledge write in time; nothing was stored".to_string(),
+                )
+            }
+        };
+    }
     if MODEL_TOOLS.contains(&name) {
         // The server's answer travels to the model verbatim — prose from
         // repotory_context, JSON from the rest. The model reads both; a
@@ -314,6 +445,52 @@ fn uuid_like(seed: &str) -> String {
     seed.hash(&mut hasher);
     let a = hasher.finish();
     format!("card-{a:016x}")
+}
+
+/// A one-line, human-readable summary of a knowledge write's arguments, for
+/// the confirmation card's title line.
+///
+/// The schemas are the server's, so the summary is the compact JSON of the
+/// proposed arguments, truncated to a readable length. It is a display
+/// string, not a parsed contract — the full arguments travel separately in
+/// the card and in the audit.
+fn summarize_arguments(name: &str, arguments: &Value) -> String {
+    let compact = serde_json::to_string(arguments).unwrap_or_else(|_| "<unserialisable>".into());
+    let shown = if compact.len() > 160 {
+        format!("{}…", &compact[..160])
+    } else {
+        compact
+    };
+    format!("{name} · {shown}")
+}
+
+/// The audit entry for one knowledge-write decision.
+///
+/// Records who decided, when, which tool, the exact arguments that were
+/// approved (or proposed, on a refusal), whether they were revised, and how
+/// it ended. This is the traceable record open question 7 asks for; it lives
+/// in the separate append-only knowledge log, never in the retrieval store.
+fn knowledge_audit_entry(
+    at: i64,
+    tool: &str,
+    summary: &str,
+    arguments: &Value,
+    revised: bool,
+    ok: bool,
+    error: Option<&str>,
+) -> Value {
+    json!({
+        "at": at,
+        "who": std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "local".into()),
+        "tool": tool,
+        "summary": summary,
+        "arguments": arguments,
+        "revised": revised,
+        "ok": ok,
+        "error": error,
+    })
 }
 
 /// One routed tool call: what the model is told, what the chip shows, and
@@ -647,6 +824,14 @@ pub struct GenerationState {
     /// path is attached once at setup, next to the provider config. The
     /// OnceLock is why a resident process can wire it after `manage()`.
     pub audit: crate::exec::AuditLog,
+    /// Phase 6 open question 7: the confirmation record for knowledge
+    /// writes. A SEPARATE append-only log from `audit`: a knowledge write
+    /// enters retrieval the moment it lands, so its approval decision is
+    /// metadata about the memory layer and must not be confused with — or
+    /// mixed into — the retrieval store or the command-execution log. It
+    /// records who decided, when, which tool, and the exact arguments
+    /// (original or revised) that were approved.
+    pub knowledge_audit: crate::exec::AuditLog,
     /// The approvals the user has granted or refused, keyed by the id the
     /// confirmation card carried. A write tool sends the card, then WAITS
     /// on this map for exactly this decision — a missing entry is "not
@@ -662,11 +847,19 @@ pub struct GenerationState {
 }
 
 /// What the user did with a confirmation card.
-#[derive(Clone, Copy, PartialEq, Eq)]
+///
+/// `Approved` carries the arguments the user approved — `None` means "as the
+/// model proposed", `Some` means the user edited them before agreeing. That
+/// distinction is the whole point of the editable card: a knowledge write
+/// enters retrieval the moment it lands, so "approve a revised version" is a
+/// different act from "approve the original", and the audit must record which
+/// one happened.
+#[derive(Clone, PartialEq)]
 pub enum Decision {
     /// The card is open; nobody has answered yet.
     Pending,
-    Approved,
+    /// Approved, with the arguments the user agreed to (edited or not).
+    Approved(Option<Value>),
     Refused,
 }
 
@@ -748,7 +941,7 @@ impl GenerationState {
                 && let Some(decision) = pending.get(id)
                 && *decision != Decision::Pending
             {
-                return Some(*decision);
+                return Some(decision.clone());
             }
             if std::time::Instant::now() >= deadline {
                 return None;

@@ -10,6 +10,7 @@
 // this crate has a reason to reach into them.
 mod binaries;
 pub mod conversations;
+pub mod errors;
 pub mod exec;
 mod git;
 pub mod init;
@@ -107,14 +108,22 @@ async fn mcp_call_tool<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     name: String,
     arguments: serde_json::Value,
-) -> Result<String, String> {
+) -> Result<String, errors::ApiError> {
     if !conversations::MODEL_TOOLS.contains(&name.as_str()) {
-        return Err(format!("tool {name} is not available from the webview"));
+        return Err(errors::ApiError::new(
+            errors::ErrorCode::Denied,
+            format!("tool {name} is not available from the webview"),
+        ));
     }
-    app.state::<mcp_client::McpSession>()
-        .call_tool(&name, arguments)
-        .await
-        .map_err(|err| err.to_string())
+    errors::boundary(
+        "mcp_call_tool",
+        app.state::<mcp_client::McpSession>()
+            .call_tool(&name, arguments)
+            .await
+            .map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 // The repository commands.
@@ -130,13 +139,16 @@ async fn mcp_call_tool<R: tauri::Runtime>(
 /// Runs a repository disk scan off the IPC thread. The recursive walk is
 /// synchronous (see repos.rs), so every read/write-and-rescan command hands
 /// it to a blocking thread instead of stalling the async command executor.
-async fn run_repo_scan<F>(task: F) -> Result<RepoScan, String>
+async fn run_repo_scan<F>(task: F) -> Result<RepoScan, errors::ApiError>
 where
     F: FnOnce() -> Result<RepoScan, String> + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(task)
+    let inner = tauri::async_runtime::spawn_blocking(task)
         .await
-        .map_err(|err| format!("the repository scan could not be completed: {err}"))?
+        .map_err(|err| {
+            errors::ApiError::from(format!("the repository scan could not be completed: {err}"))
+        })?;
+    inner.map_err(errors::ApiError::from)
 }
 
 /// Scans the configured roots and reports what is there.
@@ -145,12 +157,12 @@ where
 /// test can drive the very same functions the IPC layer calls. A test that
 /// re-implements the command would only be testing itself.
 #[tauri::command]
-async fn repo_scan(store: tauri::State<'_, RepoStore>) -> Result<RepoScan, String> {
+async fn repo_scan(store: tauri::State<'_, RepoStore>) -> Result<RepoScan, errors::ApiError> {
     let store = store.inner().clone();
     let scan = run_repo_scan(move || Ok(repos::scan_now(&store)))
         .await
         .unwrap_or_else(|problem| RepoScan {
-            problem: Some(problem),
+            problem: Some(problem.message),
             ..Default::default()
         });
     // The scan is logged because it is the one thing that happens without
@@ -162,7 +174,7 @@ async fn repo_scan(store: tauri::State<'_, RepoStore>) -> Result<RepoScan, Strin
         scan.roots.len(),
         scan.new_repos.len()
     );
-    Ok(scan)
+    errors::boundary("repo_scan", Ok(scan), None, None)
 }
 
 /// Adds a scan root and reports the new scan.
@@ -170,9 +182,14 @@ async fn repo_scan(store: tauri::State<'_, RepoStore>) -> Result<RepoScan, Strin
 async fn repo_roots_add(
     store: tauri::State<'_, RepoStore>,
     path: String,
-) -> Result<RepoScan, String> {
+) -> Result<RepoScan, errors::ApiError> {
     let store = store.inner().clone();
-    run_repo_scan(move || repos::add_root_and_scan(&store, &path)).await
+    errors::boundary(
+        "repo_roots_add",
+        run_repo_scan(move || repos::add_root_and_scan(&store, &path)).await,
+        None,
+        None,
+    )
 }
 
 /// Removes a scan root and reports the new scan.
@@ -180,9 +197,14 @@ async fn repo_roots_add(
 async fn repo_roots_remove(
     store: tauri::State<'_, RepoStore>,
     path: String,
-) -> Result<RepoScan, String> {
+) -> Result<RepoScan, errors::ApiError> {
     let store = store.inner().clone();
-    run_repo_scan(move || repos::remove_root_and_scan(&store, &path)).await
+    errors::boundary(
+        "repo_roots_remove",
+        run_repo_scan(move || repos::remove_root_and_scan(&store, &path)).await,
+        None,
+        None,
+    )
 }
 
 /// Follows or unfollows a repository.
@@ -195,9 +217,14 @@ async fn repo_set_favorite(
     store: tauri::State<'_, RepoStore>,
     path: String,
     favorite: bool,
-) -> Result<RepoScan, String> {
+) -> Result<RepoScan, errors::ApiError> {
     let store = store.inner().clone();
-    run_repo_scan(move || repos::set_favorite_and_scan(&store, &path, favorite)).await
+    errors::boundary(
+        "repo_set_favorite",
+        run_repo_scan(move || repos::set_favorite_and_scan(&store, &path, favorite)).await,
+        None,
+        None,
+    )
 }
 
 /// Marks a repository as "not this one".
@@ -209,9 +236,14 @@ async fn repo_set_favorite(
 async fn repo_dismiss(
     store: tauri::State<'_, RepoStore>,
     path: String,
-) -> Result<RepoScan, String> {
+) -> Result<RepoScan, errors::ApiError> {
     let store = store.inner().clone();
-    run_repo_scan(move || repos::dismiss_and_scan(&store, &path)).await
+    errors::boundary(
+        "repo_dismiss",
+        run_repo_scan(move || repos::dismiss_and_scan(&store, &path)).await,
+        None,
+        None,
+    )
 }
 
 /// Saves the projects the user selected in the settings list.
@@ -219,9 +251,14 @@ async fn repo_dismiss(
 async fn repo_set_projects(
     store: tauri::State<'_, RepoStore>,
     paths: Vec<String>,
-) -> Result<RepoScan, String> {
+) -> Result<RepoScan, errors::ApiError> {
     let store = store.inner().clone();
-    run_repo_scan(move || repos::set_projects_and_scan(&store, &paths)).await
+    errors::boundary(
+        "repo_set_projects",
+        run_repo_scan(move || repos::set_projects_and_scan(&store, &paths)).await,
+        None,
+        None,
+    )
 }
 
 /// How often the background scan looks for new repositories.
@@ -291,18 +328,25 @@ fn provider_list(store: tauri::State<'_, ProviderStore>) -> ProviderList {
 fn provider_save(
     store: tauri::State<'_, ProviderStore>,
     input: ProviderInput,
-) -> Result<ProviderList, String> {
+) -> Result<ProviderList, errors::ApiError> {
     let name = input.name.trim().to_string();
     if name.is_empty() {
-        return Err("the provider needs a name".to_string());
+        return Err(errors::ApiError::new(
+            errors::ErrorCode::InvalidInput,
+            "the provider needs a name",
+        ));
     }
     let base_url = input.base_url.trim().to_string();
     if base_url.is_empty() {
-        return Err("the provider needs a base URL".to_string());
+        return Err(errors::ApiError::new(
+            errors::ErrorCode::InvalidInput,
+            "the provider needs a base URL",
+        ));
     }
     if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-        return Err(format!(
-            "the base URL must start with http:// or https:// — \"{base_url}\" does not"
+        return Err(errors::ApiError::new(
+            errors::ErrorCode::InvalidInput,
+            format!("the base URL must start with http:// or https:// — \"{base_url}\" does not"),
         ));
     }
 
@@ -323,6 +367,9 @@ fn provider_save(
     } else {
         input.id.trim().to_string()
     };
+    // Captured before `id` is moved into the active-provider slot below, so
+    // the boundary event can name which provider the failure was about.
+    let provider_id = id.clone();
 
     let mut has_api_key = config.find(&id).map(|p| p.has_api_key).unwrap_or(false);
     if input.save_api_key {
@@ -355,15 +402,20 @@ fn provider_save(
     }
 
     store.save(&config)?;
-    Ok(ProviderList {
-        providers: config
-            .providers
-            .iter()
-            .map(|p| ProviderView::of(p, config.active_provider_id.as_deref()))
-            .collect(),
-        active_provider_id: config.active_provider_id.clone(),
-        problem: None,
-    })
+    errors::boundary(
+        "provider_save",
+        Ok(ProviderList {
+            providers: config
+                .providers
+                .iter()
+                .map(|p| ProviderView::of(p, config.active_provider_id.as_deref()))
+                .collect(),
+            active_provider_id: config.active_provider_id.clone(),
+            problem: None,
+        }),
+        Some(&provider_id),
+        None,
+    )
 }
 
 /// Removes a provider and its stored key.
@@ -371,24 +423,32 @@ fn provider_save(
 fn provider_remove(
     store: tauri::State<'_, ProviderStore>,
     id: String,
-) -> Result<ProviderList, String> {
+) -> Result<ProviderList, errors::ApiError> {
     let (mut config, _) = store.load();
     if !config.remove(&id) {
-        return Err(format!("no provider named \"{id}\""));
+        return Err(errors::ApiError::new(
+            errors::ErrorCode::NotFound,
+            format!("no provider named \"{id}\""),
+        ));
     }
     // The key is removed too: a credential nobody references is a secret
     // nobody rotates.
     let _ = store.delete_api_key(&id);
     store.save(&config)?;
-    Ok(ProviderList {
-        providers: config
-            .providers
-            .iter()
-            .map(|p| ProviderView::of(p, config.active_provider_id.as_deref()))
-            .collect(),
-        active_provider_id: config.active_provider_id.clone(),
-        problem: None,
-    })
+    errors::boundary(
+        "provider_remove",
+        Ok(ProviderList {
+            providers: config
+                .providers
+                .iter()
+                .map(|p| ProviderView::of(p, config.active_provider_id.as_deref()))
+                .collect(),
+            active_provider_id: config.active_provider_id.clone(),
+            problem: None,
+        }),
+        Some(&id),
+        None,
+    )
 }
 
 /// Chooses which provider the chat uses.
@@ -396,22 +456,31 @@ fn provider_remove(
 fn provider_set_active(
     store: tauri::State<'_, ProviderStore>,
     id: String,
-) -> Result<ProviderList, String> {
+) -> Result<ProviderList, errors::ApiError> {
     let (mut config, _) = store.load();
     if config.find(&id).is_none() {
-        return Err(format!("no provider named \"{id}\""));
+        return Err(errors::ApiError::new(
+            errors::ErrorCode::NotFound,
+            format!("no provider named \"{id}\""),
+        ));
     }
+    let active_id = id.clone();
     config.active_provider_id = Some(id);
     store.save(&config)?;
-    Ok(ProviderList {
-        providers: config
-            .providers
-            .iter()
-            .map(|p| ProviderView::of(p, config.active_provider_id.as_deref()))
-            .collect(),
-        active_provider_id: config.active_provider_id.clone(),
-        problem: None,
-    })
+    errors::boundary(
+        "provider_set_active",
+        Ok(ProviderList {
+            providers: config
+                .providers
+                .iter()
+                .map(|p| ProviderView::of(p, config.active_provider_id.as_deref()))
+                .collect(),
+            active_provider_id: config.active_provider_id.clone(),
+            problem: None,
+        }),
+        Some(&active_id),
+        None,
+    )
 }
 
 /// Pulls the model list from a provider.
@@ -425,7 +494,7 @@ async fn provider_fetch_models(
     base_url: Option<String>,
     id: Option<String>,
     api_key: Option<String>,
-) -> Result<Vec<ModelInfo>, String> {
+) -> Result<Vec<ModelInfo>, errors::ApiError> {
     let (config, _) = store.load();
 
     let provider =
@@ -438,8 +507,13 @@ async fn provider_fetch_models(
         None => store.load_api_key(&provider.id)?,
     };
 
-    let client = LlmClient::new(&provider, key).map_err(|err| err.to_string())?;
-    client.list_models().await.map_err(|err| err.to_string())
+    let client = LlmClient::new(&provider, key).map_err(errors::ApiError::from)?;
+    errors::boundary(
+        "provider_fetch_models",
+        client.list_models().await.map_err(errors::ApiError::from),
+        Some(&provider.id),
+        None,
+    )
 }
 
 /// Tests that a provider really works.
@@ -456,7 +530,7 @@ async fn provider_test_connection(
     id: Option<String>,
     api_key: Option<String>,
     model: Option<String>,
-) -> Result<ConnectionTest, String> {
+) -> Result<ConnectionTest, errors::ApiError> {
     let (config, _) = store.load();
 
     let provider =
@@ -469,7 +543,7 @@ async fn provider_test_connection(
 
     // Which model to test: what the user asked for, else the provider's
     // default, else the first model it advertises.
-    let client = LlmClient::new(&provider, key).map_err(|err| err.to_string())?;
+    let client = LlmClient::new(&provider, key).map_err(errors::ApiError::from)?;
 
     let model = match model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
         Some(model) => model.to_string(),
@@ -494,20 +568,25 @@ async fn provider_test_connection(
         .await;
     let latency_ms = started.elapsed().as_millis() as u64;
 
-    match outcome {
-        Ok(answer) => Ok(ConnectionTest {
-            ok: true,
-            detail: answer.trim().to_string(),
-            model,
-            latency_ms,
-        }),
-        Err(err) => Ok(ConnectionTest {
-            ok: false,
-            detail: describe_llm_error(&err),
-            model,
-            latency_ms,
-        }),
-    }
+    errors::boundary(
+        "provider_test_connection",
+        match outcome {
+            Ok(answer) => Ok(ConnectionTest {
+                ok: true,
+                detail: answer.trim().to_string(),
+                model,
+                latency_ms,
+            }),
+            Err(err) => Ok(ConnectionTest {
+                ok: false,
+                detail: describe_llm_error(&err),
+                model,
+                latency_ms,
+            }),
+        },
+        Some(&provider.id),
+        None,
+    )
 }
 
 /// Sends a chat request and streams the answer back.
@@ -524,7 +603,7 @@ async fn chat_send<R: tauri::Runtime>(
     provider_id: Option<String>,
     thread_id: Option<String>,
     message_id: String,
-) -> Result<(), String> {
+) -> Result<(), errors::ApiError> {
     // The desk pet shows a thinking state even when the chat overlay has
     // been put away mid-answer. The event is broadcast, not tied to a window.
     let _ = app.emit("warden:thinking", true);
@@ -538,6 +617,10 @@ async fn chat_send<R: tauri::Runtime>(
     // "which repos do I watch" with the wrong one. Read at send time, not
     // cached — saving a selection takes effect on the next message.
     let watched = app.state::<RepoStore>().load().0.favorites;
+    // Captured before the request moves them, so a failed generation can be
+    // logged against the provider and thread it was acting on.
+    let boundary_provider = provider_id.clone();
+    let boundary_thread = thread_id.clone();
     let outcome = conversations::send_with_cancel(
         &app.state::<mcp_client::McpSession>(),
         &app.state::<conversations::GenerationState>(),
@@ -559,21 +642,38 @@ async fn chat_send<R: tauri::Runtime>(
     )
     .await;
     let _ = app.emit("warden:thinking", false);
-    outcome
+    errors::boundary(
+        "chat_send",
+        outcome.map_err(errors::ApiError::from),
+        boundary_provider.as_deref(),
+        boundary_thread.as_deref(),
+    )
 }
 
 /// Phase 5: is there a local model on this machine, and what should the user
 /// do next. Never fails — "not installed" is an answer, not an error.
 #[tauri::command]
-async fn local_model_status() -> Result<local_models::LocalModels, String> {
-    Ok(local_models::probe().await)
+async fn local_model_status() -> Result<local_models::LocalModels, errors::ApiError> {
+    errors::boundary(
+        "local_model_status",
+        Ok(local_models::probe().await),
+        None,
+        None,
+    )
 }
 
 /// Pulls the default local model. Long-running (minutes) by nature: the
 /// frontend shows its own progress state and does not block on this.
 #[tauri::command]
-async fn local_model_pull() -> Result<String, String> {
-    local_models::pull_default().await
+async fn local_model_pull() -> Result<String, errors::ApiError> {
+    errors::boundary(
+        "local_model_pull",
+        local_models::pull_default()
+            .await
+            .map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 /// The three Phase 4 panels, in one round trip.
@@ -587,20 +687,32 @@ async fn local_model_pull() -> Result<String, String> {
 async fn memory_panels<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     repository: Option<String>,
-) -> Result<panels::Panels, String> {
-    Ok(panels::load(
-        &app.state::<mcp_client::McpSession>(),
-        repository.as_deref(),
+) -> Result<panels::Panels, errors::ApiError> {
+    errors::boundary(
+        "memory_panels",
+        Ok(panels::load(
+            &app.state::<mcp_client::McpSession>(),
+            repository.as_deref(),
+        )
+        .await),
+        None,
+        None,
     )
-    .await)
 }
 
 #[tauri::command]
 async fn conversation_list<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     path: Option<String>,
-) -> Result<serde_json::Value, String> {
-    conversations::list(&app.state::<mcp_client::McpSession>(), path).await
+) -> Result<serde_json::Value, errors::ApiError> {
+    errors::boundary(
+        "conversation_list",
+        conversations::list(&app.state::<mcp_client::McpSession>(), path)
+            .await
+            .map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 #[tauri::command]
@@ -609,16 +721,30 @@ async fn conversation_create<R: tauri::Runtime>(
     id: String,
     title: String,
     path: Option<String>,
-) -> Result<serde_json::Value, String> {
-    conversations::create(&app.state::<mcp_client::McpSession>(), id, title, path).await
+) -> Result<serde_json::Value, errors::ApiError> {
+    errors::boundary(
+        "conversation_create",
+        conversations::create(&app.state::<mcp_client::McpSession>(), id, title, path)
+            .await
+            .map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 #[tauri::command]
 async fn conversation_read<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     thread_id: String,
-) -> Result<serde_json::Value, String> {
-    conversations::read(&app.state::<mcp_client::McpSession>(), thread_id).await
+) -> Result<serde_json::Value, errors::ApiError> {
+    errors::boundary(
+        "conversation_read",
+        conversations::read(&app.state::<mcp_client::McpSession>(), thread_id)
+            .await
+            .map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 #[tauri::command]
@@ -626,8 +752,15 @@ async fn conversation_rename<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     thread_id: String,
     title: String,
-) -> Result<serde_json::Value, String> {
-    conversations::rename(&app.state::<mcp_client::McpSession>(), thread_id, title).await
+) -> Result<serde_json::Value, errors::ApiError> {
+    errors::boundary(
+        "conversation_rename",
+        conversations::rename(&app.state::<mcp_client::McpSession>(), thread_id, title)
+            .await
+            .map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 /// Answers a confirmation card: the user's yes or no for one exact command.
@@ -637,47 +770,76 @@ async fn conversation_rename<R: tauri::Runtime>(
 /// a round-tripped string could disagree with what runs. `false` means the id
 /// was unknown (the turn already ended), which the UI shows as a stale card
 /// rather than pretending the click counted.
+///
+/// `arguments` is the revised payload for a knowledge-write card: the user
+/// edited the proposed write before approving it, and that edited version is
+/// what executes — the audit records that it was a revision, not the original.
 #[tauri::command]
 async fn approve_command<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
-) -> Result<bool, String> {
+    arguments: Option<serde_json::Value>,
+) -> Result<bool, errors::ApiError> {
     let state = app.state::<conversations::GenerationState>();
-    Ok(state.decide(&id, conversations::Decision::Approved))
+    errors::boundary(
+        "approve_command",
+        Ok(state.decide(&id, conversations::Decision::Approved(arguments))),
+        None,
+        None,
+    )
 }
 
 #[tauri::command]
 async fn refuse_command<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     id: String,
-) -> Result<bool, String> {
+) -> Result<bool, errors::ApiError> {
     let state = app.state::<conversations::GenerationState>();
-    Ok(state.decide(&id, conversations::Decision::Refused))
+    errors::boundary(
+        "refuse_command",
+        Ok(state.decide(&id, conversations::Decision::Refused)),
+        None,
+        None,
+    )
 }
 
 #[tauri::command]
-fn companion_show_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+fn companion_show_chat<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), errors::ApiError> {
     // The pet is a conversation entry: opening from it goes to the chat
     // page and makes the window key, so typing works immediately.
     tray::show_chat(&app);
-    Ok(())
+    errors::boundary("companion_show_chat", Ok(()), None, None)
 }
 
 #[tauri::command]
-fn companion_hide_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+fn companion_hide_chat<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), errors::ApiError> {
     tray::hide_chat(&app);
-    Ok(())
+    errors::boundary("companion_hide_chat", Ok(()), None, None)
 }
 
 #[tauri::command]
-fn companion_hide<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    tray::hide_surface(&app, "companion")
+fn companion_hide<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), errors::ApiError> {
+    errors::boundary(
+        "companion_hide",
+        tray::hide_surface(&app, "companion").map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 #[tauri::command]
-fn window_drag<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) -> Result<(), String> {
+fn window_drag<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) -> Result<(), errors::ApiError> {
     tray::check_surface(window.label())?;
-    window.start_dragging().map_err(|e| e.to_string())
+    errors::boundary(
+        "window_drag",
+        window.start_dragging().map_err(errors::ApiError::from),
+        None,
+        None,
+    )
 }
 
 /// Where the pointer is on the screen, in physical pixels, together with the
@@ -696,31 +858,36 @@ fn window_drag<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) -> Result<(),
 #[tauri::command]
 fn companion_pointer<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, errors::ApiError> {
     tray::check_surface(window.label())?;
 
-    let cursor = window
-        .cursor_position()
-        .map_err(|e| format!("the cursor position could not be read: {e}"))?;
-    let origin = window
-        .outer_position()
-        .map_err(|e| format!("the window position could not be read: {e}"))?;
+    let cursor = window.cursor_position().map_err(|e| {
+        errors::ApiError::from(format!("the cursor position could not be read: {e}"))
+    })?;
+    let origin = window.outer_position().map_err(|e| {
+        errors::ApiError::from(format!("the window position could not be read: {e}"))
+    })?;
     let size = window
         .outer_size()
-        .map_err(|e| format!("the window size could not be read: {e}"))?;
-    let scale = window
-        .scale_factor()
-        .map_err(|e| format!("the window scale factor could not be read: {e}"))?;
+        .map_err(|e| errors::ApiError::from(format!("the window size could not be read: {e}")))?;
+    let scale = window.scale_factor().map_err(|e| {
+        errors::ApiError::from(format!("the window scale factor could not be read: {e}"))
+    })?;
 
-    Ok(serde_json::json!({
-        "screenX": cursor.x,
-        "screenY": cursor.y,
-        "windowX": origin.x as f64,
-        "windowY": origin.y as f64,
-        "windowWidth": size.width as f64,
-        "windowHeight": size.height as f64,
-        "scaleFactor": scale,
-    }))
+    errors::boundary(
+        "companion_pointer",
+        Ok(serde_json::json!({
+            "screenX": cursor.x,
+            "screenY": cursor.y,
+            "windowX": origin.x as f64,
+            "windowY": origin.y as f64,
+            "windowWidth": size.width as f64,
+            "windowHeight": size.height as f64,
+            "scaleFactor": scale,
+        })),
+        None,
+        None,
+    )
 }
 
 /// The builder every entry point uses.
@@ -833,6 +1000,16 @@ pub fn run() {
             app.state::<conversations::GenerationState>()
                 .audit
                 .attach(config_dir.join("exec-audit.jsonl"));
+
+            // Phase 6 open question 7: the knowledge-write confirmation log.
+            // A separate append-only file from the command log — a knowledge
+            // write's approval is metadata about the memory layer, and keeping
+            // it apart from both the retrieval store and the exec log is what
+            // makes "what was approved, by whom, with which arguments"
+            // traceable without polluting either.
+            app.state::<conversations::GenerationState>()
+                .knowledge_audit
+                .attach(config_dir.join("knowledge-audit.jsonl"));
 
             // Only the desk pet is visible at startup; the chat overlay stays
             // hidden until the tray, the shortcut or the pet opens it.

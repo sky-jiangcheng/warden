@@ -72,10 +72,20 @@ impl Fixture {
                 active_provider_id: Some("fake".into()),
             })
             .unwrap();
+        let state = GenerationState::default();
+        // Attach the knowledge-write confirmation sink to a file in the
+        // fixture directory so the gating tests can read back what was
+        // recorded. `state.audit` (the command log) is deliberately left
+        // unattached: the exec tests attach it to their own per-test file,
+        // and `AuditLog::attach` is first-wins, so a fixture-level attach
+        // would silently win over theirs.
+        state
+            .knowledge_audit
+            .attach(directory.join("knowledge-audit.jsonl"));
         Self {
             llm,
             session: session_env(mode, extra).await,
-            state: GenerationState::default(),
+            state,
             store,
             directory,
         }
@@ -117,7 +127,7 @@ impl Fixture {
                     .unwrap()
                     .push(serde_json::to_value(card).expect("a card serialises"));
                 let decision = if approve {
-                    conversations::Decision::Approved
+                    conversations::Decision::Approved(None)
                 } else {
                     conversations::Decision::Refused
                 };
@@ -136,6 +146,11 @@ impl Fixture {
             .as_array()
             .unwrap()
             .clone()
+    }
+
+    /// The knowledge-write confirmation log, read back as JSON lines.
+    fn knowledge_audit(&self) -> Vec<Value> {
+        read_jsonl(&self.directory.join("knowledge-audit.jsonl"))
     }
 }
 impl Drop for Fixture {
@@ -522,28 +537,49 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
         "the memory whitelist leads: {names:?}"
     );
     // The memory tools offered are exactly (what the server advertises) ∩
-    // (the whitelist). The fixture advertises four readable tools, so four
-    // appear — counting them rather than hardcoding a number keeps this
-    // assertion about the RULE when a fixture grows a tool.
+    // (the whitelist). The fixture advertises four readable tools plus one
+    // knowledge write; the read-only count stays four and the write rides
+    // along as a gated tool — counting by rule, not by hardcoded number,
+    // keeps this assertion about the RULE when a fixture grows a tool.
     let memory_offered: Vec<&&str> = names
         .iter()
         .filter(|n| n.starts_with("repotory_"))
         .collect();
+    let read_only = memory_offered
+        .iter()
+        .filter(|n| ***n != "repotory_notes_create")
+        .count();
     assert_eq!(
-        memory_offered.len(),
-        4,
-        "the fixture advertises four whitelisted memory tools: {names:?}"
+        read_only, 4,
+        "the fixture advertises four readable memory tools: {names:?}"
     );
     assert!(
         memory_offered.contains(&&"repotory_wiki_search"),
         "{names:?}"
+    );
+    // The knowledge write is offered (the gate is on execution, not
+    // visibility) and its description carries the approval note.
+    assert!(
+        memory_offered.contains(&&"repotory_notes_create"),
+        "the knowledge write rides with the face: {names:?}"
+    );
+    let write_spec = tools
+        .iter()
+        .find(|t| t["function"]["name"] == "repotory_notes_create")
+        .expect("the knowledge write spec");
+    assert!(
+        write_spec["function"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("CONFIRMED BY THE USER"),
+        "the model is told the write is gated: {write_spec:?}"
     );
     assert_eq!(
         names.iter().filter(|n| n.starts_with("warden_")).count(),
         repotory_agent_lib::exec::LOCAL_TOOLS.len() + repotory_agent_lib::exec::WRITE_TOOLS.len(),
         "the read-only face and the approval-gated set both ride along: {names:?}"
     );
-    assert!(!names.contains(&"repotory_notes_create"), "{names:?}");
+    assert!(!names.contains(&"repotory_handoff"), "{names:?}");
     assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
 
     // The persisted reply is that same second-round text.
@@ -657,29 +693,39 @@ async fn an_array_tool_answer_reaches_the_model_verbatim() {
     assert_eq!(content[0]["name"], "cinder");
 }
 
-/// A write tool the server advertises is never offered to the model, and a
-/// model that names one anyway gets a client-side refusal as its result —
-/// never an execution on the wire.
+/// A knowledge write the server advertises is offered to the model, but every
+/// call is gated behind a human confirmation card. When the user refuses,
+/// nothing is stored and the refusal is the tool result — plus a traceable
+/// audit entry (open question 7, fail-closed).
 #[tokio::test]
-async fn a_write_tool_is_never_offered_and_a_refusal_is_its_result() {
+async fn a_knowledge_write_is_gated_and_a_refusal_stores_nothing() {
     let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
     f.create(THREAD, "/repo/one").await;
     let mut req = request("m2", "write a note");
     req.model = Some("tools:repotory_notes_create".into());
-    let (result, chunks) = f.send(req).await;
+    // Answer the card with a refusal as it arrives.
+    let (result, chunks, cards) = f.send_and_answer(req, false).await;
     result.expect("send");
 
     let reply = answer(&chunks);
+    // The write tool is now offered (it rides with the face) — the gate is
+    // on execution, not on visibility.
     let tools = reply["tools"].as_array().unwrap();
     assert!(
         tools
             .iter()
-            .any(|t| t["function"]["name"] == "repotory_metrics")
+            .any(|t| t["function"]["name"] == "repotory_notes_create"),
+        "the knowledge write is offered: {tools:?}"
     );
+
+    // The card the user was shown: the tool, the knowledge-write kind, and
+    // the proposed arguments (editable).
+    assert_eq!(cards.len(), 1, "exactly one confirmation card: {cards:?}");
+    assert_eq!(cards[0]["tool"], "repotory_notes_create");
+    assert_eq!(cards[0]["kind"], "knowledgeWrite");
     assert!(
-        !tools
-            .iter()
-            .any(|t| t["function"]["name"] == "repotory_notes_create")
+        cards[0]["arguments"].is_object(),
+        "editable arguments: {cards:?}"
     );
 
     let messages = reply["messages"].as_array().unwrap();
@@ -688,17 +734,46 @@ async fn a_write_tool_is_never_offered_and_a_refusal_is_its_result() {
         .find(|m| m["role"] == "tool")
         .expect("tool result message");
     let content = tool_message["content"].as_str().unwrap();
-    assert!(content.contains("not available to the model"), "{content}");
+    assert!(content.contains("refused"), "{content}");
     assert!(
         !content.contains("created"),
         "the write tool must not have executed: {content}"
     );
 
-    let events: Vec<&ToolEvent> = chunks.iter().filter_map(|c| c.tool_call.as_ref()).collect();
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].name, "repotory_notes_create");
-    assert!(!events[0].done);
-    assert!(events[1].done);
+    // The refusal is traceable: who, when, which tool, what arguments.
+    let audit = f.knowledge_audit();
+    assert_eq!(audit.len(), 1, "one refusal recorded: {audit:?}");
+    assert_eq!(audit[0]["tool"], "repotory_notes_create");
+    assert_eq!(audit[0]["ok"], false);
+    assert!(audit[0]["error"].as_str().unwrap().contains("refused"));
+    assert!(!audit[0]["who"].as_str().unwrap().is_empty());
+}
+
+/// Approving a knowledge write runs it with the agreed arguments and records
+/// the approval — the other half of the same gate.
+#[tokio::test]
+async fn an_approved_knowledge_write_runs_and_is_audited() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "/repo/one").await;
+    let mut req = request("m3", "write a note");
+    req.model = Some("tools:repotory_notes_create".into());
+    let (result, chunks, _cards) = f.send_and_answer(req, true).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool result message");
+    let content = tool_message["content"].as_str().unwrap();
+    assert!(content.contains("created"), "the write ran: {content}");
+
+    let audit = f.knowledge_audit();
+    assert_eq!(audit.len(), 1, "one approval recorded: {audit:?}");
+    assert_eq!(audit[0]["tool"], "repotory_notes_create");
+    assert_eq!(audit[0]["ok"], true);
+    assert_eq!(audit[0]["revised"], false);
 }
 
 /// Git fixture: a real repository in a temp dir, dirty or clean.

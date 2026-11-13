@@ -112,9 +112,10 @@ fn serve_chat() {
                         "Project: warden\nTech stack: Rust + TypeScript\nRecent commits: 3 today",
                     ))
                 } else if name == "repotory_notes_create" {
-                    // The marker the whitelist test watches for: it must NEVER
-                    // appear in a reply — Warden refuses write tools client-side
-                    // before the wire.
+                    // The marker the gating test watches for: it must only
+                    // appear in a reply when the user APPROVED the write.
+                    // Warden gates the call behind a confirmation card, so an
+                    // unapproved or refused call never reaches the wire.
                     Ok(text(
                         &json!({"created":true,"tool":"repotory_notes_create"}).to_string(),
                     ))

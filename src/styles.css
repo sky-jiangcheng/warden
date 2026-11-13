@@ -885,6 +885,11 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .approval[hidden] { display: none; }
 .approval__title { margin: 0 0 7px; font-size: 11px; font-weight: 600; color: var(--text-primary); }
 .approval__command { margin: 0 0 9px; padding: 8px 9px; border-radius: 8px; background: var(--bg-sunken, rgba(0,0,0,.28)); color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+.approval__edit { margin: 0 0 9px; }
+.approval__edit[hidden] { display: none; }
+.approval__edit-label { display: block; margin-bottom: 4px; font-size: 9.5px; color: var(--text-tertiary); }
+.approval__edit textarea { width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-sunken, rgba(0,0,0,.28)); color: var(--text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; line-height: 1.5; resize: vertical; }
+.approval__edit textarea:focus { outline: none; border-color: var(--accent, var(--border-strong)); }
 .approval__actions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
 .approval__run { border: 1px solid var(--accent-border, var(--border-default)); background: var(--accent-bg, transparent); color: var(--text-primary); border-radius: 8px; padding: 5px 13px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .approval__run:hover { border-color: var(--accent, var(--border-strong)); }

@@ -110,7 +110,8 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
   **不让一次已保存的回答变成发送失败**；replay 不再补写检查点。
 - 分层策略照旧（[product.md](product.md)「待确认」第 5 条）：
   `handoff` / `scan` 自动写，**长期知识（`notes_create` / `notes_update` / `notes_organize`）过一次人确认**。
-  长期知识那三个的确认形态是「待确认」第 7 条，仍未定——那是 M2 之后要不要开写面的决定。
+  长期知识那三个的确认形态是「待确认」第 7 条——**已定并随 Phase 6 落地**（调用前硬拦截、
+  对话内可编辑确认卡、独立追加式审计、超时默认拒绝）。
 
 ## Phase 2.5：自己认仓库（1 周）—— 已完成
 
@@ -258,6 +259,14 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 - ~~README 里写清楚：copilot 是入口，Cinder 是记忆层，MCP 是开放协议~~ —— 早已写明；
 - ~~**写清版本耦合**~~ —— 已落地：README（中英）新增「版本耦合」小节，
   **看首屏的「记忆层 vX.Y.Z」而不是构建号**，那个契约版本答「工具面变了没」，跨 major 才提示，不硬拦。
+- ~~**长期知识写回的人确认**（[product.md](product.md) 待确认 7）~~ —— 已落地：
+  `notes_create` / `notes_update` / `notes_organize` 走**调用前硬拦截**的对话内确认卡，
+  参数**可编辑**（部分同意：批准修订版），写入 `knowledge-audit.jsonl` 独立追加式审计
+  （谁、何时、哪个工具、什么参数、是否修订），超时/关窗**默认拒绝**（Fail-Closed），不进检索层。
+- ~~**错误收敛到结构化类型**（[product.md](product.md) 待确认 8，选项 2）~~ —— 已落地：
+  内部 `thiserror` 枚举，IPC 边界序列化稳定 `{ code, message, data? }`，
+  未知错误兜底 `INTERNAL_ERROR`，前端按 `code` 分支（`errorHint`）；
+  IPC 边界一条带 `code` / `provider` / `thread` 的 `tracing` 事件。
 
 ## 里程碑
 

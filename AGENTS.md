@@ -50,7 +50,15 @@ src-tauri/           后端（Rust）
   src/llm.rs         OpenAI 兼容客户端：拉模型 / 聊天 / SSE 流式
   src/provider_commands.rs  provider 命令背后的逻辑
   src/conversations.rs  共享会话 + 生成循环：system 提示装配（仓库路径、diff 摘录、watchlist）、
-                      只读工具面执行、回答落库后由 Warden 自己写 `repotory_handoff` 检查点
+                      只读工具面执行、回答落库后由 Warden 自己写 `repotory_handoff` 检查点。
+                       **Phase 6 待确认 7 的知识写门**：`notes_create/update/organize` 调用前硬拦截，
+                       对话内确认卡带**可编辑参数**（部分同意），写入 `knowledge-audit.jsonl`
+                       独立追加式审计，超时/关窗默认拒绝（Fail-Closed）。
+  src/errors.rs      Phase 6 待确认 8：错误收敛。内部 `thiserror` 枚举（`AppError`），
+                      IPC 边界序列化稳定 `{ code, message, data? }`（`ApiError`，未知兜底
+                      `INTERNAL_ERROR`）；`LlmError`/`McpError` 按变体映射，不靠英文子串。
+                      **`errors::boundary` 在每个命令尾部记一条带 code/provider/thread 的
+                      tracing 事件**——加命令时务必包住返回值。
   src/git.rs        只读 git 状态读取（diff --stat + patch 摘录）：固定 argv、无 shell、
                       字节上限 + 超时看门狗；干净树沉默，截断明说。不是 Phase 3 的执行层。
                       `run_confined` 同时是 exec.rs 的子进程运行器——上限与看门狗只写一次。

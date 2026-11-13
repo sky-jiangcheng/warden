@@ -370,36 +370,61 @@ cheaply, while the four silent-regression rules needed a gate.
 no send during IME composition (`sendBlocked` plus the shared `COMPOSITION_GRACE_MS` the keydown
 guard uses too), and the draft survives a failed request (`draftAfterSend` on `failed`).
 
-### 7. What the "human confirmation" looks like on the copilot side when durable knowledge is written back (open)
+### 7. What the "human confirmation" looks like on the copilot side when durable knowledge is written back — decided and landed
 
 **Settled** (item 5): `notes_create` / `notes_update` / `notes_organize` need one human confirmation;
 approving or rejecting wiki pages always happens in Cinder Desktop, whereas this is the confirmation
 for the copilot's own durable writes.
 
-**Open**:
-① whether confirmation happens **before** the tool call or **after** the result comes back — the
-former can prevent the write, the latter can only undo it;
-② whether it is a card in the conversation or a separate panel;
-③ where the record goes (a local audit log, or a table in the memory layer that never enters retrieval);
-④ whether a timeout or a closed window means "refuse" or "park it for next time".
+**Decided (2026-11-13) and landed**:
 
-**Acceptance**: after the model asks for one `notes_create`, an unconfirmed call never executes and
-leaves no new record in the memory layer; both confirm and refuse leave one traceable record
-(who, when, which tool, which parameters).
+- **Timing: hard interception BEFORE the call.** The card appears when the model proposes the write,
+  and the write runs only after the user approves. After the fact you can only undo — and by then the
+  content is already in retrieval, so the interception must happen before the call.
+- **Shape: an in-conversation card that supports editing and partial agreement.** The card is drawn in
+  the conversation, not in a separate panel, so the context is not broken. The write's arguments are
+  shown in an editable JSON area, and the user can edit them before clicking run — **they approve the
+  revised version**, not only the original. The audit's `revised` field distinguishes "approved as
+  proposed" from "approved a revision".
+- **Record: a separate append-only audit log, not in the retrieval layer.** Written to
+  `knowledge-audit.jsonl` (0600, append-only) in the app config directory, kept apart from both the
+  command log and the retrieval store — knowledge and metadata isolated, for traceability. Each entry:
+  who, when, which tool, which parameters, whether revised, and the outcome.
+- **Timeout / closed window: refuse by default, park it in the session, leave the audit, and allow a
+  polite re-propose next time.** Fail-closed: nothing is silently allowed through. A timeout and a
+  refusal are both audited (with different reasons — "refused by the user" vs. "no decision before the
+  timeout"), and the model's next round gets an explicit "not approved, nothing stored" result it can
+  re-propose from.
 
-### 8. Collapse errors from `String` into a structured type (open)
+**Acceptance — met**: after the model asks for one `notes_create`, an unconfirmed call never executes
+and leaves no new record in the memory layer (the e2e test asserts the tool result contains no
+`created` and that the audit holds one `ok=false` refusal); both confirm and refuse leave one
+traceable record (the test asserts `who` / `tool` / `arguments` / `revised` / `ok`).
+
+### 8. Collapse errors from `String` into a structured type — decided and landed: option 2
 
 **The original question**: Tauri commands and the MCP / LLM clients all return `Result<T, String>`,
 so the frontend can only print the text and cannot branch on the class of failure (not installed /
 unreachable / auth failed / timeout / contract mismatch). Logs are `eprintln!` with no fields to query.
 
-**Open**: which layer and how coarse.
-① A `thiserror` enum inside the clients, flattened back to `String` at the IPC boundary (small change,
-small frontend gain);
-② An IPC shape of `{ code, message }`, with the frontend branching on `code` and showing `message`
-(touches every command and call site);
-③ Swap logging too (`tracing` with fields) — the largest change, paid back only in debugging.
+**Decided (2026-11-13): option 2, an IPC shape of `{ code, message, data? }`.** Option 1 gains the
+frontend nothing, and option 3's observability does not need to be tied to the contract change.
 
-**Acceptance**: the frontend takes a different action per class ("not installed" shows install
-guidance, "auth failed" opens settings), the codes have tests, and logs can be filtered by
-code / provider / thread.
+**Landed**:
+
+- **A `thiserror` enum internally** (`AppError` in `src-tauri/src/errors.rs`: `NotInstalled` /
+  `Connection` / `Authentication` / `Timeout` / `ContractMismatch` / `InvalidInput` / `NotFound` /
+  `Denied` / `Failed` / `Internal`);
+- **A stable `code` serialised at the IPC boundary** (`ApiError { code, message, data? }`,
+  `SCREAMING_SNAKE_CASE`); the frontend branches on `code` and shows `message` verbatim;
+- **Unknown errors fall back to `INTERNAL_ERROR`** (the `From<String>` landing, which does not pretend
+  to understand an uncategorised error);
+- **`LlmError` / `McpError` map by variant**, not by English-phrase substring — `Transport` and
+  `Status 401/403` need different actions and substring matching would misclassify;
+- **Logging: one `tracing` event at the IPC boundary carrying `code` / `provider` / `thread`**
+  (`errors::boundary`), which satisfies filtering by code / provider / thread without a full overhaul.
+
+**Acceptance — met**: the frontend acts on the class (`errorHint(code)` — "not installed" shows install
+guidance, "auth failed" suggests checking the key, wired into the provider error displays); the codes
+have tests (the wire spellings, variant mapping, unknown fallback and payload shape in `errors.rs`, and
+the frontend `ui.test.ts`); the log event carries `code` / `provider` / `thread`.
