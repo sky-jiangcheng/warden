@@ -467,17 +467,36 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
             .unwrap()
             .contains("repositoryCount")
     );
-    // The offered tools carried the server's schema through verbatim, and the
-    // whitelist offered exactly the read-only face.
+    // The offered tools carried the server's schema through verbatim, and
+    // the whitelist offered exactly the read-only face — plus Warden's own
+    // local read-only tools, which Phase 3 adds once the thread has a
+    // repository to run them in. The memory tools come first: the server's
+    // face is appended first, the local face extends it.
     let tools = reply["tools"].as_array().unwrap();
+    let names: Vec<&str> = tools
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
     assert_eq!(
-        tools.len(),
-        3,
-        "only whitelisted read-only tools are offered"
+        &names[..3],
+        &[
+            "repotory_metrics",
+            "repotory_projects_list",
+            "repotory_context"
+        ],
+        "the memory whitelist leads: {names:?}"
     );
-    assert_eq!(tools[0]["function"]["name"], "repotory_metrics");
-    assert_eq!(tools[1]["function"]["name"], "repotory_projects_list");
-    assert_eq!(tools[2]["function"]["name"], "repotory_context");
+    assert_eq!(
+        names.iter().filter(|n| n.starts_with("repotory_")).count(),
+        3,
+        "only whitelisted memory tools are offered: {names:?}"
+    );
+    assert_eq!(
+        names.iter().filter(|n| n.starts_with("warden_")).count(),
+        repotory_agent_lib::exec::LOCAL_TOOLS.len(),
+        "the local read-only face rides along: {names:?}"
+    );
+    assert!(!names.contains(&"repotory_notes_create"), "{names:?}");
     assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
 
     // The persisted reply is that same second-round text.
@@ -809,4 +828,119 @@ async fn a_temporary_conversation_writes_no_handoff() {
     result.expect("send");
     assert!(!log.exists(), "a temporary conversation wrote a checkpoint");
     let _ = std::fs::remove_dir_all(&log);
+}
+
+/// Phase 3's first slice, over the real pipes: the model asks for one of
+/// Warden's OWN read-only tools, the command really runs in the thread's
+/// repository, its answer reaches the model verbatim, the FULL command
+/// reaches the UI, and the execution is audited.
+#[tokio::test]
+async fn a_local_read_only_tool_runs_audited_and_shows_its_command() {
+    let repo = make_repo("local-exec", true);
+    let audit = std::env::temp_dir().join(format!(
+        "warden-m3-audit-{}-{}.jsonl",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let f = Fixture::with_server_env(
+        "REPOTORY_AGENT_FAKE_CHAT",
+        &[("REPOTORY_AGENT_FAKE_HANDOFF_LOG", "/dev/null")],
+    )
+    .await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+    // The audit sink is process-wide state attached at setup in the app; in
+    // this harness each fixture points it at its own file.
+    f.state.audit.attach(audit.clone());
+
+    let mut req = request("m3a", "what changed in my working tree?");
+    req.model = Some("tools:warden_git_status".into());
+    let (result, chunks) = f.send(req).await;
+    result.expect("send");
+
+    // The finish event carries the complete command — Phase 3's display rule.
+    let finish = chunks
+        .iter()
+        .filter_map(|c| c.tool_call.as_ref())
+        .find(|e| e.done)
+        .expect("a finished tool event");
+    assert_eq!(finish.name, "warden_git_status");
+    assert!(finish.ok, "{:?}", finish.error);
+    assert_eq!(
+        finish.command.as_deref(),
+        Some("git --no-pager status --short --branch")
+    );
+
+    // The model read the real answer: the dirty file is named in the tool
+    // result it was handed back.
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool result message");
+    let content = tool_message["content"].as_str().unwrap();
+    assert!(content.contains("a.txt"), "{content}");
+
+    // Every execution is recorded: what ran, where, how it ended.
+    let lines = read_jsonl(&audit);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["tool"], "warden_git_status");
+    assert_eq!(lines[0]["repository"], repo.to_str().unwrap());
+    assert!(lines[0]["argv"].as_str().unwrap().contains("status"));
+    assert_eq!(lines[0]["exit"], 0);
+    assert_eq!(lines[0]["ok"], true);
+
+    let _ = std::fs::remove_file(&audit);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// The local face is offered ONLY when the conversation has a repository:
+/// a temporary conversation has no cwd to run anything in, so the tools are
+/// not advertised at all.
+#[tokio::test]
+async fn a_temporary_conversation_is_offered_no_local_tools() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    let mut req = request("m3b", "quick question");
+    req.thread_id = None;
+    let (result, _chunks) = f.send(req).await;
+    result.expect("send");
+    // No thread means no tools at all (the no-Cinder contract): assert the
+    // stronger property rather than a count.
+    let tools = {
+        let reply = answer(&_chunks);
+        reply["tools"].as_array().cloned().unwrap_or_default()
+    };
+    assert!(tools.is_empty(), "a temporary conversation offers no tools");
+}
+
+/// A write-capable name the model invents is still refused client-side, and
+/// now with the local face present too: the local whitelist is a closed
+/// set, not a prefix rule.
+#[tokio::test]
+async fn a_local_tool_outside_the_whitelist_is_refused() {
+    let repo = make_repo("local-refuse", false);
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+    let mut req = request("m3c", "delete everything");
+    req.model = Some("tools:warden_run_anything".into());
+    let (result, chunks) = f.send(req).await;
+    result.expect("send");
+    let finish = chunks
+        .iter()
+        .filter_map(|c| c.tool_call.as_ref())
+        .find(|e| e.done)
+        .expect("a finished tool event");
+    assert!(!finish.ok);
+    assert!(finish.command.is_none(), "nothing ran, so no command");
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let tool_message = messages.iter().find(|m| m["role"] == "tool").unwrap();
+    assert!(
+        tool_message["content"]
+            .as_str()
+            .unwrap()
+            .contains("not available"),
+        "{tool_message}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
 }

@@ -6,7 +6,7 @@ type Thread = { id: string; title: string; path: string | null; createdAt: strin
 type Message = { id: string; role: "user" | "assistant"; content: string; source: string; replyTo: string | null; createdAt: string; pending?: boolean; failed?: boolean };
 // A tool call belongs to one topic's reply; different threads can generate at
 // the same time, so this state cannot live in a shared closure.
-type ToolState = { name: string; done: boolean; ok?: boolean; error?: string };
+type ToolState = { name: string; done: boolean; ok?: boolean; error?: string; command?: string };
 type Topic = {
   key: string; thread: Thread | null; title: string; path: string | null;
   messages: Message[]; draft: string; busy: boolean; error: string; loaded: boolean;
@@ -16,7 +16,7 @@ type Topic = {
 type Provider = { id: string; name: string; defaultModel: string | null; active: boolean };
 type Repo = { path: string; name: string; missing: boolean };
 type Model = { id: string; name: string | null };
-type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string } | null };
+type ChatChunk = { delta: string; text: string; done: boolean; error: string | null; toolCall?: { name: string; done: boolean; ok?: boolean; error?: string; command?: string } | null };
 
 export function initChat() {
   const input = pick<HTMLTextAreaElement>("#chat-input");
@@ -111,9 +111,14 @@ export function initChat() {
       const tool = active.tool;
       let tooling = "";
       if (tool && message.role === "assistant" && lastMessage) {
-        tooling = !tool.done ? ` · 调用 ${tool.name}…`
+        // Phase 3: 所有命令必须显示完整命令. A local execution reports the
+        // argv it really ran, so the chip reads `git --no-pager status …`
+        // instead of just a tool name. MCP tools carry no local command and
+        // keep the name-only form.
+        const what = tool.command ? `${tool.name}（${tool.command}）` : tool.name;
+        tooling = !tool.done ? ` · 调用 ${what}…`
           : tool.ok === false ? ` · ${tool.name} 失败：${tool.error ?? "未知错误"}`
-          : ` · ✓ ${tool.name} 已完成`;
+          : ` · ✓ ${what} 已完成`;
       }
       const meta = `${label}${source}${tooling || (message.failed ? " · 未完成" : "")}`;
       if (node.firstElementChild!.textContent !== meta) node.firstElementChild!.textContent = meta;
@@ -343,6 +348,7 @@ export function initChat() {
             done: chunk.toolCall.done,
             ok: chunk.toolCall.ok,
             error: chunk.toolCall.error,
+            command: chunk.toolCall.command,
           };
         }
         if (chunk.error) streamError = chunk.error;

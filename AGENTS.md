@@ -53,6 +53,11 @@ src-tauri/           后端（Rust）
                       只读工具面执行、回答落库后由 Warden 自己写 `repotory_handoff` 检查点
   src/git.rs        只读 git 状态读取（diff --stat + patch 摘录）：固定 argv、无 shell、
                       字节上限 + 超时看门狗；干净树沉默，截断明说。不是 Phase 3 的执行层。
+                      `run_confined` 同时是 exec.rs 的子进程运行器——上限与看门狗只写一次。
+  src/exec.rs       Phase 3 只读执行层：八个 `warden_*` 工具（git status/diff/log/branch/show、
+                      列目录、读文件、grep）、参数校验（禁开关/绝对路径/上跳/区间）、
+                      仓库内包含性检查、`exec-audit.jsonl` 审计（0600，记完整 argv 与退出码）。
+                      写操作与构建命令**不在这里**——它们等确认卡。
   src/memory_layer.rs    记忆层（Cinder MCP）状态：连接 + 服务端给的工具清单
   src/repos.rs        仓库发现与收藏清单：扫盘 + watchlist 持久化
   tests/             端到端测试（真管道 + fake MCP server / fake LLM server / 真仓库目录）

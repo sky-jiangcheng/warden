@@ -151,7 +151,7 @@ changing the main repository, which is not a copilot's job**.
 repository path and the uncommitted diff excerpt ride in the system prompt, and the saved reply
 writes a milestone handoff (see the Phase 2 wrap-up notes).
 
-## Phase 3: the tool execution layer (2–3 weeks)
+## Phase 3: the tool execution layer (2–3 weeks) — the read-only half has started (2026-11-13)
 
 Whitelisted tools first:
 
@@ -166,6 +166,29 @@ Execution rules:
 - every run is recorded in a local log.
 
 No fully automatic Agent in this phase — human-in-the-loop first.
+
+**Current state: the read-only half has landed** (`src-tauri/src/exec.rs`). The whitelist is eight
+`warden_*` tools — `git status` / `diff` / `log` / `branch` / `show`, directory listing, file
+reading and grep. They are **reads, so they need no confirmation and can ship ahead of the
+confirmation step**. Four rules:
+
+- **Fixed argv, never a shell**: the model supplies VALUES (paths, a rev, a pattern), never flags.
+  A leading `-`, an absolute path, `..` traversal, a revision range or an `@{...}` query is refused
+  before anything runs, with the reason;
+- **Confined to the conversation's repository**: the child's cwd IS the repository; file reads
+  canonicalize and re-check containment, so a symlink pointing outside is refused, not read;
+- **Bounded and killable**: the same `run_confined` runner as the diff injection (byte caps, a 5s
+  watchdog, the child really killed) — a wedged command degrades to a tool error, never a frozen
+  conversation;
+- **Every execution is audited**: `exec-audit.jsonl` (app config directory, 0600, JSONL) records
+  time, repository, tool, the **full argv**, exit code, bytes and truncation;
+- **The complete command reaches the UI**: `ToolEvent` carries `command`, so the chip shows the
+  line that really ran.
+
+**Not done**: writes and the commands that execute repo-controlled scripts (`npm run build`,
+`cargo test`) — they wait for the confirmation card, the Human-in-the-loop half, the same order
+product.md set for the MCP write face. "Every output can be collapsed" is still a one-line status,
+not an expandable full-output panel.
 
 ## Phase 4: the memory panels (1–2 weeks)
 
@@ -213,7 +236,7 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 | M1 | It can call Cinder MCP | done (Phase 1) |
 | M1.5 | **It can find the repositories itself and let the user say which ones matter** | **done (Phase 2.5)** |
 | M2 | It can talk to a model about the current repository | done (2026-11-12: the chat loop, the system prompt, the read-only tool face, diff injection and the handoff write-back are all wired) |
-| M3 | It can safely run Git / Shell commands | not started |
+| M3 | It can safely run Git / Shell commands | in progress (the eight read-only tools have landed — git status/diff/log/branch/show, listing, file reads, grep — with an audit log and full-command display; writes and build commands wait for the confirmation card) |
 | M4 | It can see and manage cross-session memory | not started |
 | M5 | It installs and initializes in one step | not started |
 | M6 | It ships as a standalone product | not started |

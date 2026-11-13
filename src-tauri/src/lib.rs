@@ -10,6 +10,7 @@
 // this crate has a reason to reach into them.
 mod binaries;
 pub mod conversations;
+pub mod exec;
 mod git;
 pub mod llm;
 pub mod mcp_client;
@@ -762,6 +763,15 @@ pub fn run() {
                 .map_err(|err| format!("the app config directory could not be resolved: {err}"))?;
             let repo_path = config_dir.join("repos.json");
             app.manage(RepoStore::new(repo_path.clone()));
+
+            // Phase 3's execution log: beside the other app files, owner-only.
+            // The state was managed before this hook ran, so the path is
+            // attached here rather than passed in (AuditLog::attach is a
+            // OnceLock: first wins, and a command that ran before this point
+            // is simply unaudited instead of blocking setup).
+            app.state::<conversations::GenerationState>()
+                .audit
+                .attach(config_dir.join("exec-audit.jsonl"));
 
             // Only the desk pet is visible at startup; the chat overlay stays
             // hidden until the tray, the shortcut or the pet opens it.

@@ -56,15 +56,18 @@ pub(crate) const MODEL_TOOLS: &[&str] = &[
 /// is forced text-only. The same bound the Cinder desktop loop applies.
 const MAX_TOOL_ROUNDS: usize = 5;
 
-/// The model-facing tool set: the server's own tools, filtered to the
-/// whitelist. Schemas pass through verbatim — a schema copied here would
-/// drift from the server's contract.
-async fn model_tools(session: &McpSession) -> Result<Vec<ToolSpec>, String> {
+/// The model-facing tool set: the server's own tools filtered to the
+/// whitelist, plus Warden's OWN read-only local face (exec.rs) when the
+/// conversation has a repository to run inside. The two whitelists stay
+/// separate on purpose: `repotory_*` is the memory layer's surface (schemas
+/// verbatim from the server), `warden_*` is this product's own, and
+/// confusing them would be confusing a contract copy with a contract.
+async fn model_tools(session: &McpSession, local: bool) -> Result<Vec<ToolSpec>, String> {
     let (_, tools) = session
         .ensure()
         .await
         .map_err(|e| format!("Cinder MCP unavailable: {e}"))?;
-    Ok(tools
+    let mut specs: Vec<ToolSpec> = tools
         .iter()
         .filter(|tool| MODEL_TOOLS.contains(&tool.name.as_str()))
         .map(|tool| ToolSpec {
@@ -75,7 +78,11 @@ async fn model_tools(session: &McpSession) -> Result<Vec<ToolSpec>, String> {
                 parameters: tool.input_schema.clone(),
             },
         })
-        .collect())
+        .collect();
+    if local {
+        specs.extend(crate::exec::tool_specs());
+    }
+    Ok(specs)
 }
 
 /// The system prompt for a tool-enabled conversation. Short on purpose: the
@@ -124,6 +131,130 @@ fn system_prompt(repository: Option<&str>, watched: &[String], diff: Option<&str
         ));
     }
     prompt
+}
+
+/// The repository scope a generation ran in, and the diff snapshot its
+/// prompt was built from. Kept together because the reply checkpoint must
+/// describe the SAME tree the model read.
+struct GenerationScope {
+    repository: String,
+    diff: Option<String>,
+}
+
+/// Routes one tool call the model asked for, in this order:
+///
+/// 1. a `warden_*` name in the local face: executed only when the
+///    generation HAS a repository scope — no scope, no answer that could
+///    have come from anywhere, and the refusal says so;
+/// 2. a name in the MCP read-only whitelist: executed on the memory
+///    layer, answer verbatim;
+/// 3. anything else: a client-side refusal as the tool result — the model
+///    is told, nothing runs, the audit stays clean.
+///
+/// Returns (content handed to the model, ok, error, full command shown to
+/// the UI). The local branch runs blocking children on the blocking pool:
+/// this path is an async command and a wedged git must not occupy a tokio
+/// worker.
+async fn route_tool(
+    session: &McpSession,
+    state: &GenerationState,
+    name: &str,
+    arguments: Value,
+    scope: Option<&GenerationScope>,
+) -> (String, bool, Option<String>, Option<String>) {
+    if crate::exec::is_local(name) {
+        let Some(scope) = scope else {
+            // The local face was never offered without a repository (the
+            // tool list is assembled per generation); a model inventing a
+            // warden_* name here gets the honest sentence, no execution.
+            let message = format!("tool {name} is not available in this conversation");
+            return (
+                json!({"error": message}).to_string(),
+                false,
+                Some(message),
+                None,
+            );
+        };
+        let repository = std::path::PathBuf::from(&scope.repository);
+        let audit = state.audit.clone();
+        let repo_text = scope.repository.clone();
+        let name_owned = name.to_string();
+        let executed = tauri::async_runtime::spawn_blocking(move || {
+            let out = crate::exec::run(&name_owned, &arguments, &repository);
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(-1);
+            audit.record(&crate::exec::audit_entry(
+                at,
+                &repo_text,
+                &name_owned,
+                &out,
+                out.text.len(),
+            ));
+            out
+        })
+        .await
+        .map_err(|e| format!("the local tool task failed: {e}"));
+        return match executed {
+            Ok(out) => {
+                let ExecutedBranch { content, ok, error } = branch_answer(name, out.text, out.ok);
+                (content, ok, error, Some(out.command))
+            }
+            Err(message) => (
+                json!({"error": message}).to_string(),
+                false,
+                Some(message),
+                None,
+            ),
+        };
+    }
+    if MODEL_TOOLS.contains(&name) {
+        // The server's answer travels to the model verbatim — prose from
+        // repotory_context, JSON from the rest. The model reads both; a
+        // client-side parse would reject the prose contract outright.
+        return match call_model_tool(session, name, arguments).await {
+            Ok(text) => (text, true, None, None),
+            Err(error) => (
+                json!({"error": error.clone()}).to_string(),
+                false,
+                Some(error),
+                None,
+            ),
+        };
+    }
+    let message = format!("tool {name} is not available to the model");
+    (
+        json!({"error": message.clone()}).to_string(),
+        false,
+        Some(message),
+        None,
+    )
+}
+
+/// Shapes one executed local tool's answer for the model. A refusal is
+/// information the model reads — it stays visible as the tool result —
+/// while `ok=false` marks it for the UI chip.
+struct ExecutedBranch {
+    content: String,
+    ok: bool,
+    error: Option<String>,
+}
+
+fn branch_answer(name: &str, text: String, ok: bool) -> ExecutedBranch {
+    if ok {
+        ExecutedBranch {
+            content: text,
+            ok: true,
+            error: None,
+        }
+    } else {
+        ExecutedBranch {
+            content: json!({"error": text}).to_string(),
+            ok: false,
+            error: Some(format!("{name}: {text}")),
+        }
+    }
 }
 
 /// Runs one `repotory_chat` operation and parses its answer.
@@ -383,6 +514,10 @@ struct Attempt {
 pub struct GenerationState {
     busy: Mutex<HashSet<String>>,
     attempts: Mutex<HashMap<(Option<String>, String), Attempt>>,
+    /// Phase 3: 每次执行记录到本地日志. Shared by every generation; its
+    /// path is attached once at setup, next to the provider config. The
+    /// OnceLock is why a resident process can wire it after `manage()`.
+    pub audit: crate::exec::AuditLog,
 }
 
 struct GenerationGuard<'a> {
@@ -570,10 +705,10 @@ async fn send_inner(
         }
     }
     // Set when a tool-enabled thread had a repository during GENERATION:
-    // (path, the diff snapshot the prompt was built from). The reply
-    // checkpoint reuses it, and a replay leaves it None — a finished answer
-    // has already earned its checkpoint.
-    let mut checkpoint: Option<(String, Option<String>)> = None;
+    // the scope the local face runs in and the diff snapshot the prompt
+    // was built from. The reply checkpoint reuses both; a replay leaves it
+    // None — a finished answer has already earned its checkpoint.
+    let mut scope: Option<GenerationScope> = None;
     if let Some(attempt) = cached {
         *text = attempt.outcome?;
     } else {
@@ -598,17 +733,20 @@ async fn send_inner(
             let history: Vec<Message> = serde_json::from_value(value["messages"].clone())
                 .map_err(|e| format!("invalid Cinder history: {e}"))?;
             let mut context = context(&history, &request.message_id)?;
-            // Function Calling is a Cinder-thread capability: the tools are
-            // the memory layer's, so a temporary conversation has none, and
-            // the system prompt exists only when tools do — the no-Cinder
-            // contract (no server-injected anything) stays intact. The
-            // thread's path is the conversation's repository scope.
-            let tools = model_tools(session).await?;
+            // Function Calling is a Cinder-thread capability: the memory
+            // tools are the server's, so a temporary conversation has none,
+            // and the system prompt exists only when tools do — the
+            // no-Cinder contract (no server-injected anything) stays
+            // intact. The thread's path is the conversation's repository
+            // scope, and that scope is ALSO what makes the local read-only
+            // face (warden_*) available: a command runs with the repository
+            // as its cwd and nowhere else.
+            let repository = value["thread"]["path"]
+                .as_str()
+                .filter(|path| !path.trim().is_empty())
+                .map(|path| path.to_string());
+            let tools = model_tools(session, repository.is_some()).await?;
             if !tools.is_empty() {
-                let repository = value["thread"]["path"]
-                    .as_str()
-                    .filter(|path| !path.trim().is_empty())
-                    .map(|path| path.to_string());
                 // One snapshot per generation, shared by the injected prompt
                 // and the reply checkpoint: what the model read and what the
                 // handoff recorded describe the SAME tree, not whatever the
@@ -633,7 +771,10 @@ async fn send_inner(
                         diff.as_deref(),
                     )),
                 );
-                checkpoint = repository.map(|path| (path, diff));
+                scope = repository.map(|path| GenerationScope {
+                    repository: path,
+                    diff,
+                });
             }
             (context, tools)
         } else {
@@ -719,6 +860,10 @@ async fn send_inner(
                         done: false,
                         ok: false,
                         error: None,
+                        // The full argv is known only once the child ran;
+                        // the start chip carries the tool name, the finish
+                        // chip carries the command (Phase 3's display rule).
+                        command: None,
                     }),
                 });
             }
@@ -743,35 +888,13 @@ async fn send_inner(
                 echo,
             ));
             for tool_call in &streamed.tool_calls {
-                let allowed = MODEL_TOOLS.contains(&tool_call.name.as_str());
                 let arguments = if tool_call.arguments.trim().is_empty() {
                     json!({})
                 } else {
                     serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| json!({}))
                 };
-                // The done event reports the real outcome: the UI reads `ok`
-                // and `error` to show success or a refusal/call failure.
-                let (content, ok, error) = if !allowed {
-                    let message = format!("tool {} is not available to the model", tool_call.name);
-                    (
-                        json!({"error": message.clone()}).to_string(),
-                        false,
-                        Some(message),
-                    )
-                } else {
-                    // The server's answer travels to the model verbatim —
-                    // prose from repotory_context, JSON from the rest. The
-                    // model reads both; a client-side parse would reject the
-                    // prose contract outright.
-                    match call_model_tool(session, &tool_call.name, arguments).await {
-                        Ok(text) => (text, true, None),
-                        Err(error) => (
-                            json!({"error": error.clone()}).to_string(),
-                            false,
-                            Some(error),
-                        ),
-                    }
-                };
+                let (content, ok, error, command) =
+                    route_tool(session, state, &tool_call.name, arguments, scope.as_ref()).await;
                 messages.push(ChatMessage::tool_result(tool_call.id.clone(), content));
                 emit(ChatChunk {
                     delta: String::new(),
@@ -783,6 +906,7 @@ async fn send_inner(
                         done: true,
                         ok,
                         error,
+                        command,
                     }),
                 });
             }
@@ -821,13 +945,13 @@ async fn send_inner(
         // M2's last loop: "模型回答后写入 repotory_handoff". Only after the
         // answer is durable — a checkpoint about a reply that failed to save
         // would record a conversation the next session cannot read back.
-        if let Some((repository, diff)) = checkpoint
+        if let Some(scope) = &scope
             && let Err(error) = write_handoff(
                 session,
-                &repository,
+                &scope.repository,
                 &request.message,
                 text,
-                diff.as_deref(),
+                scope.diff.as_deref(),
             )
             .await
         {

@@ -144,6 +144,11 @@ pub struct ToolEvent {
     pub ok: bool,
     /// The failure reason when the call was refused or errored.
     pub error: Option<String>,
+    /// Phase 3: 所有命令必须显示完整命令. A LOCAL execution carries the
+    /// full argv; MCP tools have no local command, so the field is simply
+    /// absent for them (skip_serializing keeps old payloads byte-identical).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// Turns a client error into something a person can act on.

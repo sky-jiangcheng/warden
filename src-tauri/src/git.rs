@@ -38,6 +38,14 @@ const PATCH_BYTES: usize = 6_000;
 /// diff block says the excerpt was unavailable; the request continues.
 const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+pub struct ProcOut {
+    pub text: String,
+    pub truncated: bool,
+    /// The child's exit code; `None` when it never finished (killed on
+    /// timeout, or never spawned).
+    pub exit: Option<i32>,
+}
+
 /// The repository's uncommitted working state as prose for the system
 /// prompt: `diff --stat` plus an excerpt of the working-tree patch.
 ///
@@ -51,9 +59,9 @@ pub fn recent_diff(repository: &str) -> Option<String> {
     if repository.trim().is_empty() || !std::path::Path::new(repository).is_dir() {
         return None;
     }
-    let stat = run_git(
-        repository,
-        &["--no-pager", "diff", "--stat", "--no-color"],
+    let stat = run_confined(
+        std::path::Path::new(repository),
+        &["git", "--no-pager", "diff", "--stat", "--no-color"],
         STAT_BYTES,
     )?;
     if stat.text.trim().is_empty() {
@@ -65,9 +73,9 @@ pub fn recent_diff(repository: &str) -> Option<String> {
         block.push_str("\n(file list truncated)");
     }
     block.push('\n');
-    match run_git(
-        repository,
-        &["--no-pager", "diff", "--no-color", "--unified=2"],
+    match run_confined(
+        std::path::Path::new(repository),
+        &["git", "--no-pager", "diff", "--no-color", "--unified=2"],
         PATCH_BYTES,
     ) {
         Some(patch) if patch.text.trim().is_empty() => {}
@@ -87,28 +95,25 @@ pub fn recent_diff(repository: &str) -> Option<String> {
     Some(block)
 }
 
-struct GitOut {
-    text: String,
-    truncated: bool,
-}
-
-/// Runs one fixed git argv in `repository`, capturing stdout up to `cap`
-/// bytes. `None` means git itself could not be spawned or produced no
-/// readable pipe.
+/// Runs one fixed argv in `dir`, capturing stdout up to `cap` bytes.
+/// `argv[0]` is the program; `None` means it could not be spawned or
+/// produced no readable pipe. Shared by the diff injection above and the
+/// Phase 3 read-only execution layer (`exec.rs`), which is the whole point
+/// of one runner: the bounded, killable discipline is written once.
 ///
 /// The child lives in an `Arc<Mutex<Option<..>>>` so two owners can reap it
 /// without racing: a watchdog thread that kills after `GIT_TIMEOUT` (a
-/// blocked git — full pipe nobody drains, index.lock — would otherwise hang
-/// the conversation forever), and the reader, which kills early when the cap
-/// is hit so the still-writing git unblocks before `wait`. Whoever `take()`s
-/// the child reaps it; the other sees `None`. Killing never happens after a
-/// reap, so a recycled pid is never targeted. No lock is held across the
-/// blocking read or the `wait` of the other path... the watchdog does hold
-/// it across kill+wait — bounded, because its own kill is what ends `wait`.
-fn run_git(repository: &str, args: &[&str], cap: usize) -> Option<GitOut> {
-    let child = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repository)
+/// blocked child — full pipe nobody drains, index.lock — would otherwise
+/// hang the conversation forever), and the reader, which kills early when
+/// the cap is hit so the still-writing child unblocks before `wait`.
+/// Whoever `take()`s the child reaps it; the other sees `None`. Killing
+/// never happens after a reap, so a recycled pid is never targeted. The
+/// watchdog does hold the lock across kill+wait — bounded, because its own
+/// kill is what ends `wait`.
+pub fn run_confined(dir: &std::path::Path, argv: &[&str], cap: usize) -> Option<ProcOut> {
+    let (program, args) = argv.split_first()?;
+    let child = std::process::Command::new(program)
+        .current_dir(dir)
         .args(args)
         .stdout(std::process::Stdio::piped())
         // git must not talk to a terminal; stderr is dropped: the answer is
@@ -135,13 +140,14 @@ fn run_git(repository: &str, args: &[&str], cap: usize) -> Option<GitOut> {
     let read = stdout.take((cap + 1) as u64).read_to_end(&mut buffer);
     let truncated = buffer.len() > cap;
 
+    let mut exit = None;
     if let Some(mut mine) = lock(&shared).take() {
         if truncated || read.is_err() {
-            // git is still writing into a pipe nobody drains; kill unlocks
-            // the wait below.
+            // The child is still writing into a pipe nobody drains; kill
+            // unlocks the wait below.
             let _ = mine.kill();
         }
-        let _ = mine.wait();
+        exit = mine.wait().ok().and_then(|status| status.code());
     }
     if read.is_err() {
         return None;
@@ -150,14 +156,16 @@ fn run_git(repository: &str, args: &[&str], cap: usize) -> Option<GitOut> {
         // The byte cap can split a character; `from_utf8_lossy` replaces the
         // partial tail with U+FFFD, and the "truncated" note that follows
         // tells the model that is exactly what happened.
-        Some(GitOut {
+        Some(ProcOut {
             text: String::from_utf8_lossy(&buffer[..cap]).into_owned(),
             truncated,
+            exit,
         })
     } else {
-        Some(GitOut {
+        Some(ProcOut {
             text: String::from_utf8_lossy(&buffer).into_owned(),
             truncated,
+            exit,
         })
     }
 }
