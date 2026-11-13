@@ -235,11 +235,13 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **M2 收尾：聊天现在真的「懂你正在改什么」。** 带仓库范围的对话每轮生成时现场跑一次 `git --no-pager diff --stat` 加 patch 摘录，拼进 system 提示词——问「我这几行为什么这么改」不再靠猜。固定 argv、无 shell、字节上限加 5 秒看门狗：干净工作区沉默不占提示词，被截断会在文里明说（不静默降级这条纪律同样适用）。回答落库成功后，Warden 自己写一条 milestone handoff 检查点进记忆层（ADR-0054 形状：问答摘要 + 同一份 diff 快照作为「当前未完成」，按路径归属仓库）——下一个 session 打开同一个目录，`repotory_context` 就带着它开头。写回失败只进日志，绝不影响已保存的回答；这个绑定刻意不在模型工具面里，模型驱动不了它。
+            **M3：模型现在能在一个你批准的边界内，自己跑本地命令。** 新增 `exec.rs` 执行层，把命令分成两半，纪律完全不同：读八件（`git status / diff / log / branch / show`、列目录、读文件、`grep`）模型点名就直接跑，因为它们只读、不改任何东西；写四件（`git add / commit`、`npm run build`、`cargo test`）必须过确认卡——模型**只能规划**，`plan_write` 是卡片与执行的同一个真相，命令先展示给人看，批准后才照同一个 planner 跑，**一次批准只覆盖一条命令、不持久化**，模型也改不了审批规则。
 
-            **工程缺口三条清零，CI 从三道门变六道。** macOS 现在跑真实的 Rust 三门外加一步 `.app` 打包冒烟（托盘、Accessory 策略、图标阶梯只有 macOS 能证明）；前端状态机的四条静默回归路径（并发只留最后一次、revision 落后丢弃、IME 组合期不发送、失败保留草稿）抽成纯函数进 vitest 门禁；悬空的通知插件依赖删除——冒泡是唯一通道，这条产品决定现在和代码一致。
+            **安全不是靠提示词，是靠参数校验与运行器。** 禁开关、禁绝对路径、禁上跳与区间，逐仓库做包含性检查（命令不能越出当前仓库目录）；所有子进程共用一个运行器（`run_confined`），字节上限加看门狗只写一次。每次执行落一条 `exec-audit.jsonl`（0600，记完整 argv 与退出码），出了事能还原「模型当时到底请求了什么」。
 
-            **文档同批更新。** roadmap 三条缺口销项、M2 转「已完成」、product 待确认第 6 条定案，中英镜像同提交。
+            **工具输出可折叠，且展开的是模型收到的那份原文。** 本地命令的输出原样交给前端做折叠面板；MCP 工具的答案不复制（同一段文字两处会漂）。面板展开的是模型看到的文本，不是把命令重跑一遍。
+
+            **边界**：任意 shell 仍未做（M3 仍在进行中），命令面是白名单，不是任意执行。roadmap 的 M3 状态、AGENTS 目录说明等文档中英同批更新。
 
             Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider.
           releaseDraft: false
