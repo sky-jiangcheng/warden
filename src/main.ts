@@ -540,6 +540,83 @@ async function watchForRepoChanges() {
   }
 }
 
+/// Phase 5: the local model card.
+///
+/// Four states, each with its own advice, because collapsing them would send
+/// the user to the wrong place: "not installed" wants a download, "installed
+/// but not running" wants `ollama serve`, "no default model" wants a pull,
+/// and "ready" wants nothing at all. The backend decides the state; this
+/// function only draws it — re-deriving it here from booleans would drift.
+type LocalModels = {
+  endpoint: string;
+  installed: boolean;
+  binary: string | null;
+  running: boolean;
+  models: string[];
+  hasDefault: boolean;
+  defaultModel: string;
+  latencyMs: number | null;
+  advice: string | null;
+};
+
+async function loadLocalModels(): Promise<void> {
+  const chip = pick<HTMLElement>("#local-model-chip");
+  const body = pick<HTMLElement>("#local-model-body");
+  const actions = pick<HTMLElement>("#local-model-actions");
+  const pull = pick<HTMLButtonElement>("#local-model-pull");
+  body.replaceChildren(hint("正在检测本机模型运行时…"));
+  actions.hidden = true;
+  let report: LocalModels;
+  try {
+    report = await invoke<LocalModels>("local_model_status");
+  } catch (error) {
+    setChip(chip, "检测失败", "warn");
+    body.replaceChildren(hint(errorText(error)));
+    return;
+  }
+  const state = report.running
+    ? report.hasDefault
+      ? "ready"
+      : "missing-model"
+    : report.installed
+      ? "not-running"
+      : "not-installed";
+  const labels: Record<string, [string, "ok" | "warn" | "quiet"]> = {
+    ready: ["可用", "ok"],
+    "missing-model": ["缺默认模型", "warn"],
+    "not-running": ["已安装 · 未运行", "warn"],
+    "not-installed": ["未安装", "quiet"],
+  };
+  const [label, tone] = labels[state] ?? ["未知", "warn"];
+  setChip(chip, label, tone);
+
+  const lines: HTMLElement[] = [];
+  lines.push(row("端点", report.endpoint, true));
+  if (report.binary) lines.push(row("程序", report.binary, true));
+  if (report.running) {
+    lines.push(row("模型数", String(report.models.length)));
+    if (report.latencyMs != null) lines.push(row("延迟", `${report.latencyMs} ms`));
+    // Listing them is the difference between "it says it has models" and
+    // "here is the one you can actually pick".
+    if (report.models.length > 0) lines.push(row("已有", report.models.slice(0, 6).join("、")));
+  }
+  if (report.advice) {
+    const p = document.createElement("p");
+    p.className = "card__hint";
+    // The advice contains `ollama serve` / `ollama pull` in backticks; shown
+    // verbatim rather than parsed, because a half-rendered command is worse
+    // than the raw string the user can copy.
+    p.textContent = report.advice;
+    lines.push(p);
+  }
+  body.replaceChildren(...lines);
+  actions.hidden = false;
+  // Pulling is only offered when there is something to pull INTO: a stopped
+  // or absent runtime cannot accept a download, and the advice already tells
+  // the user what to do first.
+  pull.hidden = !(report.running && !report.hasDefault);
+}
+
 /// Render the provider list.
 ///
 /// The list is rebuilt from scratch on every render: a save re-invokes the
@@ -892,6 +969,31 @@ function main() {
     } finally { loadingProviders = false; }
   };
   pick<HTMLButtonElement>("#provider-retry").addEventListener("click", () => { void loadProviders(); });
+  // The local-model lane is independent of the provider lane: it answers a
+  // different question (is there a runtime on this machine) and a slow or
+  // absent one must not delay the provider list.
+  pick<HTMLButtonElement>("#local-model-retry").addEventListener("click", () => { void loadLocalModels(); });
+  pick<HTMLButtonElement>("#local-model-pull").addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const body = pick<HTMLElement>("#local-model-body");
+    // Pulling a multi-gigabyte model is minutes of silence if nothing is said:
+    // the button becomes the progress indicator and the hint says why.
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = "拉取中…";
+    body.replaceChildren(hint(`正在拉取 qwen3:8b，这可能需要几分钟。`));
+    try {
+      await invoke<string>("local_model_pull");
+      button.textContent = original;
+      button.disabled = false;
+      await loadLocalModels();
+    } catch (error) {
+      body.replaceChildren(hint(`拉取失败：${errorText(error)}`));
+      button.textContent = original;
+      button.disabled = false;
+    }
+  });
+  if (desktop) void loadLocalModels();
   // Independent lanes: a slow optional MCP handshake cannot delay models,
   // repository discovery, or the already-painted conversation surface.
   if (desktop) {

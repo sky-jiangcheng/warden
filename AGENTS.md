@@ -62,6 +62,11 @@ src-tauri/           后端（Rust）
                       **别把写工具改成自动执行**，也别持久化批准——一次批准只覆盖一条命令。
                       `ToolEvent.output` 把同一份原文交给前端做可折叠面板（只给本地命令；MCP 答案不复制，
                       否则同一段文字有两处会漂）。**面板展开的是模型收到的那份文本，不是重跑一遍**。
+  src/local_models.rs  Phase 5 本机模型：四态（未安装/装了没跑/缺默认模型/就绪）、
+                      每个状态一条可执行的话、2 秒探测预算、一键拉默认模型。
+                      **不要为某个厂商开分支**：判断一律是「这个 base URL 答不答」；
+                      唯一走原生 API 的是拉模型（OpenAI 兼容面里没有下载这件事），
+                      且 URL 从配置的 base URL 推出来，不是第二个硬编码主机。
   src/panels.rs      Phase 4 三面板的只读数据源：本地上下文（分支/diff，不经 Cinder）、
                       已批准知识（`repotory_wiki_search` 空 query 的 browse feed）、
                       跨会话记忆（`repotory_context` 简报原文）。**三块各报各的错**——

@@ -243,7 +243,7 @@ no such tools.
 This is the phase that separates the copilot from a plain chat tool. **The panels are read-only** —
 approving always happens in the Cinder Desktop app.
 
-## Phase 5: local model management (1–2 weeks)
+## Phase 5: local model management (1–2 weeks) — done (2026-11-13)
 
 - Detect whether Ollama is installed;
 - Installation guidance when it is not;
@@ -251,6 +251,28 @@ approving always happens in the Cinder Desktop app.
 - Switch models;
 - Show model state, latency, VRAM/RAM usage;
 - Offline-mode hints.
+
+**Landed** (`src-tauri/src/local_models.rs` plus a "local model" card under Settings → 连接):
+
+- **Four states kept apart**: not installed / installed but not running / running without the
+  default model / ready. This separation is the reason the card exists — reporting "installed but
+  not running" as "not installed" sends the user to download something they already have.
+- **One actionable sentence per state**: `ollama serve` or `ollama pull qwen3:8b`, worded by state,
+  with a unit test guarding the wording — it is the only thing a stuck user reads before giving up.
+- **No branch for Ollama**: every decision is "does this base URL answer", identical for local and
+  hosted. The one place that touches the native API is "pull the default model" — downloading a
+  model is not in the OpenAI-compatible surface, and a hosted provider's models already exist. Its
+  URL is derived from the configured base URL (`/v1` → `/api/pull`), not a second hardcoded host.
+- **The probe gets a 2-second budget**: a local endpoint either answers at once or is not running,
+  and a long wait would stall the first screen for a service the user may not have installed.
+- **Latency is shown**: on a local model it is the number the user actually feels.
+- **Pull turns the button into the progress state**: a multi-gigabyte download with no feedback is
+  minutes of silence.
+
+**Not done**: VRAM / memory usage (Ollama's `/api/ps` only reports resident models; real VRAM
+readings need platform-specific interfaces, which would break the no-vendor-branch rule), and an
+offline-mode notice (a local model is offline by nature; "the hosted provider is unreachable" is a
+provider-layer error classification — product.md open question 8).
 
 llama.cpp / MLX would arrive through the same "one base URL" route — **never a per-vendor branch**:
 a local provider and a remote provider are the same thing. The `model_backends.rs` registry was
@@ -278,7 +300,7 @@ deleted in Phase 2 (see "Phase 0 decisions" in [product.md](product.md)).
 | M2 | It can talk to a model about the current repository | done (2026-11-12: the chat loop, the system prompt, the read-only tool face, diff injection and the handoff write-back are all wired) |
 | M3 | It can safely run Git / Shell commands | in progress (eight read tools + four write tools, the write side behind a confirmation card; audit log, full-command display and a collapsible output panel are in place; arbitrary shell is not) |
 | M4 | It can see and manage cross-session memory | done (three read-only panels; "manage" happens in Cinder Desktop — the gate is not here) |
-| M5 | It installs and initializes in one step | not started |
+| M5 | It installs and initializes in one step | in progress (four-state local-model detection, install/start advice and one-click pull of the default model have landed; installing the whole app and `init` belong to Phase 6) |
 | M6 | It ships as a standalone product | not started |
 
 ## Engineering gaps (outside the milestones, 2026-11-11 review)

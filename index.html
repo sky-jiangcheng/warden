@@ -114,6 +114,21 @@
       </nav>
       <div class="sheet__body" id="settings-drag">
         <div class="settings-panel" id="panel-connect" role="tabpanel" aria-labelledby="tab-connect">
+          <!-- Phase 5: the local model, before the provider list. It answers
+               a question the provider list cannot — "is there a model on this
+               machine at all" — and it answers it for the case that actually
+               happens on a fresh install: Ollama installed, not running. -->
+          <section class="card" id="local-model-card">
+            <div class="card__head">
+              <h2 class="card__title">本机模型</h2>
+              <span class="chip" id="local-model-chip">检测中</span>
+            </div>
+            <div id="local-model-body"><p class="card__hint">正在检测本机模型运行时…</p></div>
+            <div class="local-model__actions" id="local-model-actions" hidden>
+              <button class="text-btn" id="local-model-retry" type="button">重新检测</button>
+              <button class="text-btn" id="local-model-pull" type="button" hidden>拉取默认模型</button>
+            </div>
+          </section>
           <section class="card">
             <div class="card__head">
               <h2 class="card__title">模型 Provider</h2>

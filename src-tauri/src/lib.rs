@@ -13,6 +13,7 @@ pub mod conversations;
 pub mod exec;
 mod git;
 pub mod llm;
+pub mod local_models;
 pub mod mcp_client;
 pub mod memory_layer;
 pub mod panels;
@@ -560,6 +561,20 @@ async fn chat_send<R: tauri::Runtime>(
     outcome
 }
 
+/// Phase 5: is there a local model on this machine, and what should the user
+/// do next. Never fails — "not installed" is an answer, not an error.
+#[tauri::command]
+async fn local_model_status() -> Result<local_models::LocalModels, String> {
+    Ok(local_models::probe().await)
+}
+
+/// Pulls the default local model. Long-running (minutes) by nature: the
+/// frontend shows its own progress state and does not block on this.
+#[tauri::command]
+async fn local_model_pull() -> Result<String, String> {
+    local_models::pull_default().await
+}
+
 /// The three Phase 4 panels, in one round trip.
 ///
 /// One command rather than three because the frontend shows them together
@@ -837,6 +852,8 @@ pub fn run() {
             provider_test_connection,
             chat_send,
             memory_panels,
+            local_model_status,
+            local_model_pull,
             approve_command,
             refuse_command,
             conversation_list,
