@@ -235,19 +235,15 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **对话现在读起来像一篇文章。** 回答换成 IBM Plex Serif 16px / 行高 1.7（仓内自带的 woff2，不走 CDN），用户消息与输入框 14px 无衬线——这是衬线答案配无衬线输入的分工。之前的 13px 无衬线是把散文拉扁了充正文用；到了真正的阅读字号，1.7 的呼吸感自己就站得住。纸色与墨色一个没动：`#F4F2EE` 暖纸与 `#34322D` 深暖墨本来就是家族令牌，抄一份 Claude 的数值只会和 Cinder 漂移，而观感一分没多。
+            **限流现在说得清，也自己等一等。** 之前 429 被并进「连接失败」，于是界面让你去检查 Base URL 和网络——一条按了也没用的建议，因为端点好好的，是服务端在说「现在不行」。免费档撞 429 是常态（上游 nanopool 的配额，不是你的错），正确的动作是等一会儿或换个模型。现在 `RATE_LIMITED` 是独立错误码，且**按状态码判定**、不看错误文本：同一个 429 各家措辞差得远，靠子串匹配，谁改一次文案就漂。提示直接给动作——免费模型有每分钟上限，稍等再发，或换付费模型。
 
-            **MCP 协议层补上四个边界。** 全部是加固，不是改线：服务端主动发来的请求不再可能被当成应答（两边的 id 都从 1 数，撞号会把无辜的等待者判死）；单行超过 8 MiB 直接断会话，不再无界撑内存；启动即崩的服务端五秒内不再被反复拉起（2.5 秒轮询会把它打成进程风暴），而「未安装」不进冷却，装好下一拍就能用；SIGTERM 与 ctrl-C 走托盘 Quit 同一条门——事件循环 unwind、`McpClient::drop` 杀掉服务端，不再留下一个握着 SQLite 的孤儿进程。
+            **429 是本模块「不重试」规则唯一的例外。** 别的状态码——认证失败、契约不符、主机不可达——仍然第一次就上报，因为那些要你亲自判断。只有限流是 provider 在请求时间，所以等三秒再试一次；第二次仍是 429 就如实报告，不会无限重试把硬顶藏起来。两条聊天路径共用同一个辅助函数，请求体每次重建——用过的 `RequestBuilder` 再 `send` 一次，正是「重试悄悄丢了 body」的经典写法。
 
-            **认得 Cinder 改名后的二进制。** Cinder 的构建主名已是 `cinder-mcp`，`repotory-mcp` 是各安装渠道保留的兼容符号链接（ADR-0049 冻结标识层，一个字没改）。源码编译的机器上只有新名，此前会被报成「未安装」；现在双名探测，冻结名优先。查找兜底目录补上 `~/.local/bin`。
+            **这三秒是量出来的，不是拍的。** 对真实 provider 实测：第 22 次请求命中 429，退避三秒后重试直接 200。够清一个每分钟窗口，又不会让人盯着转圈猜程序是不是死了。
 
-            **协议兼容性实测坐实。** 对真实 `repotory-mcp`（release 2.32.4，契约 1.1.0）直接打过一轮 stdio 握手：`protocolVersion` 原样回显 `2024-11-05`，21 个工具秒回——Warden 依赖的 mcp-go 走 legacy 直通，不会因版本字符串被拒。
+            **版本号 0.2.3**：只修这一条——把「你以为网络坏了」改成「它在限流，我替你等了一下」。
 
-            **一个测试的自白。** `shell_status` 的文档注释假设本机没装服务端，装了服务端的那台机器上，它握手握到了用户自己正在跑的实例上，抢同一份数据库，挂了近一小时。现在它跑在密闭的桩上，看到的就是 CI 看到的；线上形状那条正向路径仍由 MCP 客户端测试与端到端跑负责。审计期间还纠正了一处误报：`repotory_chat` 的可空字段从来没把 `null` 发上线（顶层剥离守卫一直在），但守卫太隐蔽以至于读者会看漏——现已提炼成具名函数并钉上回归测试。
-
-            **版本号 0.2.2**：没有新能力等级，是把 0.2.x 那条线在真实机器上跑出来的边界与竞态收掉。
-
-            **边界**：任意 shell 仍未做（M3 进行中），命令面是白名单；Homebrew cask 与 App Store 版未做。`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行，是这一版修不了的残留；协议版本不一致仍走 stderr（本应用没装 tracing subscriber，换成 tracing:: 反而没人听）。
+            **边界**：任意 shell 仍未做（M3 进行中），命令面是白名单；Homebrew cask 与 App Store 版未做。`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行，是仍未修的残留；协议版本不一致仍走 stderr（本应用没装 tracing subscriber，换成 tracing:: 反而没人听）。
 
             Warden needs `repotory-mcp` (or the renamed `cinder-mcp`) on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider. Run `repotory-agent init` from a terminal to check this machine before opening the app.
           releaseDraft: false
