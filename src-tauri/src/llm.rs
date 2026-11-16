@@ -19,6 +19,7 @@
 //   * It does not guess a model name. The model list comes from the server.
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::providers::Provider;
 /// How long a model-list request may take.
@@ -36,6 +37,17 @@ const CONNECT_TIMEOUT_SECS: u64 = 20;
 /// declared dead. This is not the total request budget — a long answer may
 /// legitimately take minutes — it is the "the server went quiet" budget.
 const STREAM_IDLE_TIMEOUT_SECS: u64 = 60;
+
+/// How long to wait before the one retry a rate-limited request gets.
+///
+/// 429 is the single exception to this module's no-retry rule: it is the
+/// provider saying "not now", not a failure the user has to diagnose, and
+/// the free tiers of hosted providers answer it routinely while their
+/// per-minute window resets. The wait is deliberately short — long enough to
+/// clear a per-minute bucket, short enough that the user is not staring at a
+/// spinner wondering whether the app died. A second 429 is reported, so a
+/// hard cap still reaches the user instead of being retried forever.
+const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(3);
 
 /// One model the provider advertises.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -416,6 +428,43 @@ impl LlmClient {
         builder
     }
 
+    /// Sends one request, retrying exactly once on a 429.
+    ///
+    /// Every chat request in this module goes through here so the retry rule
+    /// is stated once. The body is rebuilt by the caller's closure on each
+    /// attempt rather than cloned: a `reqwest::RequestBuilder` is consumed by
+    /// `send`, and re-using a half-sent builder is how a retry silently
+    /// loses its body.
+    ///
+    /// A non-429 failure is returned on the first attempt — this is not a
+    /// general retry loop, and a 500 or a 401 must reach the user immediately.
+    async fn send_retrying_rate_limit<F>(
+        &self,
+        timeout_secs: u64,
+        build: F,
+    ) -> Result<reqwest::Response, LlmError>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let mut attempt = 0;
+        loop {
+            let response = tokio::time::timeout(Duration::from_secs(timeout_secs), build().send())
+                .await
+                .map_err(|_| LlmError::Timeout("the chat request".to_string()))?
+                .map_err(|err| LlmError::Transport(err.to_string()))?;
+
+            // Only a rate limit earns the one retry. Everything else — auth,
+            // a broken contract, an unreachable host — is the user's to see
+            // on the first answer.
+            if response.status().as_u16() == 429 && attempt == 0 {
+                attempt += 1;
+                tokio::time::sleep(RATE_LIMIT_BACKOFF).await;
+                continue;
+            }
+            return Ok(response);
+        }
+    }
+
     /// Fetches the model list.
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
         let url = format!("{}/models", self.base_url);
@@ -454,17 +503,14 @@ impl LlmClient {
             "messages": messages,
             "stream": false,
         });
-        let request = self
-            .request(self.http.post(&url))
-            .header("Content-Type", "application/json")
-            .json(&body);
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(CHAT_TIMEOUT_SECS),
-            request.send(),
-        )
-        .await
-        .map_err(|_| LlmError::Timeout("the chat request".to_string()))?
-        .map_err(|err| LlmError::Transport(err.to_string()))?;
+        let response = self
+            .send_retrying_rate_limit(CHAT_TIMEOUT_SECS, || {
+                // Rebuilt per attempt: the builder is consumed by `send`.
+                self.request(self.http.post(&url))
+                    .header("Content-Type", "application/json")
+                    .json(&body)
+            })
+            .await?;
 
         let status = response.status();
         let text = response
@@ -512,19 +558,15 @@ impl LlmClient {
             body["tools"] =
                 serde_json::to_value(tools).map_err(|e| LlmError::Protocol(e.to_string()))?;
         }
-        let request = self
-            .request(self.http_stream.post(&url))
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-            .json(&body);
-
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(CHAT_TIMEOUT_SECS),
-            request.send(),
-        )
-        .await
-        .map_err(|_| LlmError::Timeout("the chat request".to_string()))?
-        .map_err(|err| LlmError::Transport(err.to_string()))?;
+        let response = self
+            .send_retrying_rate_limit(CHAT_TIMEOUT_SECS, || {
+                // Rebuilt per attempt: the builder is consumed by `send`.
+                self.request(self.http_stream.post(&url))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
+                    .json(&body)
+            })
+            .await?;
 
         let status = response.status();
         if !status.is_success() {

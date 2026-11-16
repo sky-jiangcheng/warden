@@ -74,6 +74,8 @@ export function errorHint(code: string | null): string {
       return "需要先安装对应的运行时。";
     case "AUTHENTICATION":
       return "请检查 API Key 或登录状态。";
+    case "RATE_LIMITED":
+      return "请求被限流或超出配额：免费模型有每分钟上限，请稍等片刻再发，或在设置里换成付费模型。";
     case "CONNECTION":
       return "无法连到该端点，请检查地址与网络。";
     case "TIMEOUT":

@@ -30,6 +30,12 @@ pub enum ErrorCode {
     Connection,
     /// Credentials are missing, wrong, or rejected.
     Authentication,
+    /// The provider refused the request for rate or quota reasons.
+    ///
+    /// Apart from `Connection` on purpose: "the endpoint is unreachable" tells
+    /// the user to check a URL, while this says "you are going too fast, or
+    /// the free tier has a cap" — a wait, or a different model, is the action.
+    RateLimited,
     /// The request exceeded its time budget.
     Timeout,
     /// The peer's contract is not one this client can speak.
@@ -53,6 +59,7 @@ impl ErrorCode {
             ErrorCode::NotInstalled => "NOT_INSTALLED",
             ErrorCode::Connection => "CONNECTION",
             ErrorCode::Authentication => "AUTHENTICATION",
+            ErrorCode::RateLimited => "RATE_LIMITED",
             ErrorCode::Timeout => "TIMEOUT",
             ErrorCode::ContractMismatch => "CONTRACT_MISMATCH",
             ErrorCode::InvalidInput => "INVALID_INPUT",
@@ -74,6 +81,8 @@ pub enum AppError {
     Connection(String),
     #[error("{0}")]
     Authentication(String),
+    #[error("{0}")]
+    RateLimited(String),
     #[error("{0}")]
     Timeout(String),
     #[error("{0}")]
@@ -97,6 +106,7 @@ impl AppError {
             AppError::NotInstalled(_) => ErrorCode::NotInstalled,
             AppError::Connection(_) => ErrorCode::Connection,
             AppError::Authentication(_) => ErrorCode::Authentication,
+            AppError::RateLimited(_) => ErrorCode::RateLimited,
             AppError::Timeout(_) => ErrorCode::Timeout,
             AppError::ContractMismatch(_) => ErrorCode::ContractMismatch,
             AppError::InvalidInput(_) => ErrorCode::InvalidInput,
@@ -218,12 +228,18 @@ impl From<crate::llm::LlmError> for ApiError {
             crate::llm::LlmError::Transport(message) => Self::new(ErrorCode::Connection, message),
             crate::llm::LlmError::Timeout(message) => Self::new(ErrorCode::Timeout, message),
             crate::llm::LlmError::Status { code, message } => {
-                // 401/403 are the credential answers; everything else is a
-                // provider-side failure the user cannot act on beyond
-                // "check the provider".
-                if code == 401 || code == 403 {
+                // The status code is the classification, never the message
+                // text: providers word 429 a dozen ways ("rate limit",
+                // "quota", "too many requests") and a substring match would
+                // drift the moment one of them reworded it.
+                if code == 429 {
+                    Self::new(ErrorCode::RateLimited, format!("{code}: {message}"))
+                } else if code == 401 || code == 403 {
+                    // 401/403 are the credential answers.
                     Self::new(ErrorCode::Authentication, format!("{code}: {message}"))
                 } else {
+                    // Everything else is a provider-side failure the user
+                    // cannot act on beyond "check the provider".
                     Self::new(ErrorCode::Connection, format!("{code}: {message}"))
                 }
             }
@@ -274,6 +290,7 @@ mod tests {
         assert_eq!(ErrorCode::NotInstalled.as_str(), "NOT_INSTALLED");
         assert_eq!(ErrorCode::Connection.as_str(), "CONNECTION");
         assert_eq!(ErrorCode::Authentication.as_str(), "AUTHENTICATION");
+        assert_eq!(ErrorCode::RateLimited.as_str(), "RATE_LIMITED");
         assert_eq!(ErrorCode::Timeout.as_str(), "TIMEOUT");
         assert_eq!(ErrorCode::ContractMismatch.as_str(), "CONTRACT_MISMATCH");
         assert_eq!(ErrorCode::InvalidInput.as_str(), "INVALID_INPUT");
@@ -294,6 +311,10 @@ mod tests {
             ErrorCode::Authentication
         );
         assert_eq!(
+            AppError::RateLimited("x".into()).code(),
+            ErrorCode::RateLimited
+        );
+        assert_eq!(
             AppError::InvalidInput("x".into()).code(),
             ErrorCode::InvalidInput
         );
@@ -301,6 +322,35 @@ mod tests {
             AppError::Internal("x".into()).code(),
             ErrorCode::InternalError
         );
+    }
+
+    /// A 429 is the rate-limit answer, and it is read off the STATUS CODE,
+    /// never the message text. Free tiers word it a dozen ways ("rate
+    /// limit", "quota", "too many requests"); a substring match would drift
+    /// the moment one provider reworded it. The neighbouring codes stay put:
+    /// 401/403 are credentials, everything else is a generic connection
+    /// failure.
+    #[test]
+    fn a_429_is_rate_limited_by_status_code_not_by_message() {
+        let mapped = |code: u16, message: &str| {
+            ApiError::from(crate::llm::LlmError::Status {
+                code,
+                message: message.to_string(),
+            })
+        };
+        // The message here shares no wording with any other case on purpose.
+        let limited = mapped(429, "Provider returned error");
+        assert_eq!(limited.code, ErrorCode::RateLimited);
+        assert!(
+            limited.message.contains("429"),
+            "the status code must stay in the message: {}",
+            limited.message
+        );
+
+        assert_eq!(mapped(401, "nope").code, ErrorCode::Authentication);
+        assert_eq!(mapped(403, "nope").code, ErrorCode::Authentication);
+        assert_eq!(mapped(500, "boom").code, ErrorCode::Connection);
+        assert_eq!(mapped(404, "gone").code, ErrorCode::Connection);
     }
 
     #[test]
