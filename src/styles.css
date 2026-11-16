@@ -826,12 +826,27 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .suggestions button span:last-child { margin-left: auto; color: var(--text-tertiary); }
 .suggestions button:hover { background: var(--bg-card); border-color: var(--border-default); }
 #chat-messages:empty { display: none; }
-.chat__msg { border: 0; background: none; padding: 0; margin: 0 0 26px; font-size: 13px; line-height: 1.85; border-radius: 0; white-space: normal; }
+/* Claude-Desktop reading rhythm: real text sizes, calm leading. The old
+   1.85 air was compensating for 13px; once the answer reads at 16px/1.7
+   that stretch only makes the log feel sparse. User notes stay sans and a
+   notch smaller — the same serif-answers/sans-input split Claude uses. */
+.chat__msg { border: 0; background: none; padding: 0; margin: 0 0 26px; font-size: 14px; line-height: 1.7; border-radius: 0; white-space: normal; }
 .chat__msg--user { margin-left: 32px; }
 .chat__msg--assistant { margin-right: 8px; }
 .chat__msg__meta { display: block; font-size: 10px; line-height: 1.5; color: var(--text-tertiary); margin-bottom: 7px; }
 .chat__msg--assistant .chat__msg__meta { font-family: var(--font-display); font-size: 12px; color: var(--accent); }
 .chat__msg__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The answer itself goes to the serif voice (ADR-0050's IBM Plex Serif —
+   already vendored as woff2, no CDN, licence travels in src/assets/fonts).
+   That single move is what makes the log read like Claude Desktop: a serif
+   answer at true reading size on warm paper. Colour stays on the family
+   tokens — dark warm ink (#34322D), never #1a1a1a-black on pure white. */
+.chat__msg--assistant .chat__msg__text {
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
 .chat__msg--user .chat__msg__text { background: var(--bg-sunken); border-radius: 13px 13px 3px 13px; padding: 10px 14px; }
 .chat__msg[data-pending="true"] .chat__msg__text:empty::after { content: "正在思考…"; color: var(--text-tertiary); font-size: 12px; }
 .chat__msg[data-failed="true"] .chat__msg__meta { color: var(--danger); }
@@ -841,7 +856,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .composer-area { position: relative; z-index: 1; flex-shrink: 0; padding: 8px 18px 13px; }
 .chat__form { display: flex; flex-direction: column; gap: 0; margin: 0; align-items: stretch; border: 1px solid var(--border-default); border-radius: 17px; background: var(--bg-card); padding: 13px 13px 10px; box-shadow: var(--shadow-sm); transition: border-color 140ms ease; }
 .chat__form:focus-within { border-color: var(--border-default); }
-#chat-input { display: block; border: 0; outline: 0; resize: none; background: transparent; color: var(--text-primary); padding: 1px 2px 8px; font-size: 13px; line-height: 1.7; min-height: 65px; max-height: 132px; width: 100%; }
+#chat-input { display: block; border: 0; outline: 0; resize: none; background: transparent; color: var(--text-primary); padding: 1px 2px 8px; font-size: 14px; line-height: 1.7; min-height: 65px; max-height: 132px; width: 100%; }
 #chat-input::placeholder { color: var(--text-tertiary); opacity: 1; }
 .composer-context { display: flex; align-items: center; align-self: flex-start; gap: 5px; background: var(--bg-sunken); border-radius: 5px; padding: 3px 7px; max-width: 85%; margin: 1px 0 9px; color: var(--text-tertiary); }
 .composer-context svg { width: 13px; height: 13px; }
