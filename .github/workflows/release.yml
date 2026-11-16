@@ -235,23 +235,21 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **M4：记忆层有了只读的三块面板。** 上下文（分支与未提交 diff，不经 Cinder）、已批准知识（`repotory_wiki_search` 的 browse feed）、跨会话记忆（`repotory_context` 简报原文）。三块各报各的错——一块可选依赖死掉，不会白掉整屏。
+            **对话现在读起来像一篇文章。** 回答换成 IBM Plex Serif 16px / 行高 1.7（仓内自带的 woff2，不走 CDN），用户消息与输入框 14px 无衬线——这是衬线答案配无衬线输入的分工。之前的 13px 无衬线是把散文拉扁了充正文用；到了真正的阅读字号，1.7 的呼吸感自己就站得住。纸色与墨色一个没动：`#F4F2EE` 暖纸与 `#34322D` 深暖墨本来就是家族令牌，抄一份 Claude 的数值只会和 Cinder 漂移，而观感一分没多。
 
-            **M5：本机模型，不用折腾也能跑。** 设置页新增「本机模型」卡，把状态分成四态：未安装 / 装了没运行 / 有运行时但缺默认模型 / 就绪，**每个状态给一条可执行的话**（`ollama serve` 还是 `ollama pull qwen3:8b`）——把「装了没跑」报成「未安装」，会让用户去下载他电脑上已有的东西。探测有 2 秒预算，本机端点要么立刻答要么没在跑；延迟直接显示，因为本机模型上这是用户真正感觉得到的数字。**没有为 Ollama 开分支**：判断一律是「这个 base URL 答不答」，本地与云端同一件事。唯一走原生 API 的是拉模型（OpenAI 兼容面里没有下载这件事），URL 从配置的 base URL 推出来，不是第二个硬编码主机。
+            **MCP 协议层补上四个边界。** 全部是加固，不是改线：服务端主动发来的请求不再可能被当成应答（两边的 id 都从 1 数，撞号会把无辜的等待者判死）；单行超过 8 MiB 直接断会话，不再无界撑内存；启动即崩的服务端五秒内不再被反复拉起（2.5 秒轮询会把它打成进程风暴），而「未安装」不进冷却，装好下一拍就能用；SIGTERM 与 ctrl-C 走托盘 Quit 同一条门——事件循环 unwind、`McpClient::drop` 杀掉服务端，不再留下一个握着 SQLite 的孤儿进程。
 
-            **Phase 6：`repotory-agent init` 一键初始化。** 不开窗口，在终端逐项检查配置 / 记忆层 / 本机模型，`✓` 正常、`!` 注意（不阻塞）、`✗` 需处理，退出码只在有 `✗` 时非零。复用 GUI 的同一条真实路径，不另开一套初始化逻辑；报告里带记忆层**契约版本**。
+            **认得 Cinder 改名后的二进制。** Cinder 的构建主名已是 `cinder-mcp`，`repotory-mcp` 是各安装渠道保留的兼容符号链接（ADR-0049 冻结标识层，一个字没改）。源码编译的机器上只有新名，此前会被报成「未安装」；现在双名探测，冻结名优先。查找兜底目录补上 `~/.local/bin`。
 
-            **长期知识写回，现在过一道人确认。** 模型可以发起 `notes_create / notes_update / notes_organize`，但**调用前硬拦截**：对话内确认卡，写入参数**可编辑**——你可以改完再点运行，批准的是修订版（部分同意）；写入 `knowledge-audit.jsonl` **独立追加式审计**（谁、何时、哪个工具、什么参数、是否修订），不进检索层；超时 / 关窗**默认拒绝**，Fail-Closed，不静默放行。
+            **协议兼容性实测坐实。** 对真实 `repotory-mcp`（release 2.32.4，契约 1.1.0）直接打过一轮 stdio 握手：`protocolVersion` 原样回显 `2024-11-05`，21 个工具秒回——Warden 依赖的 mcp-go 走 legacy 直通，不会因版本字符串被拒。
 
-            **错误收敛到结构化类型。** IPC 边界序列化稳定 `{ code, message, data? }`，内部用 thiserror 枚举，未知错误兜底 `INTERNAL_ERROR`；`LlmError` / `McpError` 按变体映射（不靠英文短语子串）；IPC 边界一条带 `code` / `provider` / `thread` 的 tracing 事件，日志可按这三者过滤。前端按 code 分支，不再对文本做正则。
+            **一个测试的自白。** `shell_status` 的文档注释假设本机没装服务端，装了服务端的那台机器上，它握手握到了用户自己正在跑的实例上，抢同一份数据库，挂了近一小时。现在它跑在密闭的桩上，看到的就是 CI 看到的；线上形状那条正向路径仍由 MCP 客户端测试与端到端跑负责。审计期间还纠正了一处误报：`repotory_chat` 的可空字段从来没把 `null` 发上线（顶层剥离守卫一直在），但守卫太隐蔽以至于读者会看漏——现已提炼成具名函数并钉上回归测试。
 
-            **版本耦合写进 README。** 看首屏的「记忆层 vX.Y.Z」而不是构建号——契约版本答「工具面变了没」，跨 major 才提示，不硬拦。
+            **版本号 0.2.2**：没有新能力等级，是把 0.2.x 那条线在真实机器上跑出来的边界与竞态收掉。
 
-            **版本号 0.2.1**：0.2.0 起模型第一次能在本机执行动作；这一版把「装得起来、跑得起来、写得有确认、出错说得清」补齐，是同一条能力线上的收尾。
+            **边界**：任意 shell 仍未做（M3 进行中），命令面是白名单；Homebrew cask 与 App Store 版未做。`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行，是这一版修不了的残留；协议版本不一致仍走 stderr（本应用没装 tracing subscriber，换成 tracing:: 反而没人听）。
 
-            **边界**：任意 shell 仍未做（M3 进行中），命令面是白名单；Homebrew cask 与 App Store 版未做。roadmap、product.md、AGENTS 等文档中英同批更新。
-
-            Warden needs `repotory-mcp` on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider. Run `repotory-agent init` from a terminal to check this machine before opening the app.
+            Warden needs `repotory-mcp` (or the renamed `cinder-mcp`) on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider. Run `repotory-agent init` from a terminal to check this machine before opening the app.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
