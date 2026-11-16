@@ -73,10 +73,13 @@ reqwest = { version = "0.13", features = ["json", "stream", "rustls"] }
 # The MCP client drives a child process over stdio. `tokio::time::timeout`
 # bounds every request (a wedged server must not leave a caller pending
 # forever) and `tokio::sync::oneshot` carries each answer from the reader
-# thread to the awaiting task. Tauri already depends on tokio with `rt` and
-# `sync`, so this adds no new crate to the tree — only the `time` feature and
-# `macros` for `#[tokio::test]`.
-tokio = { version = "1", features = ["time", "macros"] }
+# thread to the awaiting task. `signal` lets SIGTERM and ctrl-C quit through
+# the same door the tray Quit uses, so the server child dies with the
+# copilot instead of holding the database open. Tauri already depends on
+# tokio with `rt` and `sync`, so no new runtime crate enters the tree — only
+# these features (`time`; `macros` for `#[tokio::test]`; `signal`, which
+# pulls in just the small signal-hook-registry shim).
+tokio = { version = "1", features = ["time", "macros", "signal"] }
 
 # The model client consumes the HTTP response as a byte stream, so the answer
 # arrives in pieces as it is written rather than all at once at the end.

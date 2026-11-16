@@ -34,8 +34,10 @@ fn is_executable(path: &Path) -> bool {
 }
 
 /// Looks for a binary on PATH, then where the installers drop it when the
-/// user's shell PATH was never updated (the macOS .pkg case, and the reason
-/// a Dock-launched IDE sees fewer binaries than a terminal does).
+/// user's shell PATH was never updated: the macOS .pkg case (the reason a
+/// Dock-launched IDE sees fewer binaries than a terminal does), Homebrew's
+/// two prefixes, and the user-local install dir that `~/.local/bin` scripts
+/// default to when `INSTALL_DIR` is moved off `/usr/local`.
 pub fn find_binary(name: &str) -> Option<PathBuf> {
     let file = binary_name(name);
     if let Some(path) = env::var_os("PATH") {
@@ -52,6 +54,7 @@ pub fn find_binary(name: &str) -> Option<PathBuf> {
     let home = env::var_os("HOME")?;
     let fallbacks = [
         PathBuf::from(&home).join(".ollama").join("bin").join(&file),
+        PathBuf::from(&home).join(".local").join("bin").join(&file),
         PathBuf::from("/opt/homebrew/bin").join(&file),
         PathBuf::from("/usr/local/bin").join(&file),
     ];

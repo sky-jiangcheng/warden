@@ -616,11 +616,7 @@ pub(crate) async fn call_text(
     name: &str,
     mut arguments: Value,
 ) -> Result<String, String> {
-    // Optional MCP strings must be omitted, not sent as JSON null: an older
-    // server may validate its input schema before invoking the handler.
-    if let Some(fields) = arguments.as_object_mut() {
-        fields.retain(|_, value| !value.is_null());
-    }
+    omit_null_fields(&mut arguments);
     let (client, tools) = session
         .ensure()
         .await
@@ -633,6 +629,21 @@ pub(crate) async fn call_text(
     let answer = client.call_tool(name, arguments).await;
     session.evict_if_closed(&answer).await;
     answer.map_err(|e| format!("Cinder {name}: {e}"))
+}
+
+/// Optional MCP strings are OMITTED, never sent as JSON null.
+///
+/// `json!({"reply_to": reply_to})` renders a `None` as `"reply_to": null`,
+/// and Cinder's parameter layer treats a present key as supplied — a null
+/// string field there is a validation refusal, not an absent field. This
+/// strip is what turns the ergonomic call sites into the wire shape the IDE
+/// clients also send: the key simply absent when there is nothing to say.
+/// Top-level only — nested tool payloads have no such key in the current
+/// face, and stripping inside them would rewrite a server's contract.
+fn omit_null_fields(arguments: &mut Value) {
+    if let Some(fields) = arguments.as_object_mut() {
+        fields.retain(|_, value| !value.is_null());
+    }
 }
 
 fn nonempty(value: &str, name: &str, max: usize) -> Result<(), String> {
@@ -1490,6 +1501,44 @@ mod tests {
             source: "warden".into(),
             reply_to: None,
         }
+    }
+
+    /// An optional string that is None leaves the wire as an ABSENT key, not
+    /// as null: Cinder's parameter layer treats a present key as supplied and
+    /// would refuse null where it wants a string. `json!` renders `None` as
+    /// null at the call sites — this strip is what makes the wire shape match
+    /// the IDE clients, and the contract is pinned here so a refactor cannot
+    /// quietly start shipping nulls again.
+    #[test]
+    fn an_absent_optional_string_is_omitted_not_sent_as_null() {
+        let mut arguments = json!({
+            "operation": "append",
+            "thread_id": "t",
+            "id": "m",
+            "role": "user",
+            "content": "hello",
+            "source": "warden",
+            "reply_to": Option::<String>::None,
+        });
+        omit_null_fields(&mut arguments);
+        assert_eq!(
+            arguments,
+            json!({
+                "operation": "append",
+                "thread_id": "t",
+                "id": "m",
+                "role": "user",
+                "content": "hello",
+                "source": "warden",
+            })
+        );
+
+        // The strip is deliberately top-level only: a nested null belongs to
+        // a payload the server defines, and rewriting it would be editing a
+        // contract this repo does not own.
+        let mut nested = json!({ "outer": { "inner": Option::<String>::None } });
+        omit_null_fields(&mut nested);
+        assert_eq!(nested, json!({ "outer": { "inner": null } }));
     }
     #[test]
     fn context_is_multiturn_ordered_and_stops_at_the_requested_turn() {

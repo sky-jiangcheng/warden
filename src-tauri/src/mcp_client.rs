@@ -61,6 +61,28 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// anything slower than this means the server is not coming up.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// A failed start attempt is remembered for this long.
+///
+/// The first-screen pollers ask every 2.5 seconds whether the memory layer
+/// is there, and each ask that finds no live session would start a server. A
+/// server that dies on startup (a locked database, a broken binary) would
+/// therefore be respawned once per tick — one crash turned into a process
+/// launch every 2.5 seconds, forever. The cooldown caps the respawn rate
+/// without caching the failure for good: after it passes, the next attempt
+/// is a real one, so a server the user fixes or installs is picked up as
+/// before, just within one interval.
+const CONNECT_COOLDOWN: Duration = Duration::from_secs(5);
+
+/// One line of the wire may not exceed this many bytes.
+///
+/// A tool answer is prose and a schema is small; nothing legitimate here
+/// speaks in megabyte lines. `read_line` grows its buffer without bound to
+/// hold whatever arrives, and the reader is a plain thread nothing else
+/// watches — a server gone wrong could grow memory until the copilot dies.
+/// A line over the cap ends the session instead: the next call starts a
+/// fresh server, which is fail-closed and cheaper than an unbounded read.
+const MAX_LINE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// The answer to one request, as the reader thread hands it over.
 ///
 /// The type is spelled out once here because it appears in four places, and
@@ -94,6 +116,11 @@ pub struct McpSession {
     /// Consecutive requests that timed out. A wedged server whose stdout is
     /// still open never reports `Closed`, so three timeouts evict it.
     timeouts: AtomicUsize,
+    /// The most recent failed start attempt, with the instant it failed.
+    /// Consulted before every spawn: within `CONNECT_COOLDOWN` the recorded
+    /// error is re-served without starting a process, which caps the respawn
+    /// rate when the server cannot start at all.
+    last_failure: tokio::sync::Mutex<Option<(std::time::Instant, McpError)>>,
 }
 
 impl McpSession {
@@ -104,14 +131,40 @@ impl McpSession {
             connected: tokio::sync::Mutex::new(Some((Arc::new(client), tools))),
             connecting: tokio::sync::Mutex::new(()),
             timeouts: AtomicUsize::new(0),
+            last_failure: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// A fixture for unit tests that must not touch the machine at all.
+    ///
+    /// `ensure` answers `NotInstalled` from the cooldown cache without ever
+    /// running `detect_mcp`, so a DEVELOPMENT machine that has the real
+    /// `repotory-mcp` installed gets the same shape a bare CI runner sees.
+    /// A status test that drove the real binary once hung for minutes racing
+    /// the user's own running instance for the same database — a unit test
+    /// must not depend on what happens to be installed, which is exactly
+    /// what its own doc comment already assumed.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn stubbed_unavailable() -> Self {
+        Self {
+            connected: tokio::sync::Mutex::new(None),
+            connecting: tokio::sync::Mutex::new(()),
+            timeouts: AtomicUsize::new(0),
+            last_failure: tokio::sync::Mutex::new(Some((
+                std::time::Instant::now(),
+                McpError::NotInstalled,
+            ))),
         }
     }
 
     /// The live session, starting the server if it is not running yet.
     ///
-    /// A failure is not cached: if the server was not installed a moment ago
-    /// and is now, the next attempt should succeed. Caching the failure
-    /// would need a retry button to be fair to the user.
+    /// A failure is remembered only for `CONNECT_COOLDOWN`: long enough to
+    /// stop a crash-looping server from being respawned by every poller,
+    /// short enough that "the user just installed it" needs no retry button.
+    /// The absence of the binary is not remembered at all — detecting it is a
+    /// path scan, not a process launch, and it must be picked up on the very
+    /// next tick.
     pub async fn ensure(&self) -> Result<Connected, McpError> {
         // Fast path: a live session is only ever read behind a brief lock.
         {
@@ -132,8 +185,30 @@ impl McpSession {
                 return Ok(session.clone());
             }
         }
+        // A start that just failed is not retried immediately: the same error
+        // is re-served unchanged until the cooldown passes, and after it this
+        // is a real attempt again. The guard is scoped to this check — it
+        // must never be held across the spawn and handshake below.
+        {
+            let failure = self.last_failure.lock().await;
+            if let Some((_, err)) = failure
+                .as_ref()
+                .filter(|(at, _)| cooldown_active(*at, std::time::Instant::now()))
+            {
+                return Err(err.clone());
+            }
+        }
         let binary = crate::memory_layer::detect_mcp().ok_or(McpError::NotInstalled)?;
-        let (client, tools) = McpClient::connect(&binary).await?;
+        let (client, tools) = match McpClient::connect(&binary).await {
+            Ok(connected) => connected,
+            Err(err) => {
+                // The binary was found but would not start or handshake —
+                // exactly the crash-loop shape the cooldown exists for.
+                *self.last_failure.lock().await = Some((std::time::Instant::now(), err.clone()));
+                return Err(err);
+            }
+        };
+        *self.last_failure.lock().await = None;
         let session = (Arc::new(client), tools);
         {
             let mut guard = self.connected.lock().await;
@@ -242,6 +317,30 @@ impl std::fmt::Display for McpError {
 
 impl std::error::Error for McpError {}
 
+impl Clone for McpError {
+    fn clone(&self) -> Self {
+        match self {
+            // `io::Error` is not `Clone`; the copy keeps the message — and so
+            // the `Display`, which is everything every caller and the IPC
+            // boundary see — so a cooldown can re-serve the original failure
+            // verbatim instead of inventing a different shape.
+            Self::Spawn(err) => Self::Spawn(std::io::Error::other(err.to_string())),
+            Self::NotInstalled => Self::NotInstalled,
+            Self::Timeout(what) => Self::Timeout(what.clone()),
+            Self::Protocol(msg) => Self::Protocol(msg.clone()),
+            Self::Closed(msg) => Self::Closed(msg.clone()),
+            Self::Malformed(msg) => Self::Malformed(msg.clone()),
+        }
+    }
+}
+
+/// Whether a failed start attempt still counts: within the cooldown the
+/// recorded error is re-served without another spawn, after it the next
+/// attempt is a real one.
+fn cooldown_active(at: std::time::Instant, now: std::time::Instant) -> bool {
+    now.duration_since(at) < CONNECT_COOLDOWN
+}
+
 /// A live MCP session over stdio.
 ///
 /// Dropping it kills the child process: a copilot that is closing must not
@@ -348,7 +447,15 @@ impl McpClient {
     /// The notification carries no id, so it must not go through `request`:
     /// a request waits for an answer, and the server sends none. The
     /// `initialize` answer carries `serverInfo.version`, which we keep; the
-    /// negotiated `protocolVersion` is only logged, never required.
+    /// negotiated `protocolVersion` is only logged, never required — mcp-go
+    /// answers a legacy revision with the same string, and this client uses
+    /// only the cross-version-stable face (`tools/list`, `tools/call`).
+    ///
+    /// The mismatch goes to stderr rather than a `tracing` event on purpose:
+    /// the app installs no subscriber, so a tracing event here would be
+    /// invisible, and stderr is the log channel the whole stdio design
+    /// already agreed on (the server's own stderr is inherited for exactly
+    /// this reason).
     async fn handshake(&self) -> Result<Option<String>, McpError> {
         let result = self
             .request_with_timeout(
@@ -607,10 +714,24 @@ fn extract_text(result: &serde_json::Value) -> String {
 /// The stdio transport is newline-delimited: one JSON-RPC message per line.
 /// `read_line` blocks until the newline arrives, so a chunk boundary that
 /// falls inside a message is handled — the partial line simply is not
-/// returned until it is complete.
+/// returned until it is complete. The byte cap is enforced by wrapping the
+/// pipe in `Take`: a line that outgrows the allowance ends the session
+/// rather than growing a buffer without bound.
 fn read_loop(stdout: std::process::ChildStdout, pending: Pending) {
+    use std::io::Read as _;
+    let mut reader = std::io::BufReader::new(stdout.take(MAX_LINE_BYTES));
+    read_lines(&mut reader, &pending);
+}
+
+/// The line pump, generic over the pipe so the tests can drive it with an
+/// in-memory reader instead of a real child process. `R: Read` is enough:
+/// `BufReader<Take<R>>` gains `BufRead` from the inner `Read`, which is all
+/// `read_line` needs — the child's stdout is `Read`, not `BufRead`.
+fn read_lines<R: std::io::Read>(
+    reader: &mut std::io::BufReader<std::io::Take<R>>,
+    pending: &Pending,
+) {
     use std::io::BufRead;
-    let mut reader = std::io::BufReader::new(stdout);
     let mut buffer = String::new();
     loop {
         buffer.clear();
@@ -619,11 +740,34 @@ fn read_loop(stdout: std::process::ChildStdout, pending: Pending) {
             Ok(_) => {}
             Err(_) => break,
         }
+        if !buffer.ends_with('\n') {
+            // The newline is missing for exactly two reasons: the byte
+            // allowance ran out mid-line (a broken or hostile server — no
+            // legitimate message is this big), or the server died mid-write.
+            // Only the first deserves a log line; the second is the ordinary
+            // closed-pipe path that drains the waiters below.
+            if reader.get_ref().limit() == 0 {
+                eprintln!(
+                    "[mcp] the server sent a line over the {MAX_LINE_BYTES}-byte cap; dropping the session"
+                );
+            } else {
+                // A last line without its trailing newline still counts —
+                // some writers omit it. Dropping a valid final answer would
+                // turn it into a timeout instead of an answer.
+                let line = buffer.trim();
+                if !line.is_empty() {
+                    dispatch(line, pending);
+                }
+            }
+            break;
+        }
+        // The line finished inside the allowance; restore it for the next one.
+        reader.get_mut().set_limit(MAX_LINE_BYTES);
         let line = buffer.trim();
         if line.is_empty() {
             continue;
         }
-        dispatch(line, &pending);
+        dispatch(line, pending);
     }
     // The pipe closed: every waiter must be failed, or a caller would sit
     // there until its timeout for an answer that can never arrive.
@@ -646,8 +790,20 @@ fn dispatch(line: &str, pending: &Pending) {
         Err(_) => return,
     };
 
-    // A message with no id is a notification or a server-initiated request.
-    // This client asks questions and waits; it has nothing to do with those.
+    // A message that carries a `method` is the server TALKING, not answering:
+    // a request or a notification. This client declares no capabilities, so
+    // well-behaved servers send none — but if one ever arrives, its `id` is
+    // the SERVER's counter, which would collide with a pending request's id
+    // (both sides count from 1). Consuming that waiter would fail it with a
+    // fabricated error and leave the server's question unanswered; skipping
+    // leaves the real waiter waiting for the real answer, and the request
+    // timeout bounds the wait either way.
+    if message.get("method").is_some() {
+        return;
+    }
+
+    // A message with no id is a notification. This client asks questions and
+    // waits; it has nothing to do with those.
     let Some(id) = message.get("id").and_then(|id| id.as_u64()) else {
         return;
     };
@@ -794,6 +950,107 @@ mod tests {
         let mut buffer = String::new();
         reader.read_line(&mut buffer).expect("a line");
         assert_eq!(buffer.trim(), r#"{"jsonrpc":"2.0","id":9,"result":"x"}"#);
+    }
+
+    /// A server-initiated request carries a `method` AND an id — the server's
+    /// id, counted on its own side. It must not consume a waiter even when the
+    /// two counters collide, and the real answer behind it must still land.
+    #[tokio::test]
+    async fn a_server_request_is_not_an_answer_even_when_ids_collide() {
+        let pending = pending_map();
+        let (tx, rx) = oneshot::channel();
+        pending.lock().unwrap().insert(1, tx);
+
+        // The server asks something with ITS id 1, which collides with the
+        // client's pending request id 1.
+        dispatch(
+            r#"{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage","params":{}}"#,
+            &pending,
+        );
+        assert_eq!(
+            pending.lock().unwrap().len(),
+            1,
+            "a server request must not consume the waiter"
+        );
+
+        // The genuine answer still reaches it afterwards.
+        dispatch(r#"{"jsonrpc":"2.0","id":1,"result":"real"}"#, &pending);
+        assert_eq!(rx.await.unwrap().unwrap(), serde_json::json!("real"));
+    }
+
+    /// A line over the byte cap is not read into memory without bound: the
+    /// session is dropped and every waiter failed, rather than growing a
+    /// buffer to hold whatever came in.
+    #[tokio::test]
+    async fn an_oversized_line_drops_the_session_instead_of_growing_memory() {
+        let pending = pending_map();
+        let (tx, rx) = oneshot::channel();
+        pending.lock().unwrap().insert(6, tx);
+
+        // A 64-byte allowance; the "server" sends a line ten times that size.
+        // No answer of ours could ever be that long — the session must end.
+        let huge = format!("{}\n", "x".repeat(640));
+        use std::io::Read as _;
+        let mut reader = std::io::BufReader::new(std::io::Cursor::new(huge.into_bytes()).take(64));
+        read_lines(&mut reader, &pending);
+
+        let answer = rx.await.expect("waiters are failed when the session drops");
+        assert!(matches!(answer, Err(McpError::Closed(_))));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    /// A final line whose trailing newline never came (the writer omitted it,
+    /// or the process died right after it) is still dispatched — dropping a
+    /// valid answer would turn it into a timeout instead of an answer.
+    #[tokio::test]
+    async fn a_final_line_without_a_newline_still_counts() {
+        let pending = pending_map();
+        let (tx, rx) = oneshot::channel();
+        pending.lock().unwrap().insert(8, tx);
+
+        let body = br#"{"jsonrpc":"2.0","id":8,"result":"last word"}"#.to_vec();
+        use std::io::Read as _;
+        let mut reader = std::io::BufReader::new(std::io::Cursor::new(body).take(1024));
+        read_lines(&mut reader, &pending);
+
+        assert_eq!(rx.await.unwrap().unwrap(), serde_json::json!("last word"));
+    }
+
+    /// A start that just failed is not retried immediately: within the
+    /// cooldown the recorded error is re-served without another spawn
+    /// attempt, which is what keeps a crash-looping server from being
+    /// respawned by every 2.5-second poller.
+    #[tokio::test]
+    async fn a_failed_start_is_retried_only_after_the_cooldown() {
+        let session = McpSession::default();
+        *session.last_failure.lock().await = Some((
+            std::time::Instant::now(),
+            McpError::Closed("boom".to_string()),
+        ));
+
+        // `ensure`'s Ok type carries no `Debug`, so the Err is matched
+        // instead of unwrapped through `expect_err`.
+        let answer = session.ensure().await;
+        assert!(
+            matches!(answer, Err(McpError::Closed(ref msg)) if msg == "boom"),
+            "the recorded error must come back unchanged"
+        );
+    }
+
+    /// The cooldown is short on purpose: once it passes, the next attempt is
+    /// a real one, so a server the user fixed is picked up without any
+    /// retry button.
+    #[test]
+    fn the_cooldown_expires() {
+        let now = std::time::Instant::now();
+        assert!(cooldown_active(now, now), "a fresh failure counts");
+        let expired = now
+            .checked_sub(CONNECT_COOLDOWN)
+            .expect("the test clock reaches back five seconds");
+        assert!(
+            !cooldown_active(expired, now),
+            "a failure older than the cooldown must not count"
+        );
     }
 
     /// The tool list is the server's, and the client reports what the server

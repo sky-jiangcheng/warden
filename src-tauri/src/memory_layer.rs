@@ -30,7 +30,16 @@ use crate::binaries::find_binary;
 use crate::mcp_client::{McpError, McpSession, ToolInfo};
 
 /// The MCP server binary Cinder ships.
+///
+/// `repotory-mcp` is the frozen identifier-layer name (ADR-0049) — the name
+/// every install channel keeps, as a symlink beside the renamed binary.
+/// Cinder renamed the built binary to `cinder-mcp`, but a from-source build
+/// (the README's `go build`) produces ONLY the new name, so a machine that
+/// serves Cinder fine would be reported as "not installed" unless the probe
+/// accepts both. The frozen name wins when both exist; the renamed binary is
+/// the fallback, not a rename of this constant.
 const MCP_BINARY: &str = "repotory-mcp";
+const MCP_BINARY_RENAMED: &str = "cinder-mcp";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,7 +63,7 @@ pub struct MemoryLayerStatus {
 
 /// Where the MCP server lives, or None when it is not installed.
 pub fn detect_mcp() -> Option<PathBuf> {
-    find_binary(MCP_BINARY)
+    find_binary(MCP_BINARY).or_else(|| find_binary(MCP_BINARY_RENAMED))
 }
 
 /// Turns a client error into something a person can act on.

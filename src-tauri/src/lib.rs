@@ -963,6 +963,35 @@ pub fn run() {
             // broken feature.
             tray::install(app)?;
 
+            // SIGTERM and ctrl-C must quit through the same door the tray's
+            // Quit uses: `exit` unwinds the event loop, the managed state
+            // drops, and `McpClient::drop` kills `repotory-mcp`. Without
+            // this, a `kill` on the copilot leaves the server holding the
+            // SQLite database open until someone kills it by hand. Two
+            // deaths stay unhandleable and keep the residual risk: SIGKILL,
+            // and `panic = "abort"` (Cargo.toml) — a process that dies
+            // without unwinding cannot run `Drop`.
+            let signal_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                #[cfg(unix)]
+                {
+                    use tokio::signal::unix::{SignalKind, signal};
+                    if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
+                        tokio::select! {
+                            _ = sigterm.recv() => {}
+                            _ = tokio::signal::ctrl_c() => {}
+                        }
+                    } else {
+                        let _ = tokio::signal::ctrl_c().await;
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+                signal_handle.exit(0);
+            });
+
             // ⌥ Space toggles the chat overlay from anywhere. A failure is
             // logged rather than fatal: the tray and the desk pet remain, and
             // a shortcut another app already owns must not stop Warden.
