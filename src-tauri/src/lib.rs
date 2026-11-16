@@ -1131,7 +1131,13 @@ mod tests {
     #[tokio::test]
     async fn shell_status_serves_the_ui_contract() {
         let app = tauri::test::mock_app();
-        app.manage(mcp_client::McpSession::default());
+        // Hermetic on purpose: a stub that answers NotInstalled without ever
+        // running `detect_mcp`. This test once picked up the REAL
+        // `repotory-mcp` on a development machine and hung for minutes
+        // against the instance the user's own running copilot had open —
+        // a unit test must not depend on what happens to be installed,
+        // which is what the doc comment above already assumed.
+        app.manage(mcp_client::McpSession::stubbed_unavailable());
         app.manage(ProviderStore::new(
             std::env::temp_dir()
                 .join(format!(
