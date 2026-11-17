@@ -150,10 +150,17 @@ plugins**. All three are landed; each has its own boundary.
 
 **① Resident = the companion window + the tray, not "the window is always on screen"**. The companion
 window is 132×128 (`index.html?surface=companion`), the main window 480×760; clicking the companion
-opens the chat. The desk pet is a white cat ("霜", Frost): a body layer and a head layer cut with a fur
-overlap (the seam hides in identical fur), eyes that follow the pointer anywhere on screen (the head
-turn fades with distance, eased per-frame), self-timed blinks, and a tsundere sulk when left alone;
-reactions like a click move the whole cat while the head only tilts about the neck, so no seam opens. **The window holds the cat and one speech bubble, nothing else**: the metric line,
+opens the chat. The desk pet is a **vector robot**: the shell is the inverse seal's ink field, the face screen is the
+paper colour knocked out of it, and "looking" is the eyes translating inside that screen — **no
+expression frames, no cut layers, and no seam to hide**. The gaze follows the pointer anywhere on
+screen (fading with distance, eased per-frame), the antenna lags a beat behind it, blinks are
+self-timed, and a pet left alone turns its face away; while thinking, the mouth gives way to three
+pulsing dots. **This replaced the white cat ("霜", Frost)** (2026-11-17): the cat was seven expression
+frames plus two overlap-cut layers, cross-fading between faces with a 140-row overlap to bury the
+seam — exactly where the "not smooth enough" feeling came from. A vector character replaces the frame
+swap with continuous shape displacement, so the smoothness is structural rather than tuned. The
+character also left Cinder (its whole floating entry was removed there), so one character lives in one
+place. **The window holds the cat and one speech bubble, nothing else**: the metric line,
 the status line and the "chat" button are gone — numbers belong to the conversation (see ②), and the
 entrances are click / `⌥Space` / the tray, so a few lines of text on top of a character were just another
 layer of interface. **Only the cat body starts a

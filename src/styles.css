@@ -1119,15 +1119,15 @@ body { background: transparent; }
 .lantern:active { cursor: grabbing; }
 .lantern img { user-select: none; -webkit-user-drag: none; }
 
-/* ------------------------------------------------------- 桌宠「霜」the cat */
-/* The character is a white kitten with a teal lemniscate seal on its
-   forehead. It is built from a body layer and a head layer, both cut from
-   the same aligned canvas, and the head turns toward the pointer — that is
-   the difference between a picture of a cat and a cat looking at you.
+/* ------------------------------------------------------ 桌宠 the bot */
+/* A vector character. Every part is a shape the CSS moves — eyes translate,
+   antenna sways, arms swing — so there is no frame to cross-fade and no
+   neck seam to hide. That continuity is what the previous bitmap cat could
+   only approximate (seven head frames cut from one canvas plus a 140-row
+   body overlap to bury the joint), and it is why this reads as "smooth".
 
-   The faces are separate frames rather than one image with moving parts,
-   because the expressions were drawn; the cross-fade between them is what
-   keeps the character itself from being a rigid picture. */
+   The colour pair is the family's: ink on paper, with the teal signature the
+   rest of Warden already uses. */
 
 .pet {
   position: relative;
@@ -1136,155 +1136,122 @@ body { background: transparent; }
   --look-x: 0;
   --look-y: 0;
   rotate: calc(var(--look-x) * 1.2deg);
+  animation: pet-float 4.4s ease-in-out infinite;
 }
 
-.pet__body,
-.pet__head {
-  position: absolute;
-  left: 0;
-  width: 100%;
-}
-
-/* The head frame is cut 140 source rows INTO the body (recut_overlap.py):
-   the overlap is the same fur pixels the body draws, so the seam is invisible
-   at rest and the head can lift or tilt without exposing a gap at the neck. */
-.pet__head { top: 0; height: 66.94%; z-index: 2; }
-.pet__body { bottom: 0; height: 41.29%; z-index: 1; }
-
-.pet__body-frame {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
-  object-position: 50% 100%;
-}
-
-.pet__frame {
+.pet__bot {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  object-position: 50% 100%;
-  opacity: 0;
-  transition: opacity 140ms ease;
-  will-change: opacity;
+  z-index: 1;
+  overflow: visible;
 }
+
+/* The shell is the character's silhouette: the inverse seal, exactly as the
+   brand mark draws it — ink field carrying paper detail. Using the field/ink
+   PAIR (not a hardcoded ink) is what makes the bot invert with the theme
+   instead of going dark-on-dark in dark mode. */
+.pet__shell { fill: var(--brand-field, #34322D); }
+
+/* The screen is the face's ground — the paper colour knocked out of the ink,
+   exactly the inverse-seal relationship the mark uses. */
+.pet__screen { fill: var(--brand-ink, #F7F4EE); }
+
+/* Eyes are the gaze. Translating them inside the screen is the whole turn:
+   no second frame, no cross-fade, continuous by construction. */
+.pet__eyes {
+  fill: var(--brand-field, #34322D);
+  translate: calc(var(--look-x) * 7px) calc(var(--look-y) * 5px);
+  transition: none; /* the rAF easing in companion.ts IS the smoothing */
+}
+
+.pet__eye { transform-box: fill-box; transform-origin: center; }
+.pet[data-look="blink"] .pet__eye { scale: 1 .1; }
+.pet[data-look="sleepy"] .pet__eye { scale: 1 .35; }
+
+.pet__mouth {
+  fill: none;
+  stroke: var(--brand-field, #34322D);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+/* The antenna is the tell that it is paying attention: it leans toward the
+   pointer a beat behind the eyes, then sways on its own. */
+.pet__antenna line {
+  stroke: var(--brand-field, #34322D);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.pet__bulb { fill: var(--accent, #2F6B63); }
+.pet__antenna {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  rotate: calc(var(--look-x) * 9deg);
+  animation: pet-antenna-sway 5.2s ease-in-out infinite;
+}
+
+/* Arms stay relaxed at rest and only move when the mood asks. */
+.pet__arm { fill: var(--brand-field, #34322D); }
+.pet__arm--left { transform-box: fill-box; transform-origin: 50% 0%; }
+.pet__arm--right { transform-box: fill-box; transform-origin: 50% 0%; }
+
+/* The thinking dots replace the mouth while the model works. */
+.pet__think { fill: var(--accent, #2F6B63); opacity: 0; }
+.pet__think circle { animation: pet-think-dot 1.2s ease-in-out infinite; }
+.pet__think circle:nth-child(2) { animation-delay: .16s; }
+.pet__think circle:nth-child(3) { animation-delay: .32s; }
 
 /* ---------------------------------------------------------- the motion */
-/* Every loop lives here, so companion.ts only decides WHEN. */
-
-.pet { animation: pet-float 4.4s ease-in-out infinite; }
-.pet__body { animation: pet-breathe 4.2s ease-in-out infinite; transform-origin: 50% 100%; }
-.pet__head { animation: pet-head 6.4s ease-in-out infinite; transform-origin: 50% 100%; }
-
-/* The pointer. --look-x and --look-y are the pointer's offset from the
-   cat's centre, normalised and eased per-frame by companion.ts; CSS turns
-   them into motion. The gaze uses the individual rotate/translate properties
-   on purpose: the idle and mood loops animate `transform`, and an animation
-   would override a `transform` declaration on the same element — the
-   individual properties compose with it instead, so the cat can breathe and
-   look at you at the same time. No transition here: the rAF easing is the
-   smoothing, a second one would only add lag. */
-.pet__head {
-  rotate: calc(var(--look-x) * 6deg);
-  translate: calc(var(--look-x) * 2.2%) calc(var(--look-y) * 1.6%);
-}
-.pet__body {
-  rotate: calc(var(--look-x) * 2deg);
-  translate: calc(var(--look-x) * 0.6%) calc(var(--look-y) * 0.6%);
-}
-
-/* Head-only motion stays a tilt about the neck (transform-origin 50% 100%):
-   the cut line sits at the origin, so rotation never slides the seam, and
-   the fur overlap absorbs the little lift a tilt adds. Whole-cat beats
-   (hop, pop) transform the pet so both layers move as one. */
 @keyframes pet-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-@keyframes pet-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, .99); } }
-@keyframes pet-head { 0%, 100% { transform: rotate(-1.2deg) translateY(0); } 50% { transform: rotate(1.2deg) translateY(-0.5px); } }
-@keyframes pet-lean-in { 0%, 100% { transform: rotate(-1.6deg) translateY(0) scale(1); } 50% { transform: rotate(2deg) translateY(-1.5px) scale(1.015); } }
-@keyframes pet-hop { 0% { transform: translateY(0) scale(1); } 30% { transform: translateY(-5px) scale(.98, 1.03); } 55% { transform: translateY(0) scale(1.04, .96); } 78% { transform: translateY(-1.5px) scale(.99, 1.01); } 100% { transform: translateY(0) scale(1); } }
-@keyframes pet-happy-head { 0%, 100% { transform: rotate(0); } 35% { transform: rotate(-3deg); } 70% { transform: rotate(2deg); } }
-@keyframes pet-think { 0%, 100% { transform: rotate(-2.5deg) translateX(-1%); } 50% { transform: rotate(2.5deg) translateX(1%); } }
+@keyframes pet-antenna-sway { 0%, 100% { rotate: -2deg; } 50% { rotate: 2deg; } }
+@keyframes pet-think-dot { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@keyframes pet-hop { 0% { transform: translateY(0) scale(1); } 30% { transform: translateY(-6px) scale(.98, 1.03); } 55% { transform: translateY(0) scale(1.04, .96); } 78% { transform: translateY(-1.5px) scale(.99, 1.01); } 100% { transform: translateY(0) scale(1); } }
+@keyframes pet-lean { 0%, 100% { transform: translateY(0) rotate(-1.5deg); } 50% { transform: translateY(-2px) rotate(2deg); } }
 @keyframes pet-pop { 0% { transform: scale(1); } 45% { transform: scale(1.06, 1.08) translateY(-3px); } 100% { transform: scale(1); } }
-@keyframes pet-pop-head { 0%, 100% { transform: rotate(0); } 45% { transform: rotate(2.5deg); } }
-@keyframes pet-turn-away { 0%, 100% { transform: rotate(-5deg) translateX(-1.5%); } 50% { transform: rotate(-6.5deg) translateX(-2%); } }
-@keyframes pet-dangle { 0%, 100% { transform: rotate(-3deg) translateY(0); } 50% { transform: rotate(4deg) translateY(2px); } }
-@keyframes pet-swing { 0%, 100% { transform: rotate(3deg); } 50% { transform: rotate(-3deg); } }
 @keyframes pet-shake { 0%, 100% { transform: rotate(0) translateX(0); } 25% { transform: rotate(-4deg) translateX(-2%); } 75% { transform: rotate(4deg) translateX(2%); } }
-@keyframes pet-puff { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.05, .95); } }
-
-/* ------------------------------------------------------ the gaze frames */
-/* The neutral face is the resting one; the others replace it when the
-   pointer is somewhere else. All frames were cut on the same canvas, so the
-   swap is a cross-fade and the cat never jumps. */
-.pet__frame--neutral { opacity: 1; }
-.pet[data-look="upleft"] .pet__frame--neutral,
-.pet[data-look="upright"] .pet__frame--neutral,
-.pet[data-look="downleft"] .pet__frame--neutral,
-.pet[data-look="downright"] .pet__frame--neutral,
-.pet[data-look="blink"] .pet__frame--neutral,
-.pet[data-look="sleepy"] .pet__frame--neutral { opacity: 0; }
-
-.pet[data-look="upleft"] .pet__frame--upleft,
-.pet[data-look="upright"] .pet__frame--upright,
-.pet[data-look="downleft"] .pet__frame--downleft,
-.pet[data-look="downright"] .pet__frame--downright,
-.pet[data-look="blink"] .pet__frame--blink,
-.pet[data-look="sleepy"] .pet__frame--sleepy { opacity: 1; }
+@keyframes pet-dangle { 0%, 100% { transform: rotate(-3deg) translateY(0); } 50% { transform: rotate(4deg) translateY(2px); } }
 
 /* ------------------------------------------------------- the moods */
-/* A mood takes the face over completely — an expression and a gaze in the
-   same frame would fight each other. */
-.pet[data-mood="curious"] .pet__frame,
-.pet[data-mood="happy"] .pet__frame,
-.pet[data-mood="thinking"] .pet__frame,
-.pet[data-mood="surprised"] .pet__frame,
-.pet[data-mood="tsundere"] .pet__frame,
-.pet[data-mood="error"] .pet__frame,
-.pet[data-mood="dragging"] .pet__frame { opacity: 0; }
+/* Curious — lean in, and the antenna goes forward with it. */
+.pet[data-mood="curious"] { animation: pet-lean 2.4s ease-in-out infinite; }
 
-.pet[data-mood="curious"] .pet__frame--curious,
-.pet[data-mood="happy"] .pet__frame--happy,
-.pet[data-mood="thinking"] .pet__frame--thinking,
-.pet[data-mood="surprised"] .pet__frame--surprised,
-.pet[data-mood="tsundere"] .pet__frame--tsundere { opacity: 1; }
-
-/* Curious — the cat leans in to see what you want. */
-.pet[data-mood="curious"] .pet__head { animation: pet-lean-in 1.6s ease-in-out infinite; }
-.pet[data-mood="curious"] .pet__body { animation: pet-breathe 3.2s ease-in-out infinite; }
-
-/* Happy — the whole cat hops once and settles; the head only tilts about
-   the neck, so the hop never pulls the head off the body. */
+/* Happy — one hop, then settle. A whole-body beat, not a new face. */
 .pet[data-mood="happy"] { animation: pet-hop 560ms cubic-bezier(.3, .8, .4, 1); }
-.pet[data-mood="happy"] .pet__head { animation: pet-happy-head 560ms cubic-bezier(.3, .8, .4, 1); }
+.pet[data-mood="happy"] .pet__bulb { fill: var(--accent-light, #5FB3A6); }
 
-/* Thinking — the cat rocks the way a person does when working something out. */
-.pet[data-mood="thinking"] .pet__head { animation: pet-think 1.9s ease-in-out infinite; }
-.pet[data-mood="thinking"] .pet__body { animation: pet-breathe 3.6s ease-in-out infinite; }
+/* Thinking — the mouth gives way to three pulsing dots. */
+.pet[data-mood="thinking"] .pet__mouth { opacity: 0; }
+.pet[data-mood="thinking"] .pet__think { opacity: 1; }
+.pet[data-mood="thinking"] .pet__antenna { animation-duration: 2.1s; }
 
-/* Surprised — the cat pops up. */
+/* Surprised — a pop and a wider stance of the bulb. */
 .pet[data-mood="surprised"] { animation: pet-pop 480ms cubic-bezier(.3, 1.4, .5, 1); }
-.pet[data-mood="surprised"] .pet__head { animation: pet-pop-head 480ms cubic-bezier(.3, 1.4, .5, 1); }
+.pet[data-mood="surprised"] .pet__bulb {
+  fill: var(--danger, #DE7676);
+  scale: 1.35;
+  transform-box: fill-box;
+  transform-origin: center;
+}
 
-/* Tsundere — the cat turns its face away and refuses to look at you. This
-   is what happens when the pet is left alone: the affection has to be
-   asked for. */
-.pet[data-mood="tsundere"] .pet__head { animation: pet-turn-away 3.2s ease-in-out infinite; }
-.pet[data-mood="tsundere"] .pet__body { animation: pet-breathe 4.6s ease-in-out infinite; }
+/* Tsundere — the eyes slide away and refuse to come back. This is what the
+   pet does when it is left alone: affection has to be asked for. */
+.pet[data-mood="tsundere"] .pet__eyes {
+  translate: calc(-9px + var(--look-x) * 2px) calc(3px + var(--look-y) * 1px);
+}
 
-/* Dragging — it dangles from the pointer and its body swings. */
+/* Dragging — it hangs from the pointer and swings. */
 .pet[data-mood="dragging"] { animation: none; rotate: -8deg; }
-.pet[data-mood="dragging"] .pet__head { animation: pet-dangle 1.5s ease-in-out infinite; }
-.pet[data-mood="dragging"] .pet__body { animation: pet-swing 1.5s ease-in-out infinite; }
+.pet[data-mood="dragging"] .pet__arm--left { rotate: -28deg; }
+.pet[data-mood="dragging"] .pet__arm--right { rotate: 28deg; }
 
-/* Error — a huff, and the head shakes. */
-.pet[data-mood="error"] .pet__head { animation: pet-shake 340ms ease-in-out 2; }
-.pet[data-mood="error"] .pet__body { animation: pet-puff 340ms ease-in-out 2; }
+/* Error — a huff and a shake; the bulb goes red and stays red for the beat. */
+.pet[data-mood="error"] { animation: pet-shake 340ms ease-in-out 2; }
+.pet[data-mood="error"] .pet__bulb { fill: var(--danger, #DE7676); }
 
 /* --------------------------------------------------------- the halo */
-/* A soft teal glow so the cat sits on the desktop instead of hovering over
-   it. */
+/* A soft glow so the bot sits on the desktop instead of hovering over it. */
 .pet__halo {
   position: absolute;
   left: 50%;
@@ -1322,14 +1289,12 @@ body { background: transparent; }
 .pet[data-mood="dragging"] .pet__shadow { transform: translateX(-50%) scale(.7); opacity: .28; }
 .pet[data-mood="happy"] .pet__shadow { transform: translateX(-50%) scale(1.1); }
 
-/* Asleep: everything slows down and the eyes close. */
+/* Asleep: the float slows and the eyes half-close. */
 .pet[data-look="sleepy"] { animation-duration: 7s; }
-.pet[data-look="sleepy"] .pet__head { animation-duration: 8s; }
-.pet[data-look="sleepy"] .pet__body { animation-duration: 8s; }
 
 @media (prefers-reduced-motion: reduce) {
-  .pet, .pet__body, .pet__head { animation: none !important; transition: none !important; rotate: 0deg; translate: 0 0; }
-  .pet__frame { transition: none; }
+  .pet, .pet__antenna, .pet__think circle { animation: none !important; transition: none !important; rotate: 0deg; translate: 0 0; }
+  .pet__eyes { translate: 0 0; }
 }
 
 @media (min-width: 700px) {

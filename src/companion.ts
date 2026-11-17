@@ -27,8 +27,10 @@ type Mood =
   | "tsundere"
   | "surprised";
 
-/// The face frames: four diagonals for the gaze, plus the resting face, the
-/// blink and the half-closed sulk.
+/// The gaze states. The bot's eyes are vector shapes, so "upleft" and friends
+/// are no longer separate pictures — they are the same two ellipses nudged by
+/// --look-x / --look-y, plus the two states CSS cannot derive from a pointer
+/// position: a blink and the half-closed sulk.
 type Look =
   | "neutral"
   | "upleft"
@@ -67,7 +69,7 @@ const STARTLE_RADIUS = 56;
 const STARTLE_FROM = 150;
 
 /// The gaze follows the pointer anywhere on screen. Within GAZE_REACH the
-/// turn saturates; beyond it the head turn fades with distance — a cat does
+/// turn saturates; beyond it the head turn fades with distance — the character does
 /// not crane its neck across the room — while the eyes still aim.
 const GAZE_REACH = 160;
 const GAZE_FALLOFF = 520;
@@ -78,7 +80,7 @@ const GAZE_FALLOFF = 520;
 const GAZE_TAU_MS = 110;
 
 /// Below this an axis counts as "straight ahead", so a pointer sitting on
-/// the cat does not make it twitch. While an axis is in the dead zone the
+/// the character does not make it twitch. While an axis is in the dead zone the
 /// last decided side is kept, so crossing the zone does not flip the face
 /// between mirror frames.
 const DIRECTION_DEADZONE = 6;
@@ -88,12 +90,12 @@ const DIRECTION_DEADZONE = 6;
 /// 50ms is fresh enough for a target that the rAF loop then eases toward.
 const POINTER_POLL_MS = 50;
 
-/// The blink cycle. Cats blink roughly every few seconds; the frame swap is
-/// short enough to read as a blink rather than a change of expression.
+/// The blink cycle. The eyes squeeze (scale, not a swapped frame) roughly every
+/// few seconds, short enough to read as a blink rather than a change of face.
 const BLINK_INTERVAL_MS = 3400;
 const BLINK_DURATION_MS = 130;
 
-/// After this long with no interaction the cat stops paying attention and
+/// After this long with no interaction it stops paying attention and
 /// sulks. It is the tsundere beat: it wants to be noticed.
 const SULK_AFTER_MS = 12000;
 
@@ -111,10 +113,10 @@ export function initCompanion(): void {
   let moodTimer: ReturnType<typeof setTimeout> | undefined;
   let sulkTimer: ReturnType<typeof setTimeout> | undefined;
 
-  /// The gaze direction the cat returns to after a blink. "blink" itself is
-  /// never stored here: it is a frame shown on top of the gaze, not a gaze.
+  /// The gaze direction the bot returns to after a blink. "blink" itself is
+  /// never stored here: it is an overlay on the gaze, not a gaze.
   let look: Look = "neutral";
-  /// Set while a blink frame is showing, so the poll does not fight it.
+  /// Set while a blink is showing, so the poll does not fight it.
   let blinking = false;
   let lastSide: { h: "left" | "right"; v: "up" | "down" } = { h: "left", v: "up" };
   let lastDistance = Infinity;
@@ -161,7 +163,7 @@ export function initCompanion(): void {
   /// The poll sets a target; the loop eases the written value toward it with
   /// an exponential decay, so every frame moves a little and the turn reads
   /// as one continuous glance instead of a step per poll. The loop stops
-  /// itself once settled, so an idle cat costs nothing.
+  /// itself once settled, so an idle pet costs nothing.
   function setTarget(x: number, y: number): void {
     targetX = x;
     targetY = y;
@@ -198,9 +200,9 @@ export function initCompanion(): void {
     return `${lastSide.v}${lastSide.h}`;
   }
 
-  /// The cat turns toward the pointer and its eyes follow, wherever on the
+  /// The bot turns toward the pointer and its eyes follow, wherever on the
   /// screen the pointer is. The turn is a plain ratio, not an angle: how far
-  /// the pointer is from the cat, in units of the pet's own size, decides how
+  /// the pointer is from the pet, in units of the pet's own size, decides how
   /// much the head turns, faded down at screen-scale distances.
   function aim(x: number, y: number, distance: number): void {
     const falloff = 1 / (1 + Math.max(0, distance - GAZE_REACH) / GAZE_FALLOFF);
@@ -233,7 +235,7 @@ export function initCompanion(): void {
   // ---- the blink cycle -------------------------------------------------
   //
   // Blinking is not decoration. A still-open stare is the single clearest
-  // signal that an image is a picture, and this cat is meant to read as
+  // signal that an image is a picture, and this character is meant to read as
   // alive; so the face blinks on its own, and the eyes keep following the
   // pointer between blinks.
   function scheduleBlink(): void {
@@ -250,7 +252,7 @@ export function initCompanion(): void {
 
   // ---- the sulk --------------------------------------------------------
   //
-  // Left alone long enough, the cat stops tracking the pointer and turns
+  // Left alone long enough, it stops tracking the pointer and turns
   // its face away. It is the tsundere part of the character: the affection
   // has to be asked for. Any interaction — hover, click, drag, a generation
   // starting — counts as being noticed and resets the countdown.
@@ -269,13 +271,13 @@ export function initCompanion(): void {
   }
 
   /// The pointer poll. It reads the OS cursor position and works out where
-  /// the pointer is relative to the cat. `poll` owns the cadence: it pauses
+  /// the pointer is relative to the pet. `poll` owns the cadence: it pauses
   /// while the window is hidden and never overlaps two reads.
   async function readPointer(): Promise<void> {
     if (dragging || sulking) return;
     const state = await invoke<PointerState>("companion_pointer");
     const scale = state.scaleFactor || 1;
-    // The cat sits at the bottom of the window, under the bubble: its centre
+    // The pet sits at the bottom of the window, under the bubble: its centre
     // is the pet box's centre, not the window's.
     const rect = pet.getBoundingClientRect();
     const centreX = state.windowX + (rect.left + rect.width / 2) * scale;
@@ -329,7 +331,7 @@ export function initCompanion(): void {
 
   // The chat window publishes its generation state; the pet shows it even
   // when the chat overlay is hidden (e.g. a long answer running while the
-  // user clicked away). A working cat is not an ignored cat: the sulk
+  // user clicked away). A working pet is not an ignored pet: the sulk
   // countdown restarts on both edges.
   void listen<boolean>("warden:thinking", (event) => {
     thinking = event.payload;

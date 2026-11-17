@@ -311,30 +311,49 @@
     <div class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="idle">
       <p class="companion__bubble" id="companion-bubble" role="status" aria-live="polite"></p>
       <div class="lantern" id="companion-drag" title="点我对话 · 拖动可移动" role="button" tabindex="0" aria-label="Warden 桌宠，点击打开对话，拖动可移动窗口">
-        <!-- 「霜」the white cat. The body and the head are separate layers so
-             the head can turn toward the pointer; the face frames are
-             pre-aligned to one canvas, so the CSS cross-fades between them
-             instead of swapping pictures. -->
+        <!-- The bot: a vector character, not a stack of pictures.
+
+             This replaced the hand-drawn cat ("霜"), whose seven expression
+             frames and two cut layers were the reason the pet never felt
+             smooth — every mood was a cross-fade between bitmaps, and the
+             neck seam had to be hidden by a 140-row overlap recut. A vector
+             robot has no seam to hide, no frames to cross-fade, and no
+             resolution to lose: eyes, antenna and arms are shapes the CSS
+             moves, so the motion is continuous by construction instead of
+             approximate. It is also the shape Cinder dropped from its
+             floating entry, so the brand has one robot, in one place.
+
+             Parts are addressed by class so every animation lives in CSS;
+             companion.ts only sets data-mood / data-look / --look-x / --look-y. -->
         <div class="pet" id="pet" data-look="neutral">
           <span class="pet__halo" aria-hidden="true"></span>
           <span class="pet__shadow" aria-hidden="true"></span>
-          <div class="pet__body">
-            <img class="pet__layer pet__body-frame" src="/src/assets/pet/body-expr-neutral.webp" alt="" draggable="false" />
-          </div>
-          <div class="pet__head">
-            <img class="pet__frame pet__frame--neutral" src="/src/assets/pet/head-expr-neutral.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--curious" src="/src/assets/pet/head-expr-curious.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--happy" src="/src/assets/pet/head-expr-happy.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--tsundere" src="/src/assets/pet/head-expr-tsundere.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--thinking" src="/src/assets/pet/head-expr-thinking.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--surprised" src="/src/assets/pet/head-expr-surprised.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--upleft" src="/src/assets/pet/head-eyes-upleft.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--upright" src="/src/assets/pet/head-eyes-upright.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--downleft" src="/src/assets/pet/head-eyes-downleft.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--downright" src="/src/assets/pet/head-eyes-downright.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--blink" src="/src/assets/pet/head-eyes-blink.webp" alt="" draggable="false" />
-            <img class="pet__frame pet__frame--sleepy" src="/src/assets/pet/head-eyes-sleepy.webp" alt="" draggable="false" />
-          </div>
+          <svg class="pet__bot" viewBox="0 0 100 100" role="img" aria-label="Warden 桌宠">
+            <!-- antenna -->
+            <g class="pet__antenna">
+              <line x1="50" y1="30" x2="50" y2="16" />
+              <circle class="pet__bulb" cx="50" cy="13" r="4.5" />
+            </g>
+            <!-- arms -->
+            <g class="pet__arm pet__arm--left"><rect x="8" y="52" width="8" height="20" rx="4" /></g>
+            <g class="pet__arm pet__arm--right"><rect x="84" y="52" width="8" height="20" rx="4" /></g>
+            <!-- head: the shell, then the screen the face lives on -->
+            <rect class="pet__shell" x="17" y="28" width="66" height="56" rx="20" />
+            <rect class="pet__screen" x="25" y="37" width="50" height="38" rx="14" />
+            <!-- eyes move inside the screen, so the gaze is a translate -->
+            <g class="pet__eyes">
+              <ellipse class="pet__eye pet__eye--left" cx="40" cy="55" rx="5.2" ry="6.2" />
+              <ellipse class="pet__eye pet__eye--right" cx="60" cy="55" rx="5.2" ry="6.2" />
+            </g>
+            <!-- the smile: a short arc, drawn once -->
+            <path class="pet__mouth" d="M43 66 Q50 70 57 66" />
+            <!-- the thinking dots, hidden until data-mood=thinking -->
+            <g class="pet__think">
+              <circle cx="37" cy="67" r="1.9" />
+              <circle cx="50" cy="67" r="1.9" />
+              <circle cx="63" cy="67" r="1.9" />
+            </g>
+          </svg>
         </div>
       </div>
     </div>
