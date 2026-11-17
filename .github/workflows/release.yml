@@ -235,15 +235,17 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **限流现在说得清，也自己等一等。** 之前 429 被并进「连接失败」，于是界面让你去检查 Base URL 和网络——一条按了也没用的建议，因为端点好好的，是服务端在说「现在不行」。免费档撞 429 是常态（上游 nanopool 的配额，不是你的错），正确的动作是等一会儿或换个模型。现在 `RATE_LIMITED` 是独立错误码，且**按状态码判定**、不看错误文本：同一个 429 各家措辞差得远，靠子串匹配，谁改一次文案就漂。提示直接给动作——免费模型有每分钟上限，稍等再发，或换付费模型。
+            **没挂仓库的对话，现在能事后补挂。** 之前线程的仓库归属在创建时固定：首条消息发出时下拉留空，这条线程就永远 unscoped——仓库工具面、里程碑 handoff 都不挂，而且 UI 把下拉锁死，想补也补不了。现在走通到 Cinder 的 `chat.set_path`（CoreVersion 2.3.0）：空闲主题里改挂或清除，即刻持久化，失败回退原归属、不谎称已落库。解锁也不再要求线程为空——作用域是生成时读取的，改挂只决定下一次回复的 checkpoint 归谁，不动已写的历史。库里那批旧线程，从 UI 里逐个补挂即可，不用再绕 MCP 命令行。
 
-            **429 是本模块「不重试」规则唯一的例外。** 别的状态码——认证失败、契约不符、主机不可达——仍然第一次就上报，因为那些要你亲自判断。只有限流是 provider 在请求时间，所以等三秒再试一次；第二次仍是 429 就如实报告，不会无限重试把硬顶藏起来。两条聊天路径共用同一个辅助函数，请求体每次重建——用过的 `RequestBuilder` 再 `send` 一次，正是「重试悄悄丢了 body」的经典写法。
+            **写回不再静默。** 之前 checkpoint 被跳过或写失败只有一行 stderr：unscoped 线程静默跳过、无记录；失败不进审计、UI 不体现。现在有第三份追加式审计 `handoff-audit.jsonl`（0600）：written / failed（带错误）/ skipped，跳过原因分两种——线程没挂仓库，或工具面为空；未挂仓库的线程在状态条明示「未挂仓库，不写交接」。
 
-            **这三秒是量出来的，不是拍的。** 对真实 provider 实测：第 22 次请求命中 429，退避三秒后重试直接 200。够清一个每分钟窗口，又不会让人盯着转圈猜程序是不是死了。
+            **落库失败后的重发，checkpoint 也不再丢。** 之前首次落库失败、重发成功时，缓存分支不带生成时的作用域，handoff 被跳过还误标成「线程没挂仓库」——恰是最需要补写回的场景丢得最干净。现在 Attempt 随行携带生成时的 scope，重发落库后照常写回；已落库的回复重放仍不重写。
 
-            **版本号 0.2.3**：只修这一条——把「你以为网络坏了」改成「它在限流，我替你等了一下」。
+            **checkpoint 变厚了。** 之前 changes / decisions / gotchas 全空，原始 diff 塞在 next_steps 里，下次会话读到的只有一段摘要加一段 diff。现在 changes 从 diff 解析出每文件一行 `+x -y`（封顶 20 条），diff 摘录保留在 next_steps。
 
-            **边界**：任意 shell 仍未做（M3 进行中），命令面是白名单；Homebrew cask 与 App Store 版未做。`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行，是仍未修的残留；协议版本不一致仍走 stderr（本应用没装 tracing subscriber，换成 tracing:: 反而没人听）。
+            **版本号 0.3.0**：新增能力档（事后补挂）而非修一条诊断，所以走 minor 不走 patch。
+
+            **边界**：命令面仍是白名单（M3 进行中）；`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行是未修残留；线程空 path 的最终成因（没选 vs 选了没带上）仍待真机复核——但代码链路两端都没有丢 path 的点，且无论成因，现在都能补挂了。
 
             Warden needs `repotory-mcp` (or the renamed `cinder-mcp`) on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider. Run `repotory-agent init` from a terminal to check this machine before opening the app.
           releaseDraft: false
