@@ -106,8 +106,9 @@ CI 门禁（docs mirror + 前端 build + `cargo fmt` / `clippy` / `test`）、�
 - **回答写回 `repotory_handoff`**：assistant 回复落库成功**之后**，Warden 自己写一条
   ADR-0054 形状的 milestone 检查点（`agent=warden`、按 `path` 归属仓库、问答摘录为 summary、
   同一份 diff 快照作为「当前未完成」进 `next_steps`）。它是 Warden 自己的 capability 绑定，
-  **不在模型工具面里**——模型会 append 就是双写，这条写回也一样。写回失败只进 stderr，
-  **不让一次已保存的回答变成发送失败**；replay 不再补写检查点。
+  **不在模型工具面里**——模型会 append 就是双写，这条写回也一样。写回的跳过与失败都记入
+  `handoff-audit.jsonl`（`written` / `failed` / `skipped`），**不让一次已保存的回答变成发送失败**；
+  replay 不再补写检查点。
 - 分层策略照旧（[product.md](product.md)「待确认」第 5 条）：
   `handoff` / `scan` 自动写，**长期知识（`notes_create` / `notes_update` / `notes_organize`）过一次人确认**。
   长期知识那三个的确认形态是「待确认」第 7 条——**已定并随 Phase 6 落地**（调用前硬拦截、
@@ -321,6 +322,14 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
   时好时坏，这种抖动会让门禁不可信；而编译、图标阶梯、info.plist 对两者是同一套输入。
   不传签名 secret，Tauri 落回 ad-hoc 签名，足够证明打包图能走通；
   签名、公证与 dmg 仍只在 tag 触发的 release 工作流里。
+
+### 4. Warden 写回的 milestone handoff 在本机零产出：unscoped 线程静默跳过 + 失败只进 stderr（2026-11-16 只读复核）
+
+- **问题**：本机共享库里 10 个 warden 线程 `path` 全空（unscoped），132 条 warden 消息（116 user / 16 assistant），库里 **0 条 `milestone=true` / `agent=warden` 的 handoff**。Phase 2 收尾接的写回链路（`src-tauri/src/conversations.rs` 的 `write_handoff`）在本机一条都没留下记录。
+- **成因一：线程作用域在创建时固定、事后不补挂（补挂链路本批已落地）**。`create` 把 `path` 落库（`conversations.rs:688/713`）；生成时作用域只从服务端线程记录读回（`conversations.rs:1209`）。此前前端在已有线程 / 已有消息 / 回复中锁死仓库下拉（`src/chat.ts` 的 `contextSelect.disabled`），**没有更新已存在线程 path 的操作**——先发言（下拉留空）后选仓库，线程永远 unscoped，仓库工具面（`warden_*`）与 milestone handoff 都不挂。本批打通补挂链路：Cinder `repotory_chat` 新增 `set_path` 操作（writerapi 目录 `chat.set_path` + service `SetChatThreadPath` + MCP + 测试，`CoreVersion` 2.2.0→2.3.0 minor，工具数仍 25）；Warden 后端新增 `conversation_set_path` 命令，前端对空闲（无消息、非 busy）的已存在线程解锁下拉，切换即持久化，成功按回读线程归属回写、失败回退原归属且不谎称已落库。**仍待真机复核**：本机 10 个空 path 线程究竟「使用时没选仓库」还是「选了没带上」。
+- **成因二：跳过与失败都不可见（本批已闭环）**。原先 `scope` 为 None 直接跳过、无记录；写回失败只 `eprintln!`，不进审计、UI 不体现——与 [product.md](product.md) 待确认 3「上下文装配失败绝不静默」的口径有落差。本批补了第三份追加式审计 `handoff-audit.jsonl`（与 `exec-audit.jsonl` / `knowledge-audit.jsonl` 同族，0600）：写回成功记 `written`、失败记 `failed`（带错误）、跳过记 `skipped`（原因 `no repository scope` 线程无仓库 / `tool face unavailable` 工具面为空）；前端状态条对未挂仓库的共享线程明示「未挂仓库，不写交接」。2026-11-17 复核又补上 replay 缺口：落库失败的重发此前走缓存分支，`scope`/`thread_path` 均为 None，checkpoint 被跳过且审计误标 `no repository scope`——现在 Attempt 随行携带生成时的 scope，重发落库后照常写回（`a_retried_save_still_earns_its_checkpoint`）；durable 后的 replay 仍不重写（attempt 已 forget，preamble 早退）。
+- **影响**：成因二已让缺失可见、可追溯；成因一的补挂链路本批已落地，且 2026-11-17 起前端解锁不再要求空线程：`contextEditable` 去掉 `messageCount === 0` 条件（只留 `!busy`，[chat-state.ts](../src/chat-state.ts)），已有消息的空闲线程也能直接改挂或清除——scope 在生成时读取，改挂只影响下一次回复的 checkpoint，两端服务端（`SetChatThreadPath` / `set_path`）本就无消息数限制。历史 unscoped 线程无需再走 Cinder MCP，UI 里逐个补挂即可。成因复核进展：代码链路两端核对无丢 path 的点（前端 create 带 `topic.path` → `conversations::create` 落库；旧 UI 在首条消息后锁死下拉，先发言后无法选仓库），倾向成因是「使用时没选」，真机复核仅作最终确认。
+- **验收 / 待拍板**：① 核对本机线程 path 为空的真实成因——代码链路已排除「选了没带上」，倾向「使用时没选」（旧 UI 锁死所致），真机复核最终确认；② unscoped 状态条标注——已落地（`savedThreadLabel`）；③ 写回跳过/失败进本地追加式审计——已落地（`handoff-audit.jsonl`）；④ 选了仓库的线程，回答落库后库里出现 `milestone=true`、`agent=warden` 的 handoff——作用域存在时链路本就走通；⑤ 事后补挂接口（Cinder `set_path` + Warden 命令 + 前端解锁持久化）——已落地（`CoreVersion` 2.3.0 minor），2026-11-17 起 UI 解锁扩展到已有消息的空闲线程；历史 unscoped 线程在 UI 里手动补挂一次即可。checkpoint 的 `changes` 段同日补齐：从 diff 解析每文件一行 `<file> +<added> -<deleted>`（封顶 20 条），`next_steps` 保留原 diff 摘录，不再只靠 summary 扛信息量。
 
 ## 路线取舍
 

@@ -76,6 +76,22 @@ export function draftAfterSend(args: {
   return args.draftNow === args.draftAtSend ? "" : args.draftNow;
 }
 
+/** True when the repository scope may be chosen or changed for the current
+ *  topic. Only a busy reply must not be interrupted: the scope is read at
+ *  generation time, so an idle topic — with or without messages — can be
+ *  re-attached to a repository or cleared back to unscoped (the post-creation
+ *  `set_path` path); the next reply then earns its checkpoint in that scope. */
+export function contextEditable(args: { busy: boolean }): boolean {
+  return !args.busy;
+}
+
+/** The composer chip for a thread already saved to Cinder. A shared thread
+ *  without a repository scope earns no milestone handoff, so the chip says
+ *  that plainly instead of letting "saved conversation" read as "memorized". */
+export function savedThreadLabel(path: string | null): string {
+  return path ? "由 Cinder 保存对话" : "由 Cinder 保存对话 · 未挂仓库，不写交接";
+}
+
 /** One short line describing a command's output, for the collapsed state.
  *
  *  Pure and tested because a bad outline is a silent bug: the panel still

@@ -74,7 +74,7 @@
           <p class="chat-error" id="chat-error" role="alert"></p>
           <form class="chat__form" id="chat-form">
             <label class="sr-only" for="chat-input">给 Warden 的消息</label><textarea id="chat-input" rows="3" placeholder="有什么想一起想一想？" aria-describedby="compose-help" spellcheck="false"></textarea>
-            <div class="composer-context"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3zM3 7V5h6l2 2h8" /></svg><select id="chat-context" aria-label="对话仓库，发送后固定" title="对话仓库，发送后固定"><option value="">不附加仓库</option></select></div>
+            <div class="composer-context"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3zM3 7V5h6l2 2h8" /></svg><select id="chat-context" aria-label="对话仓库归属" title="对话仓库归属；回复中不可改，空闲主题可改挂或清除"><option value="">不附加仓库</option></select></div>
             <div class="composer-toolbar"><div class="model-pickers"><select id="chat-provider" aria-label="Provider"><option value="">选择 provider</option></select><span class="picker-divider" aria-hidden="true">/</span><select id="chat-model" aria-label="模型"><option value="">选择模型</option></select></div><button class="send-btn" id="chat-send" type="submit" aria-label="发送消息" title="发送 · Enter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></button></div>
           </form>
           <div class="composer-foot"><span id="chat-chip" role="status">准备连接</span><span id="compose-help">Enter 发送 · Shift + Enter 换行</span></div><p class="model-error" id="model-error" role="status"></p><p class="sr-only" id="chat-announcement" role="status" aria-live="polite"></p>

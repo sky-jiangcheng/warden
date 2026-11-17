@@ -175,6 +175,7 @@ fn system_prompt(repository: Option<&str>, watched: &[String], diff: Option<&str
 /// The repository scope a generation ran in, and the diff snapshot its
 /// prompt was built from. Kept together because the reply checkpoint must
 /// describe the SAME tree the model read.
+#[derive(Clone)]
 struct GenerationScope {
     repository: String,
     diff: Option<String>,
@@ -493,6 +494,30 @@ fn knowledge_audit_entry(
     })
 }
 
+/// The audit entry for one milestone handoff write-back outcome.
+///
+/// A third append-only log beside `exec` and `knowledge`: whether this reply
+/// earned a checkpoint, and if not, which half let it go — unscoped (no
+/// repository) or a failed write. "Earned no handoff" must be distinguishable
+/// from "the write-back failed", and neither outcome stays only in stderr.
+fn handoff_audit_entry(
+    at: i64,
+    thread_id: &str,
+    repository: Option<&str>,
+    event: &str,
+    ok: bool,
+    error: Option<&str>,
+) -> Value {
+    json!({
+        "at": at,
+        "thread_id": thread_id,
+        "repository": repository,
+        "event": event,
+        "ok": ok,
+        "error": error,
+    })
+}
+
 /// One routed tool call: what the model is told, what the chip shows, and
 /// what the collapsible panel can expand.
 ///
@@ -735,6 +760,30 @@ pub async fn rename(
     Ok(value)
 }
 
+/// Re-attach an existing thread to a repository, or clear it back to unscoped.
+///
+/// The scope used to be fixed at thread creation; this is the post-creation
+/// re-attach path: a thread created without a repository can still be scoped
+/// afterwards, and a scope can be cleared the same way. Same optional-path rule
+/// as `create`:
+/// absent and "" both clear the scope; the server validates the absolute-path
+/// shape.
+pub async fn set_path(
+    session: &McpSession,
+    thread_id: String,
+    path: Option<String>,
+) -> Result<Value, String> {
+    nonempty(&thread_id, "threadId", 200)?;
+    let value = call(
+        session,
+        CHAT_TOOL,
+        json!({"operation":"set_path", "thread_id":thread_id, "path":path.unwrap_or_default()}),
+    )
+    .await?;
+    check_thread(&value, &thread_id)?;
+    Ok(value)
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Message {
@@ -823,6 +872,15 @@ struct Attempt {
     // A successful generation is kept until MCP persistence succeeds, so a
     // transient append failure can be retried without another paid request.
     outcome: Result<String, String>,
+    // The generation's scope, carried so the retried persistence can still
+    // earn its checkpoint: a reply whose save failed the first time was
+    // never handed off, and the replay is the only chance left to write it.
+    // None only in the interrupted marker, whose Err outcome errors out
+    // before any checkpoint decision. thread_path keeps the skip reason
+    // honest when the scope was absent ("tool face unavailable" vs "no
+    // repository scope") on a replay too.
+    scope: Option<GenerationScope>,
+    thread_path: Option<String>,
 }
 
 /// Process-local concurrency/idempotency only, NOT conversation storage.
@@ -843,6 +901,12 @@ pub struct GenerationState {
     /// records who decided, when, which tool, and the exact arguments
     /// (original or revised) that were approved.
     pub knowledge_audit: crate::exec::AuditLog,
+    /// Milestone checkpoint write-back outcome. A SEPARATE append-only log from
+    /// both the exec log and the knowledge log: a skipped or failed handoff is
+    /// metadata about the memory layer, and keeping it apart makes "this reply
+    /// was not written back" traceable without mixing it into command
+    /// execution or knowledge-write approvals.
+    pub handoff_audit: crate::exec::AuditLog,
     /// The approvals the user has granted or refused, keyed by the id the
     /// confirmation card carried. A write tool sends the card, then WAITS
     /// on this map for exactly this decision — a missing entry is "not
@@ -1136,11 +1200,25 @@ async fn send_inner(
     }
     // Set when a tool-enabled thread had a repository during GENERATION:
     // the scope the local face runs in and the diff snapshot the prompt
-    // was built from. The reply checkpoint reuses both; a replay leaves it
-    // None — a finished answer has already earned its checkpoint.
+    // was built from. The reply checkpoint reuses both. A replay restores
+    // it from the cached attempt (see Attempt): a replay after a FAILED
+    // persist is the write that finally makes the reply durable, so it
+    // still earns its checkpoint; a replay of an already-durable reply
+    // never reaches this code (the preamble returns the saved answer).
     let mut scope: Option<GenerationScope> = None;
+    // The repository the thread was persisted with, read back from the server
+    // before any tool/scope decision. Distinct from `scope`: scope also requires
+    // the tool face to be available, while this is what the audit records when
+    // a reply earns no checkpoint.
+    let mut thread_path: Option<String> = None;
     if let Some(attempt) = cached {
         *text = attempt.outcome?;
+        // The replay restores the generation's scope, not just its text:
+        // the reply whose save failed the first time was never handed off,
+        // and this append is the write that finally makes it durable —
+        // the checkpoint belongs to this generation, not to a fresh one.
+        scope = attempt.scope;
+        thread_path = attempt.thread_path;
     } else {
         let store = store.clone();
         let input = request.clone();
@@ -1175,6 +1253,7 @@ async fn send_inner(
                 .as_str()
                 .filter(|path| !path.trim().is_empty())
                 .map(|path| path.to_string());
+            thread_path = repository.clone();
             let tools = model_tools(session, repository.is_some()).await?;
             if !tools.is_empty() {
                 // One snapshot per generation, shared by the injected prompt
@@ -1221,6 +1300,8 @@ async fn send_inner(
                 Attempt {
                     message: request.message.clone(),
                     outcome: Err("generation was interrupted; use a new messageId to retry".into()),
+                    scope: None,
+                    thread_path: None,
                 },
             );
         // The generation loop: model → (tool calls → execute → feed back)×,
@@ -1388,6 +1469,8 @@ async fn send_inner(
                 Attempt {
                     message: request.message.clone(),
                     outcome: outcome.clone(),
+                    scope: scope.clone(),
+                    thread_path: thread_path.clone(),
                 },
             );
         *text = outcome?;
@@ -1406,20 +1489,69 @@ async fn send_inner(
         // M2's last loop: "模型回答后写入 repotory_handoff". Only after the
         // answer is durable — a checkpoint about a reply that failed to save
         // would record a conversation the next session cannot read back.
-        if let Some(scope) = &scope
-            && let Err(error) = write_handoff(
-                session,
-                &scope.repository,
-                &request.message,
-                text,
-                scope.diff.as_deref(),
-            )
-            .await
-        {
-            // The reply is saved; the checkpoint is the loss. It must not
-            // turn into a failed send, and it must not vanish quietly
-            // either: stderr is where this app's degraded paths speak.
-            eprintln!("[handoff] the session checkpoint could not be written: {error}");
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(-1);
+        match &scope {
+            Some(scope) => {
+                match write_handoff(
+                    session,
+                    &scope.repository,
+                    &request.message,
+                    text,
+                    scope.diff.as_deref(),
+                )
+                .await
+                {
+                    Ok(()) => state.handoff_audit.record(&handoff_audit_entry(
+                        at,
+                        thread.as_str(),
+                        Some(&scope.repository),
+                        "written",
+                        true,
+                        None,
+                    )),
+                    Err(error) => {
+                        // The reply is saved; the checkpoint is the loss. It must
+                        // not turn into a failed send. It must not vanish quietly
+                        // either: stderr keeps the degraded-path signal, the
+                        // audit line keeps the durable record the other degraded
+                        // paths in this app keep too.
+                        eprintln!("[handoff] the session checkpoint could not be written: {error}");
+                        state.handoff_audit.record(&handoff_audit_entry(
+                            at,
+                            thread.as_str(),
+                            Some(&scope.repository),
+                            "failed",
+                            false,
+                            Some(&error),
+                        ));
+                    }
+                }
+            }
+            None => {
+                // The thread exists but earns no scope: no local face and no
+                // milestone checkpoint. Record the skip so "earned no handoff"
+                // is distinguishable from "the write-back failed" — a silent
+                // skip was the shape that made the missing handoffs invisible
+                // on this machine. The reason splits the two ways a scope can
+                // be absent: no repository on the thread, or the tool face came
+                // back empty.
+                let reason = if thread_path.is_none() {
+                    "no repository scope"
+                } else {
+                    "tool face unavailable"
+                };
+                state.handoff_audit.record(&handoff_audit_entry(
+                    at,
+                    thread.as_str(),
+                    thread_path.as_deref(),
+                    "skipped",
+                    false,
+                    Some(reason),
+                ));
+            }
         }
     }
     Ok(())
@@ -1456,6 +1588,43 @@ fn excerpt(text: &str, max_bytes: usize) -> String {
 /// diff is what `next_steps` means under the milestone contract — "currently
 /// unfinished" — and it is what the next session standing in this repository
 /// wants to lead with.
+/// One `<file> +<added> -<deleted>` line per changed file, in diff order.
+/// The checkpoint's `changes` section used to stay empty with the raw diff
+/// stuffed into `next_steps`; a file list is what a later session scans
+/// first. Capped at the server's 20-item section limit.
+fn changed_files(diff: &str) -> Vec<String> {
+    if diff.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut files: Vec<String> = Vec::new();
+    let mut current: Option<(String, usize, usize)> = None;
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git a/") {
+            if let Some((name, added, deleted)) = current.take() {
+                files.push(format!("{name} +{added} -{deleted}"));
+            }
+            // "diff --git a/x b/x": the b/ half is the post-change path, and
+            // the a/ half names it too, so the tail after " b/" is enough.
+            let name = rest.rsplit_once(" b/").map(|(_, b)| b).unwrap_or(rest);
+            current = Some((name.to_string(), 0, 0));
+        } else if let Some((_, added, deleted)) = current.as_mut() {
+            if line.starts_with("+++") || line.starts_with("---") {
+                continue;
+            }
+            if line.starts_with('+') {
+                *added += 1;
+            } else if line.starts_with('-') {
+                *deleted += 1;
+            }
+        }
+    }
+    if let Some((name, added, deleted)) = current.take() {
+        files.push(format!("{name} +{added} -{deleted}"));
+    }
+    files.truncate(20);
+    files
+}
+
 async fn write_handoff(
     session: &McpSession,
     repository: &str,
@@ -1468,6 +1637,12 @@ async fn write_handoff(
         excerpt(question, 300),
         excerpt(answer, 2_500)
     );
+    let changes = diff
+        .map(changed_files)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|line| excerpt(&line, 200))
+        .collect::<Vec<_>>();
     let next_steps = match diff.filter(|diff| !diff.trim().is_empty()) {
         Some(diff) => vec![excerpt(diff, 950)],
         None => vec!["No uncommitted changes at checkpoint time.".to_string()],
@@ -1483,6 +1658,7 @@ async fn write_handoff(
             "path": repository,
             "milestone": true,
             "summary": excerpt(&summary, 1_200),
+            "changes": changes,
             "next_steps": next_steps,
         }),
     )
@@ -1509,6 +1685,48 @@ mod tests {
     /// null at the call sites — this strip is what makes the wire shape match
     /// the IDE clients, and the contract is pinned here so a refactor cannot
     /// quietly start shipping nulls again.
+    #[test]
+    fn changed_files_summarizes_each_file_with_counts_in_order() {
+        let diff = "\
+diff --git a/src/main.go b/src/main.go
+index 111..222 100644
+--- a/src/main.go
++++ b/src/main.go
+@@ -1,3 +1,4 @@
++added
+ context
+-removed
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
++doc";
+        assert_eq!(
+            changed_files(diff),
+            ["src/main.go +1 -1", "README.md +1 -0"]
+        );
+    }
+
+    #[test]
+    fn changed_files_is_empty_without_a_diff() {
+        assert!(changed_files("").is_empty());
+        assert!(changed_files("   \n").is_empty());
+        // Prose that merely mentions files is not a diff.
+        assert!(changed_files("edit src/main.go by hand").is_empty());
+    }
+
+    #[test]
+    fn changed_files_caps_at_the_server_section_limit() {
+        let diff: String = (0..30)
+            .map(|i| {
+                format!("diff --git a/f{i}.txt b/f{i}.txt\n--- a/f{i}.txt\n+++ b/f{i}.txt\n+x\n")
+            })
+            .collect();
+        let got = changed_files(&diff);
+        assert_eq!(got.len(), 20);
+        assert_eq!(got[0], "f0.txt +1 -0");
+        assert_eq!(got[19], "f19.txt +1 -0");
+    }
+
     #[test]
     fn an_absent_optional_string_is_omitted_not_sent_as_null() {
         let mut arguments = json!({
@@ -1568,6 +1786,28 @@ mod tests {
             .collect();
         assert_eq!(context(&messages, "99").unwrap().len(), CONTEXT_MESSAGES);
     }
+    #[test]
+    fn handoff_audit_entry_records_outcome_and_reason() {
+        let written =
+            handoff_audit_entry(1_763_000_000, "t-1", Some("/repo"), "written", true, None);
+        assert_eq!(written["event"], json!("written"));
+        assert_eq!(written["ok"], json!(true));
+        assert_eq!(written["repository"], json!("/repo"));
+        assert!(written["error"].is_null());
+
+        let skipped = handoff_audit_entry(
+            1_763_000_000,
+            "t-2",
+            None,
+            "skipped",
+            false,
+            Some("no repository scope"),
+        );
+        assert_eq!(skipped["event"], json!("skipped"));
+        assert!(skipped["repository"].is_null());
+        assert_eq!(skipped["error"], json!("no repository scope"));
+    }
+
     #[test]
     fn same_thread_is_locked_and_other_threads_are_independent() {
         let state = GenerationState::default();

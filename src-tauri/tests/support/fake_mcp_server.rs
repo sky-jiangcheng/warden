@@ -199,6 +199,11 @@ fn chat_call(
             thread.metadata["title"] = args["title"].clone();
             Ok(json!({"thread":thread.metadata}))
         }
+        "set_path" => {
+            let thread = threads.get_mut(id).ok_or("thread not found")?;
+            thread.metadata["path"] = args["path"].clone();
+            Ok(json!({"thread":thread.metadata}))
+        }
         "append" => {
             if args["role"] == "assistant" && *fail_save {
                 *fail_save = false;

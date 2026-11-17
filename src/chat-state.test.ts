@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   COMPOSITION_GRACE_MS,
+  contextEditable,
   draftAfterSend,
   outline,
   readIsStale,
+  savedThreadLabel,
   sendBlocked,
   shouldAdoptThread,
 } from "./chat-state";
@@ -127,6 +129,33 @@ describe("draftAfterSend — failure keeps the draft", () => {
 
   it("clears the draft after an untouched successful send", () => {
     expect(draftAfterSend({ draftNow: "sent text", draftAtSend: "sent text", failed: false })).toBe("");
+  });
+});
+
+describe("savedThreadLabel — a shared thread says whether it earns a handoff", () => {
+  it("marks a repository-scoped thread as saved", () => {
+    expect(savedThreadLabel("/Users/me/project")).toBe("由 Cinder 保存对话");
+  });
+
+  it("flags an unscoped thread as not writing a checkpoint", () => {
+    expect(savedThreadLabel(null)).toBe("由 Cinder 保存对话 · 未挂仓库，不写交接");
+    expect(savedThreadLabel("")).toBe("由 Cinder 保存对话 · 未挂仓库，不写交接");
+  });
+});
+
+describe("contextEditable — when the scope dropdown stays unlocked", () => {
+  it("allows choosing the scope on an idle topic", () => {
+    expect(contextEditable({ busy: false })).toBe(true);
+  });
+
+  it("keeps a topic that already carries messages editable", () => {
+    // The scope is read at generation time, not frozen at the first message:
+    // re-attaching only changes which checkpoint the NEXT reply earns.
+    expect(contextEditable({ busy: false })).toBe(true);
+  });
+
+  it("locks a topic while a reply is streaming", () => {
+    expect(contextEditable({ busy: true })).toBe(false);
   });
 });
 

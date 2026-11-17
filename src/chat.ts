@@ -1,6 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
 import { browserNote, desktop, errorText, invoke, openSheet, pick, poll } from "./ui";
-import { COMPOSITION_GRACE_MS, draftAfterSend, outline, readIsStale, sendBlocked, shouldAdoptThread } from "./chat-state";
+import { COMPOSITION_GRACE_MS, contextEditable, draftAfterSend, outline, readIsStale, savedThreadLabel, sendBlocked, shouldAdoptThread } from "./chat-state";
 
 type Thread = { id: string; title: string; path: string | null; createdAt: string; updatedAt: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; source: string; replyTo: string | null; createdAt: string; pending?: boolean; failed?: boolean };
@@ -40,6 +40,9 @@ export function initChat() {
   let composing = false;
   let compositionEnded = 0;
   let renameBusy = false;
+  // One scope re-attach at a time: a second change while set_path is in flight
+  // would race the read-back path and could leave the dropdown lying about it.
+  let pathBusy = false;
   // One card at a time: the generation is blocked on this answer, so a second
   // card could not be acted on anyway. `approvalTimer` is what makes the
   // countdown visible instead of leaving a dead card on screen.
@@ -176,8 +179,8 @@ export function initChat() {
     send.disabled = !canSend;
     send.setAttribute("aria-label", active.busy ? "正在回复，请稍候" : "发送消息");
     pick<HTMLElement>("#chat-form").setAttribute("aria-busy", String(active.busy));
-    contextSelect.disabled = Boolean(active.thread) || active.messages.length > 0 || active.busy;
-    pick<HTMLElement>("#chat-chip").textContent = !desktop ? "预览模式" : active.busy ? "正在思考…" : !providerSelect.value ? "在设置中连接模型" : !modelSelect.value ? "请选择模型" : active.thread ? "由 Cinder 保存对话" : temporary(active) ? "临时单轮 · 退出 Warden 后不保留" : "发送后创建共享主题";
+    contextSelect.disabled = !contextEditable({ busy: active.busy }) || pathBusy;
+    pick<HTMLElement>("#chat-chip").textContent = !desktop ? "预览模式" : active.busy ? "正在思考…" : !providerSelect.value ? "在设置中连接模型" : !modelSelect.value ? "请选择模型" : active.thread ? savedThreadLabel(active.path) : temporary(active) ? "临时单轮 · 退出 Warden 后不保留" : "发送后创建共享主题";
   }
 
   function render(): void {
@@ -323,7 +326,7 @@ export function initChat() {
     }
     if (active.path && !repos.some((repo) => repo.path === active.path)) contextSelect.add(new Option(active.path.split(/[\\/]/).pop() || active.path, active.path));
     contextSelect.value = active.path ?? "";
-    contextSelect.title = active.path ?? "对话仓库，发送后固定";
+    contextSelect.title = active.path ?? "对话仓库归属；回复中不可改，空闲主题可改挂或清除";
   }
 
   function selectTopic(topic: Topic): void {
@@ -591,8 +594,43 @@ export function initChat() {
   providerSelect.addEventListener("change", () => { void loadModels(); });
   modelSelect.addEventListener("change", updateStatus);
   contextSelect.addEventListener("change", () => {
-    active.path = contextSelect.value || null;
-    contextSelect.title = active.path ?? "对话仓库，发送后固定";
+    const topic = active;
+    const nextPath = contextSelect.value || null;
+    if (nextPath === (topic.path ?? null)) return;
+    // No thread yet: the scope is chosen locally and travels with create.
+    if (!topic.thread) {
+      topic.path = nextPath;
+      contextSelect.title = topic.path ?? "对话仓库归属；回复中不可改，空闲主题可改挂或清除";
+      return;
+    }
+    // Existing idle thread: persist the re-attach (or clear back to unscoped)
+    // through set_path. On failure revert to the previous scope so the
+    // dropdown never claims a repository the server did not take.
+    const threadId = topic.thread.id;
+    const previousPath = topic.path;
+    pathBusy = true;
+    topic.revision += 1;
+    void (async () => {
+      try {
+        const result = await invoke<{ thread: Thread }>("conversation_set_path", { threadId, path: nextPath });
+        topic.thread = result.thread;
+        topic.path = result.thread.path;
+        topic.revision += 1;
+        topic.error = "";
+      } catch (error) {
+        topic.path = previousPath;
+        topic.error = `仓库归属更新失败，已保留原归属。${errorText(error)}`;
+      } finally {
+        pathBusy = false;
+        if (topic === active) {
+          contextSelect.value = topic.path ?? "";
+          contextSelect.title = topic.path ?? "对话仓库归属；回复中不可改，空闲主题可改挂或清除";
+          syncContext();
+        }
+        renderTopics();
+        updateStatus();
+      }
+    })();
   });
   log.addEventListener("scroll", () => {
     active.pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 48;

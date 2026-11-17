@@ -114,7 +114,8 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
   `path`, the exchange as the summary, and the SAME diff snapshot as the unfinished work under
   `next_steps`). It is Warden's own capability binding and deliberately **not on the model's
   tool face** — a model that could append would double-write, and the same logic covers this
-  write. A failed writeback goes to stderr and never turns a saved reply into a failed send;
+  write. A skipped or failed writeback is recorded in `handoff-audit.jsonl`
+  (`written` / `failed` / `skipped`) and never turns a saved reply into a failed send;
   a replay does not re-write the checkpoint.
 - The layered policy is unchanged ("open question" item 5 in [product.md](product.md)):
   `handoff` / `scan` are written automatically, while **durable knowledge
@@ -368,6 +369,69 @@ acceptance criteria; no new process.
   the `.app` does not (same binary, icon ladder and plist inputs). No signing secrets are passed,
   so Tauri falls back to ad-hoc signing — enough to show the packaging graph resolves. Signing,
   notarisation and the dmg stay where they were: the tag-triggered release workflow.
+
+### 4. Zero milestone handoffs written back by Warden on this machine: unscoped threads skip
+silently, failures go to stderr only (2026-11-16 read-only review)
+
+- **Problem**: the shared store holds 10 warden threads with an empty `path` (unscoped) and 132
+  warden messages (116 user / 16 assistant), yet **zero** handoff notes with `milestone=true` /
+  `agent=warden`. The write-back chain added at the Phase 2 finish (`write_handoff` in
+  `src-tauri/src/conversations.rs`) has left no record on this machine.
+- **Cause 1: scope is fixed at thread creation and never re-attached (re-attach chain landed in this batch)**.
+  `create` persists `path` (`conversations.rs:688/713`); at generation time the scope is read back
+  only from the server thread record (`conversations.rs:1209`). The frontend repo select was locked
+  for an existing thread / a thread with messages / a busy reply (`contextSelect.disabled` in
+  `src/chat.ts`), and **there was no operation to update an existing thread's path** — send first
+  (select left empty), pick the repo afterwards, and the thread stays unscoped forever: neither
+  the repo tool face (`warden_*`) nor the milestone handoff attaches. This batch lands the chain:
+  Cinder's `repotory_chat` gains a `set_path` operation (writerapi catalogue `chat.set_path` +
+  service `SetChatThreadPath` + MCP + tests; `CoreVersion` 2.2.0 → 2.3.0 minor, tool count still
+  25); the Warden backend adds a `conversation_set_path` command, and the frontend unlocks the
+  select for an existing idle thread (no messages, not busy) — switching persists immediately,
+  the read-back thread scope wins on success, and a failure reverts to the previous scope
+  without claiming it landed. On 2026-11-17 the unlock dropped the empty-thread requirement:
+  `contextEditable` no longer demands `messageCount === 0` (only `!busy`), so an idle thread
+  that already carries messages can also be re-attached or cleared — the scope is read at
+  generation time, so re-attaching only shapes which checkpoint the NEXT reply earns, and
+  both servers (`SetChatThreadPath` / `set_path`) never had a message-count guard. The
+  legacy unscoped threads can now be fixed from the UI alone, no Cinder MCP detour. On the
+  root cause: both ends of the create chain were re-checked with no drop point for the
+  picked path (the frontend create call carries `topic.path` straight through), so the
+  likely cause is "no repo picked at the time" — the old UI locked the select once the
+  first message landed; a real-machine check remains the final confirmation.
+- **Cause 2: both skip and failure were invisible (closed in this batch)**. When `scope` was
+  None, `write_handoff` was skipped outright with no record; a write-back failure went only to
+  `eprintln!` — no audit jsonl, no UI signal. This cut against open question 3 in
+  [product.md](product.md): "context assembly failure must never be silent". This batch adds a
+  third append-only audit, `handoff-audit.jsonl` (same family as `exec-audit.jsonl` /
+  `knowledge-audit.jsonl`, 0600): a successful write-back records `written`, a failure records
+  `failed` (with the error), an unscoped skip records `skipped` (reason `no repository scope`).
+  The composer chip flags a shared thread without a repository: "未挂仓库，不写交接". The
+  skip reason splits `no repository scope` (thread has no repository) from `tool face unavailable`
+  (the tool face came back empty). A 2026-11-17 re-review closed one more hole in the same
+  family: the resend after a FAILED persist ran the cached-attempt branch with `scope` /
+  `thread_path` both None, so the checkpoint was skipped and the audit mislabelled it
+  `no repository scope` — Attempt now carries the generation's scope, and the resend that
+  finally makes the reply durable writes the handoff as usual
+  (`a_retried_save_still_earns_its_checkpoint`); a replay of an already-durable reply still
+  never re-writes (the attempt is forgotten, the preamble returns the saved answer). The
+  checkpoint's `changes` section was filled in the same day: the diff now yields one
+  `<file> +<added> -<deleted>` line per changed file (capped at the server's 20 items) while
+  `next_steps` keeps the diff excerpt, so the summary no longer carries all the information.
+- **Impact**: Cause 2 makes the missing handoff visible and traceable; the Cause 1 re-attach
+  chain landed in this batch, and since 2026-11-17 the frontend unlock covers idle threads
+  with messages too — legacy unscoped threads get fixed from the UI, one manual attach each.
+  The root cause of the 10 empty local thread paths: code-level re-check found no drop point
+  on either end, so "no repo picked at the time" is the likely cause, with a real-machine
+  check as the final confirmation.
+- **Acceptance / decisions to make**: ① determine the real cause of the empty local thread paths
+  (not picked vs picked-but-not-attached) — still pending a real-machine check; ② unscoped
+  status-bar note — landed (`savedThreadLabel`); ③ skipped/failed write-backs to a local
+  append-only audit — landed (`handoff-audit.jsonl`); ④ a repo-scoped thread, after the answer is
+  persisted, produces a handoff with `milestone=true`, `agent=warden` in the store — the chain
+  already works when a scope exists; ⑤ the re-attach endpoint (Cinder `set_path` + Warden command
+  + frontend unlock-and-persist) — landed (`CoreVersion` 2.3.0 minor); historical unscoped
+  threads are not retroactively re-scoped and need a manual attach.
 
 ## The trade-off
 

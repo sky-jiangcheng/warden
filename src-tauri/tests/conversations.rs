@@ -196,6 +196,36 @@ async fn shared_operations_preserve_json_shapes() {
 }
 
 #[tokio::test]
+async fn set_path_reattaches_and_clears_a_thread_scope() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    // Created without a repository: the scope can be attached afterwards.
+    conversations::create(&f.session, THREAD.into(), "Topic".into(), None)
+        .await
+        .unwrap();
+    let attached = conversations::set_path(&f.session, THREAD.into(), Some("/repo/one".into()))
+        .await
+        .unwrap();
+    assert_eq!(attached["thread"]["path"], "/repo/one");
+    let scoped = conversations::list(&f.session, Some("/repo/one".into()))
+        .await
+        .unwrap();
+    assert_eq!(scoped["threads"].as_array().unwrap().len(), 1);
+    // Clearing the scope back to unscoped: absent and "" both mean clear.
+    let cleared = conversations::set_path(&f.session, THREAD.into(), None)
+        .await
+        .unwrap();
+    assert!(
+        cleared["thread"]["path"].is_null() || cleared["thread"]["path"].as_str() == Some(""),
+        "{:?}",
+        cleared["thread"]["path"]
+    );
+    let unscoped = conversations::list(&f.session, Some("/repo/one".into()))
+        .await
+        .unwrap();
+    assert!(unscoped["threads"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn a_title_wider_than_cinders_own_cap_is_refused_before_the_wire() {
     // The fixture server stores whatever title it is handed, so this test only
     // fails if the local cap is raised — that is the drift being pinned. Warden
@@ -908,6 +938,63 @@ async fn a_saved_reply_writes_a_milestone_handoff() {
         "the replay re-wrote a checkpoint"
     );
     assert!(!answer_text.is_empty());
+    let _ = std::fs::remove_dir_all(&log);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// The retried persistence still earns its checkpoint. A reply whose save
+/// failed the first time was never handed off — the generation is cached,
+/// so the resend appends the SAME answer and must restore the generation's
+/// scope to write the milestone handoff, not skip it with a misleading
+/// "no repository scope".
+#[tokio::test]
+async fn a_retried_save_still_earns_its_checkpoint() {
+    let repo = make_repo("handoff-retry", true);
+    let log = std::env::temp_dir().join(format!(
+        "warden-m2-handoff-retry-{}-{}.jsonl",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let f = Fixture::with_server_env(
+        "REPOTORY_AGENT_FAKE_CHAT_SAVE_FAIL",
+        &[("REPOTORY_AGENT_FAKE_HANDOFF_LOG", log.to_str().unwrap())],
+    )
+    .await;
+    f.create(THREAD, repo.to_str().unwrap()).await;
+
+    // First send: the generation succeeds, the append fails — the reply is
+    // not durable, so no checkpoint may exist yet.
+    let (result, _) = f.send(request("h4", "summarise my change")).await;
+    assert!(result.unwrap_err().contains("could not be saved"));
+    assert_eq!(f.messages().await.len(), 1);
+    assert!(
+        !log.exists() || read_jsonl(&log).is_empty(),
+        "an unsaved reply wrote a checkpoint"
+    );
+
+    // The resend persists the cached answer and NOW earns the checkpoint.
+    let (result, _) = f.send(request("h4", "summarise my change")).await;
+    result.expect("resend");
+    let records = read_jsonl(&log);
+    assert_eq!(records.len(), 1, "{records:?}");
+    let record = &records[0];
+    assert_eq!(record["name"], "repotory_handoff");
+    assert_eq!(record["agent"], "warden");
+    assert_eq!(record["milestone"], true);
+    assert_eq!(record["path"], repo.to_str().unwrap());
+    let steps = record["next_steps"].as_array().unwrap();
+    assert!(!steps.is_empty());
+    assert!(steps[0].as_str().unwrap().contains("a.txt"), "{steps:?}");
+
+    // A further replay of the now-durable reply stays checkpoint-free: the
+    // attempt was forgotten once the append succeeded.
+    let (again, _) = f.send(request("h4", "summarise my change")).await;
+    again.expect("replay of the durable reply");
+    assert_eq!(
+        read_jsonl(&log).len(),
+        1,
+        "the durable replay re-wrote a checkpoint"
+    );
     let _ = std::fs::remove_dir_all(&log);
     let _ = std::fs::remove_dir_all(&repo);
 }

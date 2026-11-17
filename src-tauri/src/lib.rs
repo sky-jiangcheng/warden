@@ -763,6 +763,22 @@ async fn conversation_rename<R: tauri::Runtime>(
     )
 }
 
+#[tauri::command]
+async fn conversation_set_path<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    thread_id: String,
+    path: Option<String>,
+) -> Result<serde_json::Value, errors::ApiError> {
+    errors::boundary(
+        "conversation_set_path",
+        conversations::set_path(&app.state::<mcp_client::McpSession>(), thread_id, path)
+            .await
+            .map_err(errors::ApiError::from),
+        None,
+        None,
+    )
+}
+
 /// Answers a confirmation card: the user's yes or no for one exact command.
 ///
 /// The decision travels by id and nowhere else — the command itself is not
@@ -1040,6 +1056,14 @@ pub fn run() {
                 .knowledge_audit
                 .attach(config_dir.join("knowledge-audit.jsonl"));
 
+            // The milestone checkpoint write-back log: written / failed /
+            // skipped outcomes, beside the other two append-only audits. A
+            // skipped or failed handoff must leave a durable local record,
+            // not only a stderr line.
+            app.state::<conversations::GenerationState>()
+                .handoff_audit
+                .attach(config_dir.join("handoff-audit.jsonl"));
+
             // Only the desk pet is visible at startup; the chat overlay stays
             // hidden until the tray, the shortcut or the pet opens it.
             tray::apply_companion_preference(app.handle());
@@ -1067,6 +1091,7 @@ pub fn run() {
             conversation_create,
             conversation_read,
             conversation_rename,
+            conversation_set_path,
             companion_show_chat,
             companion_hide_chat,
             companion_hide,
