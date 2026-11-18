@@ -3107,6 +3107,7 @@ name = "repotory-agent"
 version = "0.3.0"
 dependencies = [
  "futures-util",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

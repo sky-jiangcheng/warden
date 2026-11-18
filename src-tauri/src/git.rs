@@ -125,27 +125,43 @@ pub fn run_confined_within(
     timeout: std::time::Duration,
 ) -> Option<ProcOut> {
     let (program, args) = argv.split_first()?;
-    let child = std::process::Command::new(program)
-        .current_dir(dir)
+    let mut cmd = std::process::Command::new(program);
+    cmd.current_dir(dir)
         .args(args)
         .stdout(std::process::Stdio::piped())
         // git must not talk to a terminal; stderr is dropped: the answer is
         // in stdout and a "warning: ..." line is not worth another channel.
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Own process group, so the timeout kill below can reach grandchildren.
+        // Without it, killing the direct child leaves its children holding the
+        // stdout pipe and the reader blocks for as long as they live - the
+        // watchdog fires, and nothing returns anyway.
+        cmd.process_group(0);
+    }
+    let child = cmd.spawn().ok()?;
     let shared = Arc::new(Mutex::new(Some(child)));
 
+    // The watchdog waits for this call to FINISH rather than sleeping the whole
+    // timeout: the old version parked one thread per query for GIT_TIMEOUT (and
+    // BUILD_TIMEOUT for builds) even when git answered in 10ms, so a burst of
+    // status-bar refreshes accumulated dozens of sleeping threads. The channel
+    // closes on every return path below — including `?` — via DoneOnDrop.
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     {
         let shared = Arc::clone(&shared);
         std::thread::spawn(move || {
-            std::thread::sleep(timeout);
-            if let Some(mut wedged) = lock(&shared).take() {
-                let _ = wedged.kill();
-                let _ = wedged.wait();
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done_rx.recv_timeout(timeout) {
+                if let Some(mut wedged) = lock(&shared).take() {
+                    kill_tree(&mut wedged);
+                    let _ = wedged.wait();
+                }
             }
         });
     }
+    let _done = DoneOnDrop(Some(done_tx));
 
     let stdout = lock(&shared).as_mut()?.stdout.take()?;
     // cap + 1: a read that fills the extra byte proves there was more.
@@ -156,9 +172,9 @@ pub fn run_confined_within(
     let mut exit = None;
     if let Some(mut mine) = lock(&shared).take() {
         if truncated || read.is_err() {
-            // The child is still writing into a pipe nobody drains; kill
-            // unlocks the wait below.
-            let _ = mine.kill();
+            // The child is still writing into a pipe nobody drains; killing the
+            // group unlocks the wait below.
+            kill_tree(&mut mine);
         }
         exit = mine.wait().ok().and_then(|status| status.code());
     }
@@ -180,6 +196,33 @@ pub fn run_confined_within(
             truncated,
             exit,
         })
+    }
+}
+
+/// Closes its channel when dropped, which is how the watchdog thread learns the
+/// call finished instead of sleeping out the timeout.
+struct DoneOnDrop(Option<std::sync::mpsc::Sender<()>>);
+
+impl Drop for DoneOnDrop {
+    fn drop(&mut self) {
+        self.0.take();
+    }
+}
+
+/// Kills the child AND everything it spawned. A plain `Child::kill` sends
+/// SIGKILL to the leader only, and any grandchild that inherited the piped
+/// stdout keeps the reader blocked until it exits by itself.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // Negative pid addresses the process group created by process_group(0).
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
     }
 }
 
@@ -285,5 +328,46 @@ mod tests {
             block.len()
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A fast command must return immediately and must not hold the watchdog
+    /// for the rest of the timeout (that thread used to sleep it out).
+    #[test]
+    fn fast_command_returns_without_burning_the_timeout() {
+        let started = std::time::Instant::now();
+        let out = run_confined_within(
+            &std::env::temp_dir(),
+            &["sh", "-c", "printf hi"],
+            1024,
+            std::time::Duration::from_secs(30),
+        )
+        .expect("command should spawn");
+        assert_eq!(out.text, "hi");
+        assert!(!out.truncated);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "fast command took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// The deadline still kills a wedged child: the watchdog's timeout branch
+    /// has to stay live after the sleep was replaced by a channel wait.
+    #[test]
+    fn watchdog_kills_a_wedged_command_at_the_deadline() {
+        let started = std::time::Instant::now();
+        let out = run_confined_within(
+            &std::env::temp_dir(),
+            &["sh", "-c", "sleep 30; printf never"],
+            1024,
+            std::time::Duration::from_millis(250),
+        )
+        .expect("command should spawn");
+        assert!(out.text.is_empty(), "killed child produced {:?}", out.text);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "watchdog did not fire: {:?}",
+            started.elapsed()
+        );
     }
 }

@@ -23,6 +23,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[target.'cfg(unix)'.dependencies]
+# killpg: a timed-out command must take its WHOLE process group down. Killing
+# only the direct child leaves grandchildren (npm under a build, sleep under
+# sh) holding the stdout pipe open, and the reader keeps blocking until they
+# exit on their own.
+libc = "0.2"
+
 [dependencies]
 # `tray-icon` is NOT in tauri's default feature set, and it is the single
 # hard reason this project is on Tauri at all: Wails v2 has no tray
