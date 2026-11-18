@@ -235,17 +235,17 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **没挂仓库的对话，现在能事后补挂。** 之前线程的仓库归属在创建时固定：首条消息发出时下拉留空，这条线程就永远 unscoped——仓库工具面、里程碑 handoff 都不挂，而且 UI 把下拉锁死，想补也补不了。现在走通到 Cinder 的 `chat.set_path`（CoreVersion 2.3.0）：空闲主题里改挂或清除，即刻持久化，失败回退原归属、不谎称已落库。解锁也不再要求线程为空——作用域是生成时读取的，改挂只决定下一次回复的 checkpoint 归谁，不动已写的历史。库里那批旧线程，从 UI 里逐个补挂即可，不用再绕 MCP 命令行。
+            **超时终于真的会超时。** 之前 `run_confined_within` 到点只 kill 直接子进程；而 npm 建子进程、sh 起 sleep 这类命令，孙进程会继续握着 stdout 管道，读线程就一直阻塞到它们自己退出——界面上表现出来是「卡住」，不是「超时」。现在子进程进自己的进程组，到点用 `killpg` 打整组，并用 `DoneOnDrop` + channel 把「命令跑完了」和「读线程该走了」解耦。两个回归测试钉住行为：快命令不烧满超时，卡死的命令在 deadline 被整组杀掉。
 
-            **写回不再静默。** 之前 checkpoint 被跳过或写失败只有一行 stderr：unscoped 线程静默跳过、无记录；失败不进审计、UI 不体现。现在有第三份追加式审计 `handoff-audit.jsonl`（0600）：written / failed（带错误）/ skipped，跳过原因分两种——线程没挂仓库，或工具面为空；未挂仓库的线程在状态条明示「未挂仓库，不写交接」。
+            **畸形的工具调用不再被当成「没传参数」。** 两条规则分开：`arguments` 字段缺省读作 `{}`（模型省略空参数是合法输出，不是错误）；`arguments` 存在但不是合法 JSON 时明确拒绝。以前后者会静默给一个空对象，一次畸形的 tool_call 看起来就像模型什么都没填——这是最难排查的一类「成功」。
 
-            **落库失败后的重发，checkpoint 也不再丢。** 之前首次落库失败、重发成功时，缓存分支不带生成时的作用域，handoff 被跳过还误标成「线程没挂仓库」——恰是最需要补写回的场景丢得最干净。现在 Attempt 随行携带生成时的 scope，重发落库后照常写回；已落库的回复重放仍不重写。
+            **一轮对话拆成 prepare / stream / finish 三段。** 发请求前、流式回合、收尾落库三个状态原来挤在同一个函数里，改超时或改 tool_call 处理都要先读懂另外两处。拆开后各段只持自己需要的状态，测试也能只装一段；行为不变。
 
-            **checkpoint 变厚了。** 之前 changes / decisions / gotchas 全空，原始 diff 塞在 next_steps 里，下次会话读到的只有一段摘要加一段 diff。现在 changes 从 diff 解析出每文件一行 `+x -y`（封顶 20 条），diff 摘录保留在 next_steps。
+            **CI 补一道默认 feature 集的全目标编译。** 端到端测试要 `test-fixtures`，而 `McpSession::from_connected` 也被同一个 feature 挡住过——于是编辑器里一 `cargo check --all-targets` 就红、CI 却一直绿。现在 fixture 只守卫假服务器那个 bin，构造函数回到默认路径，并新增一道 `cargo check --all-targets` 把这类分歧摆在 CI 里。
 
-            **版本号 0.3.0**：新增能力档（事后补挂）而非修一条诊断，所以走 minor 不走 patch。
+            **版本号 0.3.1**：修的是「本该超时却卡住」与「畸形调用被当成合法空参」，外加一次无行为变化的重构，走 patch 不走 minor。
 
-            **边界**：命令面仍是白名单（M3 进行中）；`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行是未修残留；线程空 path 的最终成因（没选 vs 选了没带上）仍待真机复核——但代码链路两端都没有丢 path 的点，且无论成因，现在都能补挂了。
+            **边界**：命令面仍是白名单（M3 进行中）；`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行仍是未修残留。
 
             Warden needs `repotory-mcp` (or the renamed `cinder-mcp`) on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider. Run `repotory-agent init` from a terminal to check this machine before opening the app.
           releaseDraft: false
