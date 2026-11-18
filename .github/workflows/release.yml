@@ -294,3 +294,42 @@ jobs:
             mv "$DMG" "$(dirname "$DMG")/$asset"
           fi
           gh release upload "$TAG" "$DMG" --clobber
+
+      # The Homebrew cask lives in its own tap repo (sky-jiangcheng/homebrew-tap);
+      # this repo only produces binaries. After the notarised .dmg is published,
+      # bump the cask's version and sha256 so `brew install sky-jiangcheng/tap/warden`
+      # tracks the release. Pushing to another repo needs a PAT with write access
+      # there — TAP_TOKEN; without it the release still ships, only the tap
+      # stays on its old version and says so instead of failing the release.
+      - name: Bump the Homebrew tap
+        if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "::warning::TAP_TOKEN is not configured — sky-jiangcheng/homebrew-tap was not bumped."
+            exit 0
+          fi
+          DMG=""
+          for f in $(find src-tauri/target -name '*.dmg' -type f); do DMG="$f"; break; done
+          if [ -z "${DMG}" ]; then
+            echo "::error::no .dmg found for the cask sha256."
+            exit 1
+          fi
+          version="${TAG#v}"
+          sha="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/sky-jiangcheng/homebrew-tap.git" tap
+          cask="tap/Casks/warden.rb"
+          sed -i '' -E "s/^  version \".*\"/  version \"${version}\"/" "$cask"
+          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"${sha}\"/" "$cask"
+          if ! grep -q "version \"${version}\"" "$cask" || ! grep -q "sha256 \"${sha}\"" "$cask"; then
+            echo "::error::the cask bump did not stick."
+            exit 1
+          fi
+          cd tap
+          git config user.name "warden-release-bot"
+          git config user.email "warden-release-bot@users.noreply.github.com"
+          git commit -am "warden ${version}" --quiet
+          git push --quiet origin main
