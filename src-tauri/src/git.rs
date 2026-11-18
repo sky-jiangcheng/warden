@@ -153,11 +153,11 @@ pub fn run_confined_within(
     {
         let shared = Arc::clone(&shared);
         std::thread::spawn(move || {
-            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done_rx.recv_timeout(timeout) {
-                if let Some(mut wedged) = lock(&shared).take() {
-                    kill_tree(&mut wedged);
-                    let _ = wedged.wait();
-                }
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done_rx.recv_timeout(timeout)
+                && let Some(mut wedged) = lock(&shared).take()
+            {
+                kill_tree(&mut wedged);
+                let _ = wedged.wait();
             }
         });
     }

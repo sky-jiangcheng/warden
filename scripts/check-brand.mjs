@@ -315,6 +315,17 @@ const allowedSlugs = new Set(
   [brand.mother, brand.agent].filter(Boolean).map((word) => word.toLowerCase())
 )
 
+// Distribution infrastructure is not a product repository: a Homebrew tap is
+// where the cask lives, and Homebrew's shorthand for a tap repo named
+// "homebrew-tap" is "user/tap" — so both spellings are legitimate addresses
+// in an install command. Exempting them by name, with the reason written
+// down, is the honest move: they are not brand words, and this rule is "no
+// dead links", not "only product repos". Both repositories were verified to
+// exist on GitHub on 2026-11-18 (`gh repo view`); a stale one here would
+// still fail the stem check below if it ever got renamed.
+const INFRA_SLUGS = new Set(['tap', 'homebrew-tap', 'homebrew-repo'])
+for (const slug of INFRA_SLUGS) allowedSlugs.add(slug)
+
 // An address under the org, wherever it shows up: a repository URL, an API
 // path, a raw file path, a Pages path, or the `owner/tap` shorthand. The
 // optional ".github.io" is the Pages host, whose path is the repository
