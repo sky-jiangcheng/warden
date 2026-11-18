@@ -227,6 +227,19 @@ jobs:
         # fixture whose warnings nobody sees.
         run: cargo clippy --all-targets --features test-fixtures -- -D warnings
 
+      # The default feature set must compile every target on its own.
+      #
+      # The end-to-end tests need `test-fixtures` (the fake servers are
+      # `[[bin]]`s behind `required-features`), and that flag hid a gate for
+      # too long: a fixture constructor behind the same feature made plain
+      # `cargo check --all-targets` — the command an editor and a new
+      # contributor run — fail while CI stayed green. This step compiles the
+      # default set so that divergence shows up here, not on someone's first
+      # day.
+      - name: Check all targets with the default feature set
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
       - name: Run tests
         working-directory: src-tauri
         run: cargo test --all-targets --features test-fixtures

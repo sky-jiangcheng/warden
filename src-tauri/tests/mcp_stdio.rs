@@ -34,11 +34,13 @@ const EXPECTED_TEXT: &str = "line one\nline \"two\"\nline three";
 /// test, and it points at the binary the current build produced — not at
 /// whatever happens to be on PATH. A stale binary would make these tests
 /// lie. The variable is read at RUN time, not compile time: Cargo only
-/// guarantees it for `[[bin]]` targets, and this fake server is a `[[test]]`.
+/// guarantees it for `[[bin]]` targets, and this fake server is a `[[bin]]`
+/// behind `required-features`, so the `.expect` below names the flag that
+/// builds it instead of reporting a bare missing variable.
 fn fake_server() -> PathBuf {
     PathBuf::from(
         std::env::var("CARGO_BIN_EXE_fake-mcp-server")
-            .expect("Cargo names the fake server binary for the integration test"),
+            .expect("the fake server was not built — run `cargo test --features test-fixtures`"),
     )
 }
 

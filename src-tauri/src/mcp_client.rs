@@ -125,7 +125,13 @@ pub struct McpSession {
 
 impl McpSession {
     /// Inject an already handshaken fixture without changing process PATH.
-    #[cfg(feature = "test-fixtures")]
+    ///
+    /// Not behind `test-fixtures` on purpose: the end-to-end test in `tests/`
+    /// lives in a separate crate and cannot see `cfg(test)`, so gating this
+    /// made `cargo check --all-targets` red for anyone who did not know the
+    /// feature flag. Injecting a connection changes nothing a release build
+    /// can reach, so the fixture feature now guards only the fake server
+    /// binary — the thing that genuinely must stay out of a shipped app.
     pub fn from_connected(client: McpClient, tools: Vec<ToolInfo>) -> Self {
         Self {
             connected: tokio::sync::Mutex::new(Some((Arc::new(client), tools))),

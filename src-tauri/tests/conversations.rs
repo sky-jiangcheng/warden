@@ -13,6 +13,15 @@ const THREAD: &str = "10000000-0000-4000-8000-000000000001";
 const OTHER: &str = "10000000-0000-4000-8000-000000000002";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+/// Why a missing fixture binary is a command problem, not a broken test.
+///
+/// `CARGO_BIN_EXE_<name>` is only set when Cargo actually built that binary.
+/// The fake servers carry `required-features = ["test-fixtures"]`, so a plain
+/// `cargo test` compiles this file but never produces them. Saying that
+/// out loud turns a mystery env-var panic into the command that fixes it.
+const TEST_FEATURES_HINT: &str =
+    "the end-to-end fixtures were not built — run `cargo test --features test-fixtures`";
+
 async fn session(mode: &str) -> McpSession {
     session_env(mode, &[]).await
 }
@@ -21,7 +30,7 @@ async fn session(mode: &str) -> McpSession {
 /// server — per-fixture paths (the handoff log) cannot travel through the
 /// process environment, because the harness runs these tests in parallel.
 async fn session_env(mode: &str, extra: &[(&str, &str)]) -> McpSession {
-    let binary = std::env::var("CARGO_BIN_EXE_fake-mcp-server").unwrap();
+    let binary = std::env::var("CARGO_BIN_EXE_fake-mcp-server").expect(TEST_FEATURES_HINT);
     let envs: Vec<(String, String)> = std::iter::once((mode.to_string(), "1".to_string()))
         .chain(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
@@ -43,12 +52,13 @@ impl Fixture {
         Self::with_server_env(mode, &[]).await
     }
     async fn with_server_env(mode: &str, extra: &[(&str, &str)]) -> Self {
-        let mut llm = Command::new(std::env::var("CARGO_BIN_EXE_fake-llm-server").unwrap())
-            .env("REPOTORY_AGENT_FAKE_LLM", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut llm =
+            Command::new(std::env::var("CARGO_BIN_EXE_fake-llm-server").expect(TEST_FEATURES_HINT))
+                .env("REPOTORY_AGENT_FAKE_LLM", "1")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
         let mut port = String::new();
         BufReader::new(llm.stdout.take().unwrap())
             .read_line(&mut port)

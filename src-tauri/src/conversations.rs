@@ -563,6 +563,21 @@ impl Routed {
     }
 }
 
+/// Reads the arguments of one tool call the model emitted.
+///
+/// An EMPTY arguments string is legal and means "no arguments": providers
+/// differ on whether they send `""` or `{}` for a tool that takes none.
+/// Anything else that is not JSON is a malformed call, and it must not be
+/// silently turned into `{}` — that made the tool run with defaults the model
+/// never asked for (a search with no pattern, a read with no path) and the
+/// refusal then read as the tool's fault instead of the call's.
+fn parse_tool_arguments(raw: &str) -> Result<Value, String> {
+    if raw.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    serde_json::from_str(raw).map_err(|e| format!("invalid tool arguments JSON: {e}"))
+}
+
 /// Shapes one executed local tool's answer for the model. A refusal is
 /// information the model reads — it stays visible as the tool result —
 /// while `ok=false` marks it for the UI chip.
@@ -1130,6 +1145,15 @@ pub async fn send_with_cancel(
     outcome
 }
 
+/// One send: validate, replay or generate, then persist the reply and its
+/// checkpoint.
+///
+/// The phases live in `prepare_turn` (validation + replay detection),
+/// `stream_rounds` (model ⇄ tools) and `finish_turn` (durable reply +
+/// handoff audit). This function owns only the ORDER, which is the part the
+/// contract is made of: nothing is written to the thread before a replay is
+/// ruled out, the interrupted marker lands before the first paid request,
+/// and the checkpoint is written only after the reply is durable.
 async fn send_inner(
     session: &McpSession,
     state: &GenerationState,
@@ -1139,12 +1163,138 @@ async fn send_inner(
     emit: &mut impl FnMut(ChatChunk),
     cancel: &AtomicBool,
 ) -> Result<(), String> {
+    // Validation comes BEFORE the guard: a bad request must fail with the
+    // input error, not with "this thread is already generating".
+    validate_request(request)?;
+    // Held for the whole turn: two sends for one thread must not interleave.
+    let _guard = state.acquire(request)?;
+    let key = (request.thread_id.clone(), request.message_id.clone());
+
+    let (turn, already_durable) = match prepare_turn(session, state, store, request, text).await? {
+        PreparedTurn::Replay {
+            scope,
+            thread_path,
+            already_durable,
+        } => (TurnScope { scope, thread_path }, already_durable),
+        PreparedTurn::Fresh {
+            client,
+            model,
+            mut messages,
+            tools,
+            scope,
+            thread_path,
+        } => {
+            let turn = TurnScope { scope, thread_path };
+            // Record the attempt before the first network await. If its task is
+            // interrupted, replay cannot silently issue a second paid request.
+            mark_interrupted(state, &key, request)?;
+
+            let outcome = stream_rounds(
+                &Round {
+                    session,
+                    state,
+                    client: &client,
+                    model: &model,
+                    tools: &tools,
+                    turn: &turn,
+                    cancel,
+                },
+                &mut messages,
+                text,
+                emit,
+            )
+            .await;
+            let outcome = outcome.and_then(|answer| {
+                if answer.trim().is_empty() {
+                    Err("the provider returned no answer".into())
+                } else {
+                    Ok(answer)
+                }
+            });
+            record_outcome(state, &key, request, &outcome, &turn)?;
+            *text = outcome?;
+            (turn, false)
+        }
+    };
+
+    // A reply found in the thread is already durable: it earns no second
+    // append and no second checkpoint. Every other path — fresh generation and
+    // a replay of an attempt whose save failed — still owes both.
+    if !already_durable && let Some(thread) = &request.thread_id {
+        finish_turn(session, state, request, thread, text, &turn, key).await?;
+    }
+    Ok(())
+}
+
+/// The input limits, checked before anything is written or locked.
+fn validate_request(request: &ChatRequest) -> Result<(), String> {
     nonempty(&request.message, "message", MAX_INPUT_CHARS)?;
     nonempty(&request.message_id, "messageId", 190)?;
     if let Some(id) = &request.thread_id {
         nonempty(id, "threadId", 200)?;
     }
-    let _guard = state.acquire(request)?;
+    Ok(())
+}
+
+/// What one send resolved to before any model call: either the answer already
+/// exists, or this turn genuinely has to generate one.
+enum PreparedTurn {
+    /// The reply is known; `text` holds it. `already_durable` says whether it
+    /// is already in Cinder (a thread read-back, which must NOT be appended
+    /// twice) or only in the attempt map (a replay after a failed save, which
+    /// still owes the append and the checkpoint).
+    Replay {
+        scope: Option<GenerationScope>,
+        thread_path: Option<String>,
+        already_durable: bool,
+    },
+    /// Nothing to replay: provider, history and tool face are ready.
+    Fresh {
+        client: LlmClient,
+        model: String,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolSpec>,
+        scope: Option<GenerationScope>,
+        thread_path: Option<String>,
+    },
+}
+
+/// The repository context one generation was built in.
+///
+/// `scope` is what the local tool face may touch — the thread's repository and
+/// the diff snapshot the prompt described. `thread_path` is the repository the
+/// thread was persisted with, which is what the audit records when a reply
+/// earns no checkpoint. They differ when the thread has a repository but no
+/// tool face, and that difference is the skip reason's honesty.
+struct TurnScope {
+    scope: Option<GenerationScope>,
+    thread_path: Option<String>,
+}
+
+/// Everything one streaming generation reads that does not change per round.
+struct Round<'a> {
+    session: &'a McpSession,
+    state: &'a GenerationState,
+    client: &'a LlmClient,
+    model: &'a str,
+    tools: &'a [ToolSpec],
+    turn: &'a TurnScope,
+    cancel: &'a AtomicBool,
+}
+
+/// Input validation and replay detection, in the order the contract requires.
+///
+/// Everything here happens BEFORE the first paid request: input limits, the
+/// in-process dedup map, the thread's immutable ids, and — for a fresh turn —
+/// the provider configuration and the history the model will see. `text` is
+/// filled here only on a replay.
+async fn prepare_turn(
+    session: &McpSession,
+    state: &GenerationState,
+    store: &ProviderStore,
+    request: &ChatRequest,
+    text: &mut String,
+) -> Result<PreparedTurn, String> {
     let key = (request.thread_id.clone(), request.message_id.clone());
     let cached = state
         .attempts
@@ -1195,363 +1345,451 @@ async fn send_inner(
                 .await?;
             }
             *text = reply.content.clone();
-            return Ok(());
+            return Ok(PreparedTurn::Replay {
+                scope: None,
+                thread_path: None,
+                // The reply came out of Cinder: appending it again would
+                // duplicate a message the server already holds.
+                already_durable: true,
+            });
         }
     }
-    // Set when a tool-enabled thread had a repository during GENERATION:
-    // the scope the local face runs in and the diff snapshot the prompt
-    // was built from. The reply checkpoint reuses both. A replay restores
-    // it from the cached attempt (see Attempt): a replay after a FAILED
-    // persist is the write that finally makes the reply durable, so it
-    // still earns its checkpoint; a replay of an already-durable reply
-    // never reaches this code (the preamble returns the saved answer).
-    let mut scope: Option<GenerationScope> = None;
-    // The repository the thread was persisted with, read back from the server
-    // before any tool/scope decision. Distinct from `scope`: scope also requires
-    // the tool face to be available, while this is what the audit records when
-    // a reply earns no checkpoint.
-    let mut thread_path: Option<String> = None;
+
     if let Some(attempt) = cached {
         *text = attempt.outcome?;
         // The replay restores the generation's scope, not just its text:
         // the reply whose save failed the first time was never handed off,
         // and this append is the write that finally makes it durable —
         // the checkpoint belongs to this generation, not to a fresh one.
-        scope = attempt.scope;
-        thread_path = attempt.thread_path;
-    } else {
-        let store = store.clone();
-        let input = request.clone();
-        let (client, model) = tauri::async_runtime::spawn_blocking(move || prepare(&store, &input))
-            .await
-            .map_err(|e| format!("provider configuration task failed: {e}"))??;
-        let (mut messages, tools) = if let Some(thread) = &request.thread_id {
-            append(
-                session,
-                thread,
-                &request.message_id,
-                "user",
-                &request.message,
-                None,
-            )
-            .await?;
-            // Read AFTER append: these are the server's actual ordered messages,
-            // not an optimistic local transcript or another topic's history.
-            let value = read(session, thread.clone()).await?;
-            let history: Vec<Message> = serde_json::from_value(value["messages"].clone())
-                .map_err(|e| format!("invalid Cinder history: {e}"))?;
-            let mut context = context(&history, &request.message_id)?;
-            // Function Calling is a Cinder-thread capability: the memory
-            // tools are the server's, so a temporary conversation has none,
-            // and the system prompt exists only when tools do — the
-            // no-Cinder contract (no server-injected anything) stays
-            // intact. The thread's path is the conversation's repository
-            // scope, and that scope is ALSO what makes the local read-only
-            // face (warden_*) available: a command runs with the repository
-            // as its cwd and nowhere else.
-            let repository = value["thread"]["path"]
-                .as_str()
-                .filter(|path| !path.trim().is_empty())
-                .map(|path| path.to_string());
-            thread_path = repository.clone();
-            let tools = model_tools(session, repository.is_some()).await?;
-            if !tools.is_empty() {
-                // One snapshot per generation, shared by the injected prompt
-                // and the reply checkpoint: what the model read and what the
-                // handoff recorded describe the SAME tree, not whatever the
-                // user saved between the two calls. The git child runs on the
-                // blocking pool — this path is an async command and a wedged
-                // git must not occupy a tokio worker (AGENTS: no blocking IO
-                // in async commands).
-                let diff = match &repository {
-                    Some(path) => {
-                        let path = path.clone();
-                        tauri::async_runtime::spawn_blocking(move || crate::git::recent_diff(&path))
-                            .await
-                            .map_err(|e| format!("the git diff task failed: {e}"))?
-                    }
-                    None => None,
-                };
-                context.insert(
-                    0,
-                    ChatMessage::system(system_prompt(
-                        repository.as_deref(),
-                        &request.watched,
-                        diff.as_deref(),
-                    )),
-                );
-                scope = repository.map(|path| GenerationScope {
-                    repository: path,
-                    diff,
-                });
-            }
-            (context, tools)
-        } else {
-            (vec![ChatMessage::user(&request.message)], Vec::new())
-        };
-        // Record the attempt before the first network await. If its task is
-        // interrupted, replay cannot silently issue a second paid request.
-        state
-            .attempts
-            .lock()
-            .map_err(|_| "chat generation state is unavailable")?
-            .insert(
-                key.clone(),
-                Attempt {
-                    message: request.message.clone(),
-                    outcome: Err("generation was interrupted; use a new messageId to retry".into()),
-                    scope: None,
-                    thread_path: None,
-                },
+        return Ok(PreparedTurn::Replay {
+            scope: attempt.scope,
+            thread_path: attempt.thread_path,
+            // The attempt map is process-local: this reply has not reached
+            // Cinder yet, so the append that failed before must run now.
+            already_durable: false,
+        });
+    }
+
+    let store = store.clone();
+    let input = request.clone();
+    let (client, model) = tauri::async_runtime::spawn_blocking(move || prepare(&store, &input))
+        .await
+        .map_err(|e| format!("provider configuration task failed: {e}"))??;
+
+    // `scope` and `thread_path` are set only by the threaded branch below.
+    let mut scope: Option<GenerationScope> = None;
+    let mut thread_path: Option<String> = None;
+    let (messages, tools) = if let Some(thread) = &request.thread_id {
+        append(
+            session,
+            thread,
+            &request.message_id,
+            "user",
+            &request.message,
+            None,
+        )
+        .await?;
+        // Read AFTER append: these are the server's actual ordered messages,
+        // not an optimistic local transcript or another topic's history.
+        let value = read(session, thread.clone()).await?;
+        let history: Vec<Message> = serde_json::from_value(value["messages"].clone())
+            .map_err(|e| format!("invalid Cinder history: {e}"))?;
+        let mut context = context(&history, &request.message_id)?;
+        // Function Calling is a Cinder-thread capability: the memory
+        // tools are the server's, so a temporary conversation has none,
+        // and the system prompt exists only when tools do — the
+        // no-Cinder contract (no server-injected anything) stays
+        // intact. The thread's path is the conversation's repository
+        // scope, and that scope is ALSO what makes the local read-only
+        // face (warden_*) available: a command runs with the repository
+        // as its cwd and nowhere else.
+        let repository = value["thread"]["path"]
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| path.to_string());
+        thread_path = repository.clone();
+        let tools = model_tools(session, repository.is_some()).await?;
+        if !tools.is_empty() {
+            // One snapshot per generation, shared by the injected prompt
+            // and the reply checkpoint: what the model read and what the
+            // handoff recorded describe the SAME tree, not whatever the
+            // user saved between the two calls. The git child runs on the
+            // blocking pool — this path is an async command and a wedged
+            // git must not occupy a tokio worker (AGENTS: no blocking IO
+            // in async commands).
+            let diff = match &repository {
+                Some(path) => {
+                    let path = path.clone();
+                    tauri::async_runtime::spawn_blocking(move || crate::git::recent_diff(&path))
+                        .await
+                        .map_err(|e| format!("the git diff task failed: {e}"))?
+                }
+                None => None,
+            };
+            context.insert(
+                0,
+                ChatMessage::system(system_prompt(
+                    repository.as_deref(),
+                    &request.watched,
+                    diff.as_deref(),
+                )),
             );
-        // The generation loop: model → (tool calls → execute → feed back)×,
-        // each round streamed. The final round's text is the answer — a tool
-        // round's preamble restarts the visible text via the tool event's
-        // empty `text`.
-        let mut round: usize = 0;
-        let outcome = loop {
-            round += 1;
-            // A disconnected webview must not start (or continue) another
-            // paid round. The error is surfaced through the final ChatChunk.
-            if cancel.load(Ordering::Relaxed) {
-                break Err("the chat window disconnected; generation was stopped".to_string());
-            }
-            // The round cap: once spent, the next call is text-only, so the
-            // answer arrives in words instead of the cap silently turning
-            // into an empty reply.
-            let round_tools: &[ToolSpec] = if round > MAX_TOOL_ROUNDS { &[] } else { &tools };
-            let streamed = match client
-                .chat_stream(&model, &messages, round_tools, |delta| {
-                    if cancel.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    text.push_str(delta);
+            scope = repository.map(|path| GenerationScope {
+                repository: path,
+                diff,
+            });
+        }
+        (context, tools)
+    } else {
+        (vec![ChatMessage::user(&request.message)], Vec::new())
+    };
+
+    Ok(PreparedTurn::Fresh {
+        client,
+        model,
+        messages,
+        tools,
+        scope,
+        thread_path,
+    })
+}
+
+/// The generation loop: model → (tool calls → execute → feed back)×, each
+/// round streamed. The final round's text is the answer — a tool round's
+/// preamble restarts the visible text via the tool event's empty `text`.
+async fn stream_rounds(
+    round: &Round<'_>,
+    messages: &mut Vec<ChatMessage>,
+    text: &mut String,
+    emit: &mut impl FnMut(ChatChunk),
+) -> Result<String, String> {
+    let mut round_number: usize = 0;
+    loop {
+        round_number += 1;
+        // A disconnected webview must not start (or continue) another
+        // paid round. The error is surfaced through the final ChatChunk.
+        if round.cancel.load(Ordering::Relaxed) {
+            break Err("the chat window disconnected; generation was stopped".to_string());
+        }
+        // The round cap: once spent, the next call is text-only, so the
+        // answer arrives in words instead of the cap silently turning
+        // into an empty reply.
+        let round_tools: &[ToolSpec] = if round_number > MAX_TOOL_ROUNDS {
+            &[]
+        } else {
+            round.tools
+        };
+        let streamed = match round
+            .client
+            .chat_stream(round.model, messages.as_slice(), round_tools, |delta| {
+                if round.cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                text.push_str(delta);
+                emit(ChatChunk {
+                    delta: delta.to_string(),
+                    text: text.clone(),
+                    done: false,
+                    error: None,
+                    tool_call: None,
+                    approval: None,
+                });
+            })
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => break Err(error.to_string()),
+        };
+        // The stream may have been cancelled mid-answer: stop before the
+        // outcome is recorded, and never persist it.
+        if round.cancel.load(Ordering::Relaxed) {
+            break Err("the chat window disconnected; generation was stopped".to_string());
+        }
+        if streamed.tool_calls.is_empty() {
+            break if streamed.content.trim().is_empty() {
+                Err("the provider returned no answer".to_string())
+            } else {
+                Ok(streamed.content)
+            };
+        }
+        if round.tools.is_empty() {
+            break Err("the model requested tools but none were offered".to_string());
+        }
+        if round_number > MAX_TOOL_ROUNDS {
+            break Err("the model kept requesting tools after the final round".to_string());
+        }
+        // The preamble was not the answer: the visible text restarts, and
+        // the UI learns what is being called.
+        text.clear();
+        for call in &streamed.tool_calls {
+            emit(ChatChunk {
+                delta: String::new(),
+                text: String::new(),
+                done: false,
+                error: None,
+                tool_call: Some(ToolEvent {
+                    name: call.name.clone(),
+                    done: false,
+                    ok: false,
+                    error: None,
+                    // The full argv is known only once the child ran;
+                    // the start chip carries the tool name, the finish
+                    // chip carries the command (Phase 3's display rule).
+                    command: None,
+                    output: None,
+                }),
+                approval: None,
+            });
+        }
+        // Echo the assistant turn WITH its calls — the protocol pairs every
+        // tool result with the preceding assistant tool_calls — then
+        // execute each. A model that names a tool outside the whitelist
+        // gets a refusal as its result, never an execution.
+        let echo: Vec<ToolCallOut> = streamed
+            .tool_calls
+            .iter()
+            .map(|call| ToolCallOut {
+                id: call.id.clone(),
+                kind: "function".to_string(),
+                function: ToolCallFunction {
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                },
+            })
+            .collect();
+        messages.push(ChatMessage::assistant_with_tool_calls(
+            streamed.content.clone(),
+            echo,
+        ));
+        for tool_call in &streamed.tool_calls {
+            let arguments = match parse_tool_arguments(&tool_call.arguments) {
+                Ok(arguments) => arguments,
+                Err(error) => {
+                    // The assistant turn (with its calls) is already in
+                    // `messages`; answering with a tool result keeps the
+                    // pairing valid, and the model reads the refusal as
+                    // information it can correct on the next round.
+                    let refused = Routed::refused(error);
+                    messages.push(ChatMessage::tool_result(
+                        tool_call.id.clone(),
+                        refused.content,
+                    ));
                     emit(ChatChunk {
-                        delta: delta.to_string(),
-                        text: text.clone(),
+                        delta: String::new(),
+                        text: String::new(),
+                        done: false,
+                        error: None,
+                        tool_call: Some(ToolEvent {
+                            name: tool_call.name.clone(),
+                            done: true,
+                            ok: refused.ok,
+                            error: refused.error,
+                            command: refused.command,
+                            output: refused.output,
+                        }),
+                        approval: None,
+                    });
+                    continue;
+                }
+            };
+            let Routed {
+                content,
+                ok,
+                error,
+                command,
+                output,
+            } = route_tool(
+                round.session,
+                round.state,
+                &tool_call.name,
+                arguments,
+                round.turn.scope.as_ref(),
+                |card: &crate::provider_commands::ApprovalRequest| {
+                    // The card travels on the same channel as the stream:
+                    // the window drawing it is the one that asked for the
+                    // answer, and no other window may approve a command
+                    // this one is waiting on.
+                    emit(ChatChunk {
+                        delta: String::new(),
+                        text: String::new(),
                         done: false,
                         error: None,
                         tool_call: None,
-                        approval: None,
+                        approval: Some(card.clone()),
                     });
-                })
-                .await
-            {
-                Ok(outcome) => outcome,
-                Err(error) => break Err(error.to_string()),
-            };
-            // The stream may have been cancelled mid-answer: stop before the
-            // outcome is recorded, and never persist it.
-            if cancel.load(Ordering::Relaxed) {
-                break Err("the chat window disconnected; generation was stopped".to_string());
-            }
-            if streamed.tool_calls.is_empty() {
-                break if streamed.content.trim().is_empty() {
-                    Err("the provider returned no answer".to_string())
-                } else {
-                    Ok(streamed.content)
-                };
-            }
-            if tools.is_empty() {
-                break Err("the model requested tools but none were offered".to_string());
-            }
-            if round > MAX_TOOL_ROUNDS {
-                break Err("the model kept requesting tools after the final round".to_string());
-            }
-            // The preamble was not the answer: the visible text restarts, and
-            // the UI learns what is being called.
-            text.clear();
-            for call in &streamed.tool_calls {
-                emit(ChatChunk {
-                    delta: String::new(),
-                    text: String::new(),
-                    done: false,
-                    error: None,
-                    tool_call: Some(ToolEvent {
-                        name: call.name.clone(),
-                        done: false,
-                        ok: false,
-                        error: None,
-                        // The full argv is known only once the child ran;
-                        // the start chip carries the tool name, the finish
-                        // chip carries the command (Phase 3's display rule).
-                        command: None,
-                        output: None,
-                    }),
-                    approval: None,
-                });
-            }
-            // Echo the assistant turn WITH its calls — the protocol pairs every
-            // tool result with the preceding assistant tool_calls — then
-            // execute each. A model that names a tool outside the whitelist
-            // gets a refusal as its result, never an execution.
-            let echo: Vec<ToolCallOut> = streamed
-                .tool_calls
-                .iter()
-                .map(|call| ToolCallOut {
-                    id: call.id.clone(),
-                    kind: "function".to_string(),
-                    function: ToolCallFunction {
-                        name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                    },
-                })
-                .collect();
-            messages.push(ChatMessage::assistant_with_tool_calls(
-                streamed.content.clone(),
-                echo,
-            ));
-            for tool_call in &streamed.tool_calls {
-                let arguments = if tool_call.arguments.trim().is_empty() {
-                    json!({})
-                } else {
-                    serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| json!({}))
-                };
-                let Routed {
-                    content,
+                },
+            )
+            .await;
+            messages.push(ChatMessage::tool_result(tool_call.id.clone(), content));
+            emit(ChatChunk {
+                delta: String::new(),
+                text: String::new(),
+                done: false,
+                error: None,
+                tool_call: Some(ToolEvent {
+                    name: tool_call.name.clone(),
+                    done: true,
                     ok,
                     error,
                     command,
                     output,
-                } = route_tool(
-                    session,
-                    state,
-                    &tool_call.name,
-                    arguments,
-                    scope.as_ref(),
-                    |card: &crate::provider_commands::ApprovalRequest| {
-                        // The card travels on the same channel as the stream:
-                        // the window drawing it is the one that asked for the
-                        // answer, and no other window may approve a command
-                        // this one is waiting on.
-                        emit(ChatChunk {
-                            delta: String::new(),
-                            text: String::new(),
-                            done: false,
-                            error: None,
-                            tool_call: None,
-                            approval: Some(card.clone()),
-                        });
-                    },
-                )
-                .await;
-                messages.push(ChatMessage::tool_result(tool_call.id.clone(), content));
-                emit(ChatChunk {
-                    delta: String::new(),
-                    text: String::new(),
-                    done: false,
-                    error: None,
-                    tool_call: Some(ToolEvent {
-                        name: tool_call.name.clone(),
-                        done: true,
-                        ok,
-                        error,
-                        command,
-                        output,
-                    }),
-                    approval: None,
-                });
-            }
-        };
-        let outcome = outcome.and_then(|answer| {
-            if answer.trim().is_empty() {
-                Err("the provider returned no answer".into())
-            } else {
-                Ok(answer)
-            }
-        });
-        state
-            .attempts
-            .lock()
-            .map_err(|_| "chat generation state is unavailable")?
-            .insert(
-                key.clone(),
-                Attempt {
-                    message: request.message.clone(),
-                    outcome: outcome.clone(),
-                    scope: scope.clone(),
-                    thread_path: thread_path.clone(),
-                },
-            );
-        *text = outcome?;
+                }),
+                approval: None,
+            });
+        }
     }
-    if let Some(thread) = &request.thread_id {
-        append(session, thread, &format!("{}-reply", request.message_id), "assistant", text, Some(&request.message_id)).await
-            .map_err(|e| format!("the answer was generated but could not be saved to Cinder; resend the same messageId to retry saving: {e}"))?;
-        // The recorded attempt exists so a failed persist can be replayed
-        // without a second paid request. Once the answer is in Cinder, the
-        // durable store has taken over: a replay reads it back instead of
-        // this map. The key is a fresh client UUID no later request reuses, so
-        // keeping it would grow the map for the life of the process.
-        // Without a thread there is no store to take over, so the entry stays —
-        // that mode's whole dedup contract is "within this process".
-        state.forget(key);
-        // M2's last loop: "模型回答后写入 repotory_handoff". Only after the
-        // answer is durable — a checkpoint about a reply that failed to save
-        // would record a conversation the next session cannot read back.
-        let at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(-1);
-        match &scope {
-            Some(scope) => {
-                match write_handoff(
-                    session,
-                    &scope.repository,
-                    &request.message,
-                    text,
-                    scope.diff.as_deref(),
-                )
-                .await
-                {
-                    Ok(()) => state.handoff_audit.record(&handoff_audit_entry(
+}
+
+/// The interrupted marker: an Attempt whose outcome is an error so a replay
+/// cannot silently issue a second paid request.
+fn mark_interrupted(
+    state: &GenerationState,
+    key: &(Option<String>, String),
+    request: &ChatRequest,
+) -> Result<(), String> {
+    state
+        .attempts
+        .lock()
+        .map_err(|_| "chat generation state is unavailable")?
+        .insert(
+            key.clone(),
+            Attempt {
+                message: request.message.clone(),
+                outcome: Err("generation was interrupted; use a new messageId to retry".into()),
+                scope: None,
+                thread_path: None,
+            },
+        );
+    Ok(())
+}
+
+/// Records the finished outcome (success or failure) together with the scope
+/// the replay will need if the persist step below fails.
+fn record_outcome(
+    state: &GenerationState,
+    key: &(Option<String>, String),
+    request: &ChatRequest,
+    outcome: &Result<String, String>,
+    turn: &TurnScope,
+) -> Result<(), String> {
+    state
+        .attempts
+        .lock()
+        .map_err(|_| "chat generation state is unavailable")?
+        .insert(
+            key.clone(),
+            Attempt {
+                message: request.message.clone(),
+                outcome: outcome.clone(),
+                scope: turn.scope.clone(),
+                thread_path: turn.thread_path.clone(),
+            },
+        );
+    Ok(())
+}
+
+/// Persists the reply, then writes the milestone checkpoint.
+///
+/// Order matters: the checkpoint is written only after the reply is durable —
+/// a checkpoint about a reply that failed to save would record a conversation
+/// the next session cannot read back.
+async fn finish_turn(
+    session: &McpSession,
+    state: &GenerationState,
+    request: &ChatRequest,
+    thread: &str,
+    text: &str,
+    turn: &TurnScope,
+    key: (Option<String>, String),
+) -> Result<(), String> {
+    append(
+        session,
+        thread,
+        &format!("{}-reply", request.message_id),
+        "assistant",
+        text,
+        Some(&request.message_id),
+    )
+    .await
+    .map_err(|e| {
+        format!(
+            "the answer was generated but could not be saved to Cinder; \
+             resend the same messageId to retry saving: {e}"
+        )
+    })?;
+    // The recorded attempt exists so a failed persist can be replayed
+    // without a second paid request. Once the answer is in Cinder, the
+    // durable store has taken over: a replay reads it back instead of
+    // this map. The key is a fresh client UUID no later request reuses, so
+    // keeping it would grow the map for the life of the process.
+    // Without a thread there is no store to take over, so the entry stays —
+    // that mode's whole dedup contract is "within this process".
+    state.forget(key);
+    // M2's last loop: "模型回答后写入 repotory_handoff". Only after the
+    // answer is durable — a checkpoint about a reply that failed to save
+    // would record a conversation the next session cannot read back.
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(-1);
+    match &turn.scope {
+        Some(scope) => {
+            match write_handoff(
+                session,
+                &scope.repository,
+                &request.message,
+                text,
+                scope.diff.as_deref(),
+            )
+            .await
+            {
+                Ok(()) => state.handoff_audit.record(&handoff_audit_entry(
+                    at,
+                    thread,
+                    Some(&scope.repository),
+                    "written",
+                    true,
+                    None,
+                )),
+                Err(error) => {
+                    // The reply is saved; the checkpoint is the loss. It must
+                    // not turn into a failed send. It must not vanish quietly
+                    // either: stderr keeps the degraded-path signal, the
+                    // audit line keeps the durable record the other degraded
+                    // paths in this app keep too.
+                    eprintln!("[handoff] the session checkpoint could not be written: {error}");
+                    state.handoff_audit.record(&handoff_audit_entry(
                         at,
-                        thread.as_str(),
+                        thread,
                         Some(&scope.repository),
-                        "written",
-                        true,
-                        None,
-                    )),
-                    Err(error) => {
-                        // The reply is saved; the checkpoint is the loss. It must
-                        // not turn into a failed send. It must not vanish quietly
-                        // either: stderr keeps the degraded-path signal, the
-                        // audit line keeps the durable record the other degraded
-                        // paths in this app keep too.
-                        eprintln!("[handoff] the session checkpoint could not be written: {error}");
-                        state.handoff_audit.record(&handoff_audit_entry(
-                            at,
-                            thread.as_str(),
-                            Some(&scope.repository),
-                            "failed",
-                            false,
-                            Some(&error),
-                        ));
-                    }
+                        "failed",
+                        false,
+                        Some(&error),
+                    ));
                 }
             }
-            None => {
-                // The thread exists but earns no scope: no local face and no
-                // milestone checkpoint. Record the skip so "earned no handoff"
-                // is distinguishable from "the write-back failed" — a silent
-                // skip was the shape that made the missing handoffs invisible
-                // on this machine. The reason splits the two ways a scope can
-                // be absent: no repository on the thread, or the tool face came
-                // back empty.
-                let reason = if thread_path.is_none() {
-                    "no repository scope"
-                } else {
-                    "tool face unavailable"
-                };
-                state.handoff_audit.record(&handoff_audit_entry(
-                    at,
-                    thread.as_str(),
-                    thread_path.as_deref(),
-                    "skipped",
-                    false,
-                    Some(reason),
-                ));
-            }
+        }
+        None => {
+            // The thread exists but earns no scope: no local face and no
+            // milestone checkpoint. Record the skip so "earned no handoff"
+            // is distinguishable from "the write-back failed" — a silent
+            // skip was the shape that made the missing handoffs invisible
+            // on this machine. The reason splits the two ways a scope can
+            // be absent: no repository on the thread, or the tool face came
+            // back empty.
+            let reason = if turn.thread_path.is_none() {
+                "no repository scope"
+            } else {
+                "tool face unavailable"
+            };
+            state.handoff_audit.record(&handoff_audit_entry(
+                at,
+                thread,
+                turn.thread_path.as_deref(),
+                "skipped",
+                false,
+                Some(reason),
+            ));
         }
     }
     Ok(())
@@ -1826,5 +2064,27 @@ diff --git a/README.md b/README.md
         drop(guard);
         request.thread_id = Some("a".into());
         assert!(state.acquire(&request).is_ok());
+    }
+
+    // A tool that takes no arguments arrives as "" or "{}" depending on the
+    // provider; both must reach the tool as an empty object.
+    #[test]
+    fn absent_tool_arguments_are_an_empty_object() {
+        assert_eq!(parse_tool_arguments("").unwrap(), json!({}));
+        assert_eq!(parse_tool_arguments("   ").unwrap(), json!({}));
+        assert_eq!(parse_tool_arguments("{}").unwrap(), json!({}));
+    }
+
+    // The regression this helper exists for: a malformed call used to fall
+    // back to `{}` and execute with defaults the model never asked for.
+    #[test]
+    fn malformed_tool_arguments_are_a_refusal_not_a_default() {
+        let error = parse_tool_arguments("{\"path\": ").unwrap_err();
+        assert!(error.contains("invalid tool arguments"), "{error}");
+        let refused = Routed::refused(error);
+        assert!(!refused.ok);
+        assert!(refused.error.is_some());
+        let payload: Value = serde_json::from_str(&refused.content).unwrap();
+        assert!(payload["error"].as_str().unwrap().contains("invalid tool"));
     }
 }
