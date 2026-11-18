@@ -249,7 +249,7 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 本地 provider 与云端 provider 是同一件事。`model_backends.rs` 这个注册表已经在 Phase 2 删掉
 （见 [product.md](product.md) 的「Phase 0 定死的决议」）。
 
-## Phase 6：分发与上架（1–2 周）—— 进行中
+## Phase 6：分发与上架（1–2 周）—— 已完成（2026-11-18）
 
 让 copilot 能真正被用起来。
 
@@ -259,8 +259,13 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
   `brew install sky-jiangcheng/tap/warden` 即装；dmg 是 Release 产物，Developer ID 签名 + 公证，Gatekeeper 直接放行。
   Release workflow 在 macOS 发布后自动 bump cask 的 version + sha256（提交人 `warden-release-bot`），
   依赖本仓配置有 tap 写权限的 `TAP_TOKEN` secret——未配置时发布照常、tap 不更新并告警，不阻塞发版。
-- **App Store 版本** —— 待定。App Store 审核对常驻托盘 + 本地模型有约束，且默认不带模型要引导装 Ollama；
-  现版本走 Release 分发，未走 App Store；
+- ~~**App Store 版本**~~ —— **拍板：不做（2026-11-18）**。macOS App Store 的硬门槛是
+  App Sandbox 强制 + Guideline 2.4.5（app 自包含、不能拉起 PATH 上的第三方二进制），
+  与本产品的三个核心能力正面冲突：拉起 `repotory-mcp` 子进程（记忆层）、
+  沙箱外读写任意仓库与跑 `git`/`npm`/`cargo`、常驻后台扫盘。开沙箱则全废，不开则审核直接拒，没有中间态。
+  托盘本身不是死结，沙箱才是。现版本走 Developer ID 签名 + 公证 + GitHub Release / Homebrew 分发，
+  这是 macOS 独立分发的事实最佳实践；若将来真要 App Store 形态，那是砍掉工具执行层、
+  只留聊天 + 记忆面板的另一个产品，不值得。
 - ~~提供 `repotory-agent init` 一键初始化~~ —— 已落地（2026-11-13）：逐项检查配置 / 记忆层 / 本机模型，
   `✓` 正常、`!` 注意（不阻塞）、`✗` 需处理，退出码只在有 `✗` 时非零。复用 GUI 同一条真实路径
   （`config_or_default` 写默认配置、`memory_layer::status` 握手、`local_models::probe`），
@@ -286,8 +291,8 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 | M2 | 能和模型聊当前仓库 | 已完成（2026-11-12：聊天链路、system 提示、只读工具面、diff 注入、handoff 写回全部接通） |
 | M3 | 能安全执行 Git / Shell 命令 | **已完成**（读八件 + 写四件落地，写侧过确认卡；2026-11-18 拍板：任意命令不做，判据收缩——见 Phase 3 收尾） |
 | M4 | 能看到并管理跨会话记忆 | 已完成（三面板只读；「管理」在 Cinder Desktop 做——闸门不在这里） |
-| M5 | 能一键安装、一键初始化 | **已完成**（2026-11-18：`brew install sky-jiangcheng/tap/warden` 一键安装 + `init` 三段检查一键初始化；App Store 仍待定，归 Phase 6 不挡 M5） |
-| M6 | 能作为独立产品分发 | 未开始 |
+| M5 | 能一键安装、一键初始化 | **已完成**（2026-11-18：`brew install sky-jiangcheng/tap/warden` 一键安装 + `init` 三段检查一键初始化；App Store 已拍板不做，见 Phase 6） |
+| M6 | 能作为独立产品分发 | **已完成**（2026-11-18：dmg / msi / exe / deb / rpm / AppImage 全套 + 公证、Homebrew cask、`init` 一键初始化、README 版本耦合说明——独立产品分发该有的都有了） |
 
 ## 工程缺口（不进里程碑，2026-11-11 评估）
 
@@ -337,7 +342,22 @@ MCP 工具面里没有孪生工具——**要共享得先改主仓，那不是�
 - **成因一：线程作用域在创建时固定、事后不补挂（补挂链路本批已落地）**。`create` 把 `path` 落库（`conversations.rs:688/713`）；生成时作用域只从服务端线程记录读回（`conversations.rs:1209`）。此前前端在已有线程 / 已有消息 / 回复中锁死仓库下拉（`src/chat.ts` 的 `contextSelect.disabled`），**没有更新已存在线程 path 的操作**——先发言（下拉留空）后选仓库，线程永远 unscoped，仓库工具面（`warden_*`）与 milestone handoff 都不挂。本批打通补挂链路：Cinder `repotory_chat` 新增 `set_path` 操作（writerapi 目录 `chat.set_path` + service `SetChatThreadPath` + MCP + 测试，`CoreVersion` 2.2.0→2.3.0 minor，工具数仍 25）；Warden 后端新增 `conversation_set_path` 命令，前端对空闲（无消息、非 busy）的已存在线程解锁下拉，切换即持久化，成功按回读线程归属回写、失败回退原归属且不谎称已落库。**仍待真机复核**：本机 10 个空 path 线程究竟「使用时没选仓库」还是「选了没带上」。
 - **成因二：跳过与失败都不可见（本批已闭环）**。原先 `scope` 为 None 直接跳过、无记录；写回失败只 `eprintln!`，不进审计、UI 不体现——与 [product.md](product.md) 待确认 3「上下文装配失败绝不静默」的口径有落差。本批补了第三份追加式审计 `handoff-audit.jsonl`（与 `exec-audit.jsonl` / `knowledge-audit.jsonl` 同族，0600）：写回成功记 `written`、失败记 `failed`（带错误）、跳过记 `skipped`（原因 `no repository scope` 线程无仓库 / `tool face unavailable` 工具面为空）；前端状态条对未挂仓库的共享线程明示「未挂仓库，不写交接」。2026-11-17 复核又补上 replay 缺口：落库失败的重发此前走缓存分支，`scope`/`thread_path` 均为 None，checkpoint 被跳过且审计误标 `no repository scope`——现在 Attempt 随行携带生成时的 scope，重发落库后照常写回（`a_retried_save_still_earns_its_checkpoint`）；durable 后的 replay 仍不重写（attempt 已 forget，preamble 早退）。
 - **影响**：成因二已让缺失可见、可追溯；成因一的补挂链路本批已落地，且 2026-11-17 起前端解锁不再要求空线程：`contextEditable` 去掉 `messageCount === 0` 条件（只留 `!busy`，[chat-state.ts](../src/chat-state.ts)），已有消息的空闲线程也能直接改挂或清除——scope 在生成时读取，改挂只影响下一次回复的 checkpoint，两端服务端（`SetChatThreadPath` / `set_path`）本就无消息数限制。历史 unscoped 线程无需再走 Cinder MCP，UI 里逐个补挂即可。成因复核进展：代码链路两端核对无丢 path 的点（前端 create 带 `topic.path` → `conversations::create` 落库；旧 UI 在首条消息后锁死下拉，先发言后无法选仓库），倾向成因是「使用时没选」，真机复核仅作最终确认。
-- **验收 / 待拍板**：① 核对本机线程 path 为空的真实成因——代码链路已排除「选了没带上」，倾向「使用时没选」（旧 UI 锁死所致），真机复核最终确认；② unscoped 状态条标注——已落地（`savedThreadLabel`）；③ 写回跳过/失败进本地追加式审计——已落地（`handoff-audit.jsonl`）；④ 选了仓库的线程，回答落库后库里出现 `milestone=true`、`agent=warden` 的 handoff——作用域存在时链路本就走通；⑤ 事后补挂接口（Cinder `set_path` + Warden 命令 + 前端解锁持久化）——已落地（`CoreVersion` 2.3.0 minor），2026-11-17 起 UI 解锁扩展到已有消息的空闲线程；历史 unscoped 线程在 UI 里手动补挂一次即可。checkpoint 的 `changes` 段同日补齐：从 diff 解析每文件一行 `<file> +<added> -<deleted>`（封顶 20 条），`next_steps` 保留原 diff 摘录，不再只靠 summary 扛信息量。
+- **销项（2026-11-18 真机复核）**：验收①已闭环——成因确认为**「使用时没选仓库」**，
+  不是「选了没带上」。复核证据：本机共享库 `chat_threads` 全部 10 条线程 `path` 为空，
+  创建时间横跨补挂链路上线前后；标题内容（「昨日代码提交量」「看看最近有哪些项目有改动」「你好」「并发写测试」）
+  **全是全局问答 / 测试，本来就不需要挂仓库**；`project_notes` 里 `agent=warden` 的 handoff 为 0 条，
+  与 10 条全 unscoped 一致，按新审计逻辑记 `skipped (no repository scope)` 行为正确。
+  这 10 条历史线程**不补挂**——把全局对话错归到一个仓库比不挂更坏。
+  验收②③⑤此前已落地，④作用域存在时链路本就走通，至此整条缺口销项。
+  checkpoint 的 `changes` 段同日补齐：从 diff 解析每文件一行 `<file> +<added> -<deleted>`（封顶 20 条），
+  `next_steps` 保留原 diff 摘录，不再只靠 summary 扛信息量。
+
+### 5. 生成中进程被 SIGKILL / panic 丢当轮回复 —— 定性为已知残留（2026-11-18）
+
+- **问题**：生成进行中进程被 SIGKILL 或 panic 时，`Cargo.toml` 的 `panic = "abort"` 让 Drop 不跑，
+  当轮回复与 checkpoint 丢失。
+- **定性**：`panic = "abort"` 是主动选择（多 webview 下 unwinding 不可控）；SIGKILL 本质不可捕获，
+  信号处理器救不了。丢的只是生成中那一轮，**不是已落库的历史**——不再投入，仅在此留档。
 
 ## 路线取舍
 
