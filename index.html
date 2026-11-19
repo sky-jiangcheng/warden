@@ -74,7 +74,6 @@
           <p class="chat-error" id="chat-error" role="alert"></p>
           <form class="chat__form" id="chat-form">
             <label class="sr-only" for="chat-input">给 Warden 的消息</label><textarea id="chat-input" rows="3" placeholder="有什么想一起想一想？" aria-describedby="compose-help" spellcheck="false"></textarea>
-            <div class="composer-context"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3zM3 7V5h6l2 2h8" /></svg><select id="chat-context" aria-label="对话仓库归属" title="对话仓库归属；回复中不可改，空闲主题可改挂或清除"><option value="">不附加仓库</option></select></div>
             <div class="composer-toolbar"><div class="model-pickers"><select id="chat-provider" aria-label="Provider"><option value="">选择 provider</option></select><span class="picker-divider" aria-hidden="true">/</span><select id="chat-model" aria-label="模型"><option value="">选择模型</option></select></div><button class="send-btn" id="chat-send" type="submit" aria-label="发送消息" title="发送 · Enter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></button></div>
           </form>
           <div class="composer-foot"><span id="chat-chip" role="status">准备连接</span><span id="compose-help">Enter 发送 · Shift + Enter 换行</span></div><p class="model-error" id="model-error" role="status"></p><p class="sr-only" id="chat-announcement" role="status" aria-live="polite"></p>
@@ -259,6 +258,11 @@
               <button class="btn btn--primary" id="repo-save-projects" type="button">保存所选</button>
               <span class="meta" id="projects-note">选中的项目会成为聊天时可附加的上下文。</span>
             </div>
+            <section class="cinder-starred" aria-labelledby="cinder-starred-title">
+              <div class="card__head"><h3 class="card__title" id="cinder-starred-title">Cinder 收藏的项目</h3><span class="chip chip--quiet" id="cinder-chip">读取中</span></div>
+              <p class="card__hint">这些项目已在 Cinder 里收藏，这里只作展示：不能勾选、取消或编辑。要更改请到 Cinder 里操作。</p>
+              <ul class="projects" id="cinder-projects" aria-label="Cinder 收藏的项目（只读）"></ul>
+            </section>
             <p class="meta meta--error" id="repo-error"></p>
           </section>
         </div>
@@ -306,6 +310,7 @@
         <button class="btn btn--primary" id="topic-new-in-sheet" type="button">＋ 新建对话</button><p class="card__hint" id="topics-note">共享主题由 Cinder 同步；临时对话只保留在当前窗口。</p>
         <ul class="topic-list" id="topic-list" aria-label="对话主题列表"></ul>
         <form class="rename-form" id="topic-rename-form"><label for="topic-rename">当前主题名称</label><div class="form__row"><input class="field" id="topic-rename" maxlength="120" required /><button class="btn" id="topic-rename-save" type="submit">重命名</button></div><p class="meta meta--error" id="topic-error" role="alert"></p></form>
+        <div class="scope-form"><label for="topic-scope">当前主题的仓库归属</label><div class="form__row"><select class="field" id="topic-scope" aria-label="对话仓库归属" title="对话仓库归属；回复中不可改，空闲主题可改挂或清除"><option value="">不附加仓库</option></select></div><p class="meta" id="topic-scope-note">回复中不可改；空闲主题可改挂或清除。归属决定下次回复能否写入交接。</p></div>
       </div>
     </dialog>
     <div class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="idle">

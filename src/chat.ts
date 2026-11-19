@@ -26,7 +26,7 @@ export function initChat() {
   const messages = pick<HTMLElement>("#chat-messages");
   const providerSelect = pick<HTMLSelectElement>("#chat-provider");
   const modelSelect = pick<HTMLSelectElement>("#chat-model");
-  const contextSelect = pick<HTMLSelectElement>("#chat-context");
+  const contextSelect = pick<HTMLSelectElement>("#topic-scope");
   const topics = new Map<string, Topic>();
   let providers: Provider[] = [];
   let repos: Repo[] = [];
@@ -349,6 +349,9 @@ export function initChat() {
     renderTopics();
     pick<HTMLInputElement>("#topic-rename").value = active.title;
     pick<HTMLElement>("#topic-error").textContent = "";
+    // The scope picker lives in this sheet now; refresh it for the active
+    // topic on every open, since readActive / set_path may have moved it.
+    syncContext();
     openSheet("#topics-sheet");
   }
 

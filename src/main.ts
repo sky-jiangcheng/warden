@@ -84,6 +84,11 @@ type RepoEntry = {
   missing: boolean;
 };
 
+/// One project in Cinder's own collection. The MCP tool returns snake_case
+/// straight from Cinder's JSON; only the starred ones are shown, as read-only
+/// provenance rows, never as Warden selection candidates.
+type CinderProject = { name?: string; root_path?: string; is_starred?: boolean };
+
 type ShellStatus = {
   providers: ProviderList;
   memory: MemoryStatus;
@@ -165,7 +170,9 @@ function initSettingsTabs(): void {
   applySettingsTab(readSettingsTab());
   for (const button of document.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
     button.addEventListener("click", () => {
-      applySettingsTab((button.dataset.tab ?? "connect") as SettingsTab);
+      const tab = (button.dataset.tab ?? "connect") as SettingsTab;
+      applySettingsTab(tab);
+      if (tab === "projects" && desktop) void loadCinderStarred();
     });
   }
   pick<HTMLElement>("#settings-tabs").addEventListener("keydown", (event) => {
@@ -365,6 +372,9 @@ function showView(view: View, tab?: SettingsTab): void {
   // An entry point that names a block (the memory banner means 连接) lands on
   // its group; anything else opens the remembered one.
   applySettingsTab(tab ?? readSettingsTab());
+  // Cinder's starred list is a live read, not a scan result: refresh it each
+  // time the page opens so a star added in Cinder shows up without a restart.
+  if (desktop) void loadCinderStarred();
   pick<HTMLElement>("#settings-heading").focus();
   if (!lastScan) return;
   // A rebuild would silently clear ticks the user has not saved yet.
@@ -499,6 +509,73 @@ function renderProjectRow(project: ProjectCandidate, checked?: boolean): HTMLLIE
   tags.appendChild(kind);
 
   item.append(box, main, tags);
+  return item;
+}
+
+/// Cinder's starred projects, read through the same MCP tool the copilot
+/// uses. This is a separate lane from the disk scan: Cinder may be offline
+/// while the local project list is fine, and a failed read here must never
+/// blank the Warden selection above it.
+async function loadCinderStarred(): Promise<void> {
+  const list = pick<HTMLElement>("#cinder-projects");
+  const chip = pick<HTMLElement>("#cinder-chip");
+  try {
+    const text = await invoke<string>("mcp_call_tool", { name: "repotory_projects_list", arguments: {} });
+    const parsed: unknown = JSON.parse(text);
+    const starred = (Array.isArray(parsed) ? parsed : [])
+      .filter((row): row is CinderProject => Boolean(row) && typeof row === "object" && (row as CinderProject).is_starred === true)
+      .map((row) => ({ name: row.name || (row.root_path ?? "").split(/[\\/]/).pop() || "未命名", path: row.root_path ?? "" }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    list.replaceChildren();
+    if (starred.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "roots__empty";
+      empty.textContent = "Cinder 里还没有收藏项目。";
+      list.appendChild(empty);
+    } else {
+      for (const project of starred) list.appendChild(renderCinderRow(project));
+    }
+    setReadOnlyChip(chip, `${starred.length} 个 · 只读`, starred.length > 0 ? "ok" : "quiet");
+  } catch (error) {
+    list.replaceChildren();
+    const empty = document.createElement("li");
+    empty.className = "roots__empty";
+    empty.textContent = "读取失败：Cinder 未连接或暂不可用。";
+    list.appendChild(empty);
+    setReadOnlyChip(chip, "未连接", "warn");
+  }
+}
+
+/// A read-only chip must not feed the projects tab's state dot: Cinder being
+/// offline does not break Warden's own project selection above it.
+function setReadOnlyChip(el: HTMLElement, text: string, variant: "ok" | "warn" | "quiet"): void {
+  el.textContent = text;
+  el.classList.remove("chip--ok", "chip--warn", "chip--quiet");
+  el.classList.add(`chip--${variant}`);
+}
+
+/// A read-only row: no input, no label, no click. The chip states where the
+/// project comes from and that Warden will not let it be edited here.
+function renderCinderRow(project: { name: string; path: string }): HTMLLIElement {
+  const item = document.createElement("li");
+  item.className = "project project--cinder";
+  const main = document.createElement("div");
+  main.className = "project__main";
+  const name = document.createElement("span");
+  name.className = "project__name";
+  name.textContent = project.name;
+  const path = document.createElement("span");
+  path.className = "project__path";
+  path.textContent = project.path;
+  path.title = project.path;
+  main.append(name, path);
+  const tags = document.createElement("div");
+  tags.className = "project__tags";
+  const chip = document.createElement("span");
+  chip.className = "chip chip--quiet";
+  chip.textContent = "Cinder 收藏 · 只读";
+  tags.appendChild(chip);
+  item.append(main, tags);
   return item;
 }
 
@@ -1003,6 +1080,11 @@ function main() {
     void loadRepos();
   } else {
     for (const id of ["#memory-chip", "#provider-chip", "#repo-chip", "#tray-chip"]) setChip(pick<HTMLElement>(id), "未连接", "quiet");
+    setReadOnlyChip(pick<HTMLElement>("#cinder-chip"), "未连接", "quiet");
+    const cinderEmpty = document.createElement("li");
+    cinderEmpty.className = "roots__empty";
+    cinderEmpty.textContent = "浏览器预览无法读取 Cinder 收藏。";
+    pick<HTMLElement>("#cinder-projects").appendChild(cinderEmpty);
     pick<HTMLElement>("#memory-path").textContent = browserNote;
     pick<HTMLElement>("#tray-path").textContent = "浏览器预览没有托盘与快捷键；设置页仍可切换。";
     for (const id of ["#root-add", "#repo-scan", "#repo-save-projects", "#provider-save", "#provider-fetch-models", "#provider-test", "#provider-retry", "#memory-retry"]) pick<HTMLButtonElement>(id).disabled = true;
