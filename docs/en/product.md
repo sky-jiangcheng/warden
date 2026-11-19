@@ -36,7 +36,7 @@ The three boundaries are hard:
 | Approval (approve / reject) | **yes** (a human is present) | **no** — those two tools are not on the MCP surface at all |
 | Closing it | the workbench is gone | the copilot keeps running |
 | Where the repositories come from | its own scan roots (`scan_roots`) | **its own scan roots + its own watchlist** |
-| Interface | the three-column shell + the small bot float | its own window + a tray |
+| Interface | the three-column shell (the floating bot was withdrawn; the character moved to Warden) | its own window + a tray + the desktop pet |
 
 **Approval stays with the human, and not by convention.** Cinder's MCP surface registers only two
 **pure-read** knowledge page tools (`repotory_wiki_search` / `repotory_wiki_read`), because the gate on
@@ -58,14 +58,15 @@ Five capabilities, fixed by Phase 0, plus one more ("find the repositories") add
 | **Find repositories** | **Walk the disk, list the repositories, and let the user say which ones matter** | **A new repository surfaces as a bubble; a followed one lands in the list** |
 | Chat | Talk to the model about the current project, streamed | Pick a repository + ask a question → get an answer |
 | Read project | Attach the repository path, the recent git diff, context retrieved from Cinder | Every attachment is selectable and previewable |
-| Run commands | Whitelisted tool execution; writes need human confirmation (**Phase 3 has not started**, see [roadmap.md](roadmap.md) M3) | The full command is shown, dangerous ones are blocked by default, every run is logged |
+| Run commands | Whitelisted tool execution; writes need human confirmation (**Phase 3 completed**, see [roadmap.md](roadmap.md) M3) | The full command is shown, dangerous ones are blocked by default, every run is logged |
 | Memory panels | Current context / approved knowledge / cross-session conclusions | All three panels show real data |
-| Human confirmation | Dangerous actions never run unattended (**Phase 3 has not started**) | The user sees the full command and its blast radius before confirming |
+| Human confirmation | Dangerous actions never run unattended (**Phase 3 completed**) | The user sees the full command and its blast radius before confirming |
 
-**"Human confirmation": one half settled, one half waits for Phase 3**: the copilot
-writing **durable knowledge** over MCP (`notes_create` / `notes_update` / `notes_organize`)
-is settled (see item 5 under "Open questions" below); whitelisted command execution
-belongs to **Phase 3, which has not started** ([roadmap.md](roadmap.md) M3 is marked "not started").
+**"Human confirmation": both halves landed**: the copilot writing **durable knowledge** over MCP
+(`notes_create` / `notes_update` / `notes_organize`) goes through a pre-call hard-block confirmation
+card (see item 5 under "Open questions" below); the write half of whitelisted command execution
+also goes through a confirmation card — **Phase 3 is complete (2026-11-18, 8 read + 4 write tools,
+arbitrary commands explicitly rejected)**, see [roadmap.md](roadmap.md) M3.
 
 ## Decisions fixed in Phase 0
 
@@ -160,7 +161,7 @@ frames plus two overlap-cut layers, cross-fading between faces with a 140-row ov
 seam — exactly where the "not smooth enough" feeling came from. A vector character replaces the frame
 swap with continuous shape displacement, so the smoothness is structural rather than tuned. The
 character also left Cinder (its whole floating entry was removed there), so one character lives in one
-place. **The window holds the cat and one speech bubble, nothing else**: the metric line,
+place. **The window holds the pet and one speech bubble, nothing else**: the metric line,
 the status line and the "chat" button are gone — numbers belong to the conversation (see ②), and the
 entrances are click / `⌥Space` / the tray, so a few lines of text on top of a character were just another
 layer of interface. **Only the cat body starts a
@@ -354,9 +355,9 @@ whitelisted tools (see "the resident shape" ②), all read-only, so none of this
 the three durable-knowledge writes are **refused client-side** for the model and will never
 execute. This landed with the M2 wrap-up (2026-11-12, see the Phase 2 wrap-up notes in
 [roadmap.md](roadmap.md)).
-⑤ **Phase 0's "human confirmation": one half settled, one half waits for Phase 3** — the copilot
-writing durable knowledge over MCP (the three above) is settled; whitelisted command execution
-belongs to **Phase 3, which has not started** ([roadmap.md](roadmap.md) M3).
+⑤ **Phase 0's "human confirmation": both halves landed** — the copilot writing durable knowledge
+over MCP (the three above) goes through a pre-call confirmation card; the write half of whitelisted
+command execution does too — **Phase 3 is complete (2026-11-18)**, see [roadmap.md](roadmap.md) M3.
 
 ### 6. ~~How the frontend state machine gets tested~~ (settled 2026-11-12: option 1, pure functions + vitest)
 

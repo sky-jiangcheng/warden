@@ -394,7 +394,11 @@ silently, failures go to stderr only (2026-11-16 read-only review)
   that already carries messages can also be re-attached or cleared — the scope is read at
   generation time, so re-attaching only shapes which checkpoint the NEXT reply earns, and
   both servers (`SetChatThreadPath` / `set_path`) never had a message-count guard. The
-  legacy unscoped threads can now be fixed from the UI alone, no Cinder MCP detour. On the
+  legacy unscoped threads can now be fixed from the UI alone, no Cinder MCP detour.
+  **Since 2026-11-19 (`d7dc118`) the scope selector moved out of the chat composer into the
+  topic panel**: opening the panel runs `syncContext`, an idle topic can be re-attached or
+  cleared, and it is locked while generating — same capability, no longer taking the most
+  prominent spot on every message. On the
   root cause: both ends of the create chain were re-checked with no drop point for the
   picked path (the frontend create call carries `topic.path` straight through), so the
   likely cause is "no repo picked at the time" — the old UI locked the select once the

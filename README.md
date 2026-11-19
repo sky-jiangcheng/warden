@@ -157,11 +157,12 @@ sentence, never a hard block.
   sync, messages are immutable (same id with a different payload is an error, never an overwrite), and every
   assistant message is labelled from its own `source` — calling a plugin's reply "Warden" would be claiming
   another client's answer
-- **A resident companion window** — 132×128, nothing in it but the cat and a one-line bubble; click it or
-  press `⌥Space` to open the chat, and only the cat drags the window. The cat follows the pointer with
-  its eyes anywhere on screen (the head turn fades with distance), eased per-frame, blinks on its own,
-  and sulks when left alone; head and body frames overlap in fur, so a click hops the whole cat without
-  ever opening a seam at the neck. **Closing a window hides it**
+- **A resident companion window** — 132×128, nothing in it but a vector robot and a one-line bubble; click it
+  or press `⌥Space` to open the chat, and only the robot drags the window. Its paper-coloured face and eyes
+  that slide inside the screen are the "look" — no expression frames, no layered cropping, no seam to hide.
+  The gaze follows the pointer anywhere on screen (fading with distance, eased per-frame), the antenna lags
+  a beat behind the tilt, it blinks on its own, sulks when left alone, and its mouth turns to three pulsing
+  dots while thinking. This replaced the white cat "Frost" (2026-11-17). **Closing a window hides it**
   (the red button must not cut off an answer being generated); **Quit in the tray is the way out**
 - **Numbers on demand** — ask in the chat and the model calls `repotory_metrics`, which reads what memory
   **already stores**: nothing scans the disk, runs git or refreshes a cache to answer you. A scope it cannot
