@@ -235,17 +235,13 @@ jobs:
           releaseBody: |
             Warden：跑在本机的 copilot，记忆层由 Cinder 通过 MCP 提供。
 
-            **超时终于真的会超时。** 之前 `run_confined_within` 到点只 kill 直接子进程；而 npm 建子进程、sh 起 sleep 这类命令，孙进程会继续握着 stdout 管道，读线程就一直阻塞到它们自己退出——界面上表现出来是「卡住」，不是「超时」。现在子进程进自己的进程组，到点用 `killpg` 打整组，并用 `DoneOnDrop` + channel 把「命令跑完了」和「读线程该走了」解耦。两个回归测试钉住行为：快命令不烧满超时，卡死的命令在 deadline 被整组杀掉。
+            **输入框不再被仓库选择项占地方。** 之前每条消息上方都挂着一个「不附加仓库」下拉框，多数对话根本用不到，却一直在最显眼的位置。现在它从聊天输入框移除，仓库归属改到主题面板里设置——打开主题面板就能看到「当前主题的仓库归属」，空闲主题可改挂或清除，生成中自动锁住。走的还是原来的 `conversation_set_path`，能力没变，只是入口挪到了它该在的地方。
 
-            **畸形的工具调用不再被当成「没传参数」。** 两条规则分开：`arguments` 字段缺省读作 `{}`（模型省略空参数是合法输出，不是错误）；`arguments` 存在但不是合法 JSON 时明确拒绝。以前后者会静默给一个空对象，一次畸形的 tool_call 看起来就像模型什么都没填——这是最难排查的一类「成功」。
+            **设置页能看到 Cinder 收藏的项目了。** 之前「项目」tab 只列 Warden 自己选的仓库，Cinder 那边收藏了哪些项目在这里看不见。现在多出一块「Cinder 收藏的项目」：经 MCP 的 `repotory_projects_list` 读取 `is_starred` 项目，逐条带「Cinder 收藏 · 只读」标记，没有勾选框、不能编辑也不参与保存——和 Warden 自选项目分区摆着，不会误勾误存。Cinder 没连上或在浏览器预览里运行时，显示提示而不是空白。
 
-            **一轮对话拆成 prepare / stream / finish 三段。** 发请求前、流式回合、收尾落库三个状态原来挤在同一个函数里，改超时或改 tool_call 处理都要先读懂另外两处。拆开后各段只持自己需要的状态，测试也能只装一段；行为不变。
+            **版本号 0.3.2**：这一版是 UX 精简与既有能力的重新摆放——删掉输入框的仓库下拉框、仓库归属移入主题面板、设置页新增 Cinder 收藏的只读视图，没有引入新的能力档，走 patch 不走 minor。
 
-            **CI 补一道默认 feature 集的全目标编译。** 端到端测试要 `test-fixtures`，而 `McpSession::from_connected` 也被同一个 feature 挡住过——于是编辑器里一 `cargo check --all-targets` 就红、CI 却一直绿。现在 fixture 只守卫假服务器那个 bin，构造函数回到默认路径，并新增一道 `cargo check --all-targets` 把这类分歧摆在 CI 里。
-
-            **版本号 0.3.1**：修的是「本该超时却卡住」与「畸形调用被当成合法空参」，外加一次无行为变化的重构，走 patch 不走 minor。
-
-            **边界**：命令面仍是白名单（M3 进行中）；`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行仍是未修残留。
+            **边界**：仓库归属仍只从主题面板设置，模型工具改归属的口子没有放开（`repotory_chat` 的 `set_path` 仍在白名单外，防双写边界不变）；命令面仍是白名单（M3 进行中）；`panic = "abort"` 与被 SIGKILL 时 `Drop` 无法运行仍是未修残留。
 
             Warden needs `repotory-mcp` (or the renamed `cinder-mcp`) on PATH for the memory layer; the chat itself works with any OpenAI-compatible provider. Run `repotory-agent init` from a terminal to check this machine before opening the app.
           releaseDraft: false
