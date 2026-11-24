@@ -188,7 +188,8 @@ scripts/             仓库守卫脚本
   `icon.ico` / `icon.icns` + `tray-22.png`；`src-tauri/AppIcon.icon/`：macOS 明暗双外观源）。
   改动 `icon-warden.svg` 后必须重跑这条命令，否则 app 会带着旧标记上线。macOS 打包由
   `tauri.macos.conf.json` 在 bundling 前运行 `scripts/apply-macos-app-icon.sh --compile-only`，
-  把 `Assets.car` 放进 Resources，并用 `Info.plist` 合并 `CFBundleIconName=AppIcon`，确保图标在签名前就位。
+  通过 `bundle.macOS.files`（目标路径 → 源路径）把 `Assets.car` 放进 Resources，并用 `Info.plist` 合并 `CFBundleIconName=AppIcon`，确保图标在签名前就位。
+  **不要改回 `bundle.resources`**：它会在 Cargo 编译期校验源文件，而 `Assets.car` 要到 `beforeBundleCommand` 才生成。
 - **CI 有六个 job**（`.github/workflows/ci.yml`）：docs mirror / brand / 前端 build /
   前端状态机测试（`npm run test:fe`，vitest）/ Rust fmt+clippy+test（ubuntu）/
   Rust 三门 + `tauri build --debug --bundles app` 冒烟（macOS，2026-11-12 补）。

@@ -3,10 +3,10 @@
     "beforeBundleCommand": "scripts/apply-macos-app-icon.sh --compile-only"
   },
   "bundle": {
-    "resources": {
-      "Assets.car": "Assets.car"
-    },
     "macOS": {
+      "files": {
+        "Resources/Assets.car": "Assets.car"
+      },
       "infoPlist": "Info.plist"
     }
   }
