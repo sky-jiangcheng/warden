@@ -1,0 +1,13 @@
+{
+  "build": {
+    "beforeBundleCommand": "scripts/apply-macos-app-icon.sh --compile-only"
+  },
+  "bundle": {
+    "resources": {
+      "Assets.car": "Assets.car"
+    },
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
+  }
+}

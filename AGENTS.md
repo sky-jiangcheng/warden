@@ -39,7 +39,7 @@ src/                 前端（TypeScript + Vite，无框架）
   main.ts            首屏渲染：只消费后端的 shell_status，不含任何运行时知识
   chat-state.ts      聊天状态机的纯决策（并发/revision 丢弃/IME 窗口/草稿保留），vitest 直测它
   styles.css         设计令牌 + 卡片/徽章/排版 + 桌宠（矢量机器人）全部动画
-  assets/warden.png  主窗品牌标记：264px 光栅，按 36px 显示（3× 只为不留放大糊边；生成物，走主仓图标生成器）
+  assets/warden.png  主窗品牌标记：64px app domain 光栅，按 36px 显示（生成物，走主仓图标生成器）
 src-tauri/           后端（Rust）
   src/lib.rs         Tauri 命令装配与窗口生命周期
   src/mcp_client.rs  MCP stdio 客户端：initialize / tools/list / tools/call
@@ -185,8 +185,10 @@ scripts/             仓库守卫脚本
   node scripts/generate-icons.mjs --agent-repo ../warden
   ```
   本仓的图标**全部是生成物**（`src-tauri/icons/`：Tauri 的 PNG 阶梯 + Square* 商店阶梯 +
-  `icon.ico` / `icon.icns` + `tray-22.png`）。改动 `icon-warden.svg` 后必须重跑这条命令，
-  否则 app 会带着旧标记上线。
+  `icon.ico` / `icon.icns` + `tray-22.png`；`src-tauri/AppIcon.icon/`：macOS 明暗双外观源）。
+  改动 `icon-warden.svg` 后必须重跑这条命令，否则 app 会带着旧标记上线。macOS 打包由
+  `tauri.macos.conf.json` 在 bundling 前运行 `scripts/apply-macos-app-icon.sh --compile-only`，
+  把 `Assets.car` 放进 Resources，并用 `Info.plist` 合并 `CFBundleIconName=AppIcon`，确保图标在签名前就位。
 - **CI 有六个 job**（`.github/workflows/ci.yml`）：docs mirror / brand / 前端 build /
   前端状态机测试（`npm run test:fe`，vitest）/ Rust fmt+clippy+test（ubuntu）/
   Rust 三门 + `tauri build --debug --bundles app` 冒烟（macOS，2026-11-12 补）。
