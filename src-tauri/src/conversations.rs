@@ -27,6 +27,12 @@ const HANDOFF_TOOL: &str = "repotory_handoff";
 const MAX_INPUT_CHARS: usize = 12_000;
 const CONTEXT_CHARS: usize = 24_000;
 const CONTEXT_MESSAGES: usize = 32;
+// The memory briefing is prepended to EVERY scoped conversation, so it pays
+// its token rent on every request. `repotory_context` leads with the latest
+// handoff and then walks an older timeline — the head is what says what the
+// user was doing, the tail is history the model can ask for if it wants it.
+// Truncation is announced in the text so the model knows it holds a head.
+const MEMORY_BRIEFING_CHARS: usize = 2_400;
 // Must equal Cinder's `service.MaxChatTitleLen`. A local cap looser than the
 // server's is worse than none: the title looks valid here and then fails there
 // with a message the user cannot act on.
@@ -48,6 +54,7 @@ pub(crate) const MODEL_TOOLS: &[&str] = &[
     "repotory_projects_stats",
     "repotory_notes_search",
     "repotory_notes_read",
+    "repotory_notes_duplicates",
     "repotory_wiki_search",
     "repotory_wiki_read",
 ];
@@ -136,7 +143,13 @@ async fn model_tools(session: &McpSession, local: bool) -> Result<Vec<ToolSpec>,
 /// "which repositories do I watch", and the user is told their own list back
 /// wrong. Naming both, and saying which is which, costs one line and removes
 /// the confusion.
-fn system_prompt(repository: Option<&str>, watched: &[String], diff: Option<&str>) -> String {
+fn system_prompt(
+    repository: Option<&str>,
+    watched: &[String],
+    memory: Option<&str>,
+    memory_error: Option<&str>,
+    diff: Option<&str>,
+) -> String {
     let mut prompt = String::from(
         "You are Warden, a local copilot. Cinder, the memory layer, offers \
          read-only tools: use them for repository facts (metrics, notes, \
@@ -146,6 +159,36 @@ fn system_prompt(repository: Option<&str>, watched: &[String], diff: Option<&str
     );
     if let Some(path) = repository.filter(|path| !path.is_empty()) {
         prompt.push_str(&format!("\nCurrent repository: {path}"));
+    }
+    // The memory briefing is fetched by the CLIENT before the first token,
+    // not left to the model to call. `repotory_context` was always on the
+    // tool face, and the model used it only when it thought to — which meant
+    // "what was I doing here last time" was answered from the diff alone on
+    // most turns. Prefetching costs one MCP round trip and removes that
+    // lottery. It is a briefing, not a fact: it says itself that a tool call
+    // is fresher, because a handoff written three days ago and a note edited
+    // this morning are both in there.
+    if let Some(memory) = memory.filter(|memory| !memory.trim().is_empty()) {
+        prompt.push_str(
+            "\n\nWhat Cinder remembers about this repository (its own \
+             repotory_context briefing: previous sessions' handoffs, notes \
+             and approved pages). Use it as background; prefer it over \
+             guessing, and call a tool when you need something fresher than \
+             this briefing:\n",
+        );
+        prompt.push_str(memory.trim_end());
+    }
+    // The other half of prefetching: when the call was attempted and failed,
+    // SAY it. Silence here is the failure mode product.md forbids — the model
+    // would answer as if it had read the history, and the person reading the
+    // answer cannot tell that it had not.
+    if let Some(error) = memory_error.filter(|error| !error.trim().is_empty()) {
+        prompt.push_str(&format!(
+            "\n\nCinder did not answer this turn, so you have NO memory of \
+             previous sessions right now ({error}). If the user asks what \
+             happened before, say you could not reach the memory layer — do \
+             not reconstruct it from the diff and present it as remembered.",
+        ));
     }
     // The working tree the Phase 2 line promised: "附加最近 git diff". The
     // block is the client's own rendering of `git diff --stat` plus an
@@ -671,7 +714,53 @@ pub(crate) async fn call_text(
     answer.map_err(|e| format!("Cinder {name}: {e}"))
 }
 
-/// Optional MCP strings are OMITTED, never sent as JSON null.
+/// The memory briefing for a scoped conversation: `repotory_context` resolved
+/// by the repository path, truncated, and allowed to be absent.
+///
+/// Three deliberate behaviours:
+///
+/// * **A failure is DECLARED, not silent.** product.md's rule is that chat
+///   stays usable when the memory layer is down, and that a context-assembly
+///   failure is never silent — the two are not in tension: the turn proceeds,
+///   but the prompt says the memory did not answer. Returning `Ok(None)` on
+///   error would make "nothing remembered here" and "the layer never
+///   answered" identical to the model, which then answers "what was I doing"
+///   from the diff alone and sounds certain. Erroring out is the other wrong
+///   answer: it turns "Cinder is not installed" into "Warden cannot chat".
+/// * **No repository, no call.** A temporary conversation has no scope, and
+///   a briefing about "some project" is exactly the invented-context failure
+///   the system prompt spends lines preventing.
+/// * **No JSON parsing.** `repotory_context` answers in prose (its handler
+///   returns a string); the same verbatim rule that governs model tool
+///   answers governs this one.
+async fn memory_briefing(
+    session: &McpSession,
+    repository: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(path) = repository.filter(|path| !path.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let answer = call_text(session, "repotory_context", json!({ "path": path })).await;
+    let text = answer?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(truncate_chars(text, MEMORY_BRIEFING_CHARS)))
+}
+
+/// Cut on a CHARACTER boundary and say so. `str::truncate` would panic on a
+/// multi-byte boundary, and a silently shortened briefing reads to the model
+/// as the whole picture.
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max).collect();
+    out.push_str("\n[briefing truncated by the client; call repotory_context for the rest]");
+    out
+}
+
 ///
 /// `json!({"reply_to": reply_to})` renders a `None` as `"reply_to": null`,
 /// and Cinder's parameter layer treats a present key as supplied — a null
@@ -1410,27 +1499,43 @@ async fn prepare_turn(
         thread_path = repository.clone();
         let tools = model_tools(session, repository.is_some()).await?;
         if !tools.is_empty() {
-            // One snapshot per generation, shared by the injected prompt
-            // and the reply checkpoint: what the model read and what the
-            // handoff recorded describe the SAME tree, not whatever the
-            // user saved between the two calls. The git child runs on the
-            // blocking pool — this path is an async command and a wedged
-            // git must not occupy a tokio worker (AGENTS: no blocking IO
-            // in async commands).
-            let diff = match &repository {
-                Some(path) => {
-                    let path = path.clone();
-                    tauri::async_runtime::spawn_blocking(move || crate::git::recent_diff(&path))
-                        .await
-                        .map_err(|e| format!("the git diff task failed: {e}"))?
-                }
-                None => None,
+            // One snapshot per generation, shared by the injected prompt and
+            // the reply checkpoint: what the model read and what the handoff
+            // recorded describe the SAME tree, not whatever the user saved
+            // between the two calls. The git child runs on the blocking pool
+            // — this path is an async command and a wedged git must not
+            // occupy a tokio worker (AGENTS: no blocking IO in async
+            // commands). The Cinder briefing is an independent read, so it
+            // rides in parallel rather than after: neither one needs the
+            // other's answer, and the turn should not pay both latencies.
+            let (diff, memory) = tokio::join!(
+                async {
+                    match &repository {
+                        Some(path) => {
+                            let path = path.clone();
+                            tauri::async_runtime::spawn_blocking(move || {
+                                crate::git::recent_diff(&path)
+                            })
+                            .await
+                            .map_err(|e| format!("the git diff task failed: {e}"))
+                        }
+                        None => Ok(None),
+                    }
+                },
+                memory_briefing(session, repository.as_deref()),
+            );
+            let diff = diff?;
+            let (briefing, briefing_error) = match memory {
+                Ok(text) => (text, None),
+                Err(reason) => (None, Some(reason)),
             };
             context.insert(
                 0,
                 ChatMessage::system(system_prompt(
                     repository.as_deref(),
                     &request.watched,
+                    briefing.as_deref(),
+                    briefing_error.as_deref(),
                     diff.as_deref(),
                 )),
             );
@@ -2086,5 +2191,24 @@ diff --git a/README.md b/README.md
         assert!(refused.error.is_some());
         let payload: Value = serde_json::from_str(&refused.content).unwrap();
         assert!(payload["error"].as_str().unwrap().contains("invalid tool"));
+    }
+
+    // A briefing under the cap is handed over untouched: no marker, no
+    // ellipsis, nothing the model could read as "the rest is missing".
+    #[test]
+    fn a_short_briefing_is_not_annotated() {
+        assert_eq!(truncate_chars("Project: warden", 100), "Project: warden");
+    }
+
+    // CJK is the reason this is a character cap and not a byte cap: slicing
+    // at 4 bytes lands inside a 3-byte character and `str::truncate` panics.
+    #[test]
+    fn a_long_briefing_is_cut_on_a_character_boundary_and_says_so() {
+        let text = "会话记忆".repeat(10);
+        let cut = truncate_chars(&text, 7);
+        assert!(cut.starts_with("会话记忆会话记"), "{cut}");
+        assert!(cut.contains("truncated by the client"), "{cut}");
+        // The marker is appended, never counted into the cap.
+        assert!(cut.chars().count() > 7);
     }
 }

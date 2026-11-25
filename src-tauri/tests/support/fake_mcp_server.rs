@@ -107,10 +107,17 @@ fn serve_chat() {
                     }
                 } else if name == "repotory_context" {
                     // The real Cinder contract: a PLAIN-TEXT briefing, not
-                    // JSON — BuildProjectContext returns a string.
-                    Ok(text(
-                        "Project: warden\nTech stack: Rust + TypeScript\nRecent commits: 3 today",
-                    ))
+                    // JSON — BuildProjectContext returns a string. The FAIL
+                    // switch models a memory layer that is DOWN while the
+                    // transport is healthy: the case the briefing must not
+                    // swallow.
+                    if std::env::var("REPOTORY_AGENT_FAKE_CONTEXT_FAIL").is_ok() {
+                        Err(format!("{TOOL_ERROR}: repotory_context"))
+                    } else {
+                        Ok(text(
+                            "Project: warden\nTech stack: Rust + TypeScript\nRecent commits: 3 today",
+                        ))
+                    }
                 } else if name == "repotory_notes_create" {
                     // The marker the gating test watches for: it must only
                     // appear in a reply when the user APPROVED the write.

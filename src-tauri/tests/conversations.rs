@@ -633,6 +633,86 @@ async fn a_tool_round_executes_the_memory_tool_and_feeds_the_result_back() {
     );
 }
 
+/// The Cinder briefing is FETCHED by the client, not left to the model to
+/// call. `repotory_context` was always on the tool face; the difference is
+/// that most turns never called it, so "what was I doing in this repo" was
+/// answered from the diff alone. The briefing now rides in the system prompt
+/// of every scoped conversation.
+#[tokio::test]
+async fn the_memory_briefing_rides_in_the_system_prompt() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "/repo/one").await;
+    let (result, chunks) = f.send(request("mb1", "what was I doing?")).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let system = messages
+        .iter()
+        .find(|m| m["role"] == "system")
+        .expect("system prompt");
+    let prompt = system["content"].as_str().unwrap();
+    assert!(prompt.contains("What Cinder remembers"), "{prompt}");
+    // The real tool's contract is prose, and it reaches the prompt verbatim.
+    assert!(prompt.contains("Tech stack: Rust + TypeScript"), "{prompt}");
+    // The block says it may be stale: a handoff from three days ago and a
+    // note edited this morning both live in it.
+    assert!(prompt.contains("fresher"), "{prompt}");
+}
+
+/// A memory layer that is DOWN while the transport is healthy must be
+/// DECLARED in the prompt, not swallowed. product.md states the rule
+/// directly — a context-assembly failure is never silent. A silent skip makes
+/// "nothing remembered here" and "the memory layer never answered" look the
+/// same to the model, so it answers "what was I doing" from the diff and
+/// sounds certain.
+#[tokio::test]
+async fn an_unreachable_memory_layer_is_declared_in_the_prompt() {
+    let f = Fixture::with_server_env(
+        "REPOTORY_AGENT_FAKE_CHAT",
+        &[("REPOTORY_AGENT_FAKE_CONTEXT_FAIL", "1")],
+    )
+    .await;
+    f.create(THREAD, "/repo/one").await;
+    let (result, chunks) = f.send(request("mb3", "what was I doing?")).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let system = messages
+        .iter()
+        .find(|m| m["role"] == "system")
+        .expect("the tool face still gets its rules");
+    let prompt = system["content"].as_str().unwrap();
+    assert!(prompt.contains("did not answer this turn"), "{prompt}");
+    assert!(prompt.contains("NO memory"), "{prompt}");
+    // No empty briefing header pretending the memory answered.
+    assert!(!prompt.contains("What Cinder remembers"), "{prompt}");
+}
+
+/// A thread with no repository scope gets tools but no briefing. The
+/// alternative — asking Cinder about "somewhere" — is the invented-context
+/// failure the system prompt spends lines preventing. (A TEMPORARY
+/// conversation, no thread at all, is the narrower case and has no system
+/// prompt whatsoever.)
+#[tokio::test]
+async fn a_briefing_needs_a_repository_scope() {
+    let f = Fixture::new("REPOTORY_AGENT_FAKE_CHAT").await;
+    f.create(THREAD, "").await;
+    let (result, chunks) = f.send(request("mb2", "hello")).await;
+    result.expect("send");
+
+    let reply = answer(&chunks);
+    let messages = reply["messages"].as_array().unwrap();
+    let system = messages
+        .iter()
+        .find(|m| m["role"] == "system")
+        .expect("the tool face still gets its rules");
+    let prompt = system["content"].as_str().unwrap();
+    assert!(!prompt.contains("What Cinder remembers"), "{prompt}");
+    assert!(!prompt.contains("Current repository"), "{prompt}");
+}
+
 /// The watchlist is Warden's own list and Cinder's starred projects are the
 /// memory layer's; the system prompt names both apart so "which repos do I
 /// watch" cannot be answered with the wrong one.

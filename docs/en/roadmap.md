@@ -124,6 +124,14 @@ Goal: open the copilot, pick a repository, talk to a model about the project.
   (hard interception before the call, an editable in-conversation card, a separate append-only
   audit, and refuse-by-default on timeout).
 
+**The memory briefing is prefetched at the start of a turn (2026-11-25)**: `repotory_context` was
+always on the tool face, but the model called it only when it thought to — so "what was I doing here
+last time" was answered from the diff alone on most turns. A repository-scoped thread now fetches the
+briefing once before generation, in parallel with the git diff (two independent reads; the first token
+does not pay both latencies), and puts it in the system prompt: 2400 characters, and it says so when
+truncated. When the fetch fails it is **not swallowed**: the prompt states that this turn has no memory
+and that the diff must not be passed off as one; the chat itself still runs (product.md open question 3).
+
 ## Phase 2.5: finding the repositories itself (1 week) — done
 
 The copilot goes from "one front end of Cinder" to "an independent robot on this machine".
