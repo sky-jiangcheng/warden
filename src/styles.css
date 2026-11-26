@@ -1179,6 +1179,11 @@ body { background: transparent; }
   transition: none; /* the rAF easing in companion.ts IS the smoothing */
 }
 
+/* The iris carries the gradient. The fill has to sit on the shape itself:
+   a fill inherited from .pet__eyes would beat the presentation attribute,
+   and the eye would go back to flat ink. */
+.pet__iris { fill: url(#pet-iris); }
+
 .pet__eye { transform-box: fill-box; transform-origin: center; }
 .pet[data-look="blink"] .pet__eye { scale: 1 .1; }
 /* Sleepy is the only closed-eye look. Eyes shut, sparks gone, and the o

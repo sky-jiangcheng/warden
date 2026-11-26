@@ -334,6 +334,17 @@
           <span class="pet__halo" aria-hidden="true"></span>
           <span class="pet__shadow" aria-hidden="true"></span>
           <svg class="pet__bot" viewBox="0 0 100 100" role="img" aria-label="Warden 桌宠">
+            <defs>
+              <!-- The iris: the pet's accent family, brighter toward an upper
+                   core so the eye reads as a lit sphere instead of a flat
+                   cut-out. Fixed colour on purpose — a coloured part, like the
+                   antenna bulb, not part of the ink/paper inversion. -->
+              <radialGradient id="pet-iris" cx="50%" cy="38%" r="58%">
+                <stop offset="0" stop-color="#5FB3A6" />
+                <stop offset="0.55" stop-color="#2F6B63" />
+                <stop offset="1" stop-color="#34322D" />
+              </radialGradient>
+            </defs>
             <!-- antenna -->
             <g class="pet__antenna">
               <line x1="50" y1="30" x2="50" y2="16" />
@@ -352,12 +363,12 @@
                  .pet__eyes so a blink and the gaze move the pair together. -->
             <g class="pet__eyes">
               <g class="pet__eye pet__eye--left">
-                <ellipse cx="39.2" cy="55.2" rx="9.2" ry="11.6" />
+                <ellipse cx="39.2" cy="55.2" rx="9.2" ry="11.6" class="pet__iris" />
                 <circle class="pet__spark" cx="36.2" cy="50.2" r="3.1" />
                 <circle class="pet__spark pet__spark--small" cx="42.5" cy="60.2" r="1.5" />
               </g>
               <g class="pet__eye pet__eye--right">
-                <ellipse cx="60.8" cy="55.2" rx="9.2" ry="11.6" />
+                <ellipse cx="60.8" cy="55.2" rx="9.2" ry="11.6" class="pet__iris" />
                 <circle class="pet__spark" cx="57.8" cy="50.2" r="3.1" />
                 <circle class="pet__spark pet__spark--small" cx="64.1" cy="60.2" r="1.5" />
               </g>
