@@ -1186,11 +1186,25 @@ body { background: transparent; }
 
 .pet__eye { transform-box: fill-box; transform-origin: center; }
 .pet[data-look="blink"] .pet__eye { scale: 1 .1; }
-/* Sleepy is the only closed-eye look. Eyes shut, sparks gone, and the o
-   mouth hidden too: a sleeping pet, not a pet squinting at you. */
-.pet[data-look="sleepy"] .pet__eye { scale: 1 .1; }
+/* Sleepy is the only closed-eye look, and it is a closed LID, not a slit:
+   the ellipses fade out and two down-bowed arcs take their place. Pressing
+   the ellipse flat read as a squint — the face the user rejected. */
+.pet[data-look="sleepy"] .pet__eye { opacity: 0; }
 .pet[data-look="sleepy"] .pet__spark,
 .pet[data-look="sleepy"] .pet__mouth--o { opacity: 0; }
+.pet[data-look="sleepy"] .pet__eyes--closed { opacity: 1; }
+
+/* The shut lids: drawn once, hidden outside the nap. They inherit the gaze
+   offset, so a sleeping pet still turns its face toward the pointer. */
+.pet__eyes--closed {
+  fill: none;
+  stroke: var(--brand-field, #34322D);
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  opacity: 0;
+  translate: calc(var(--look-x) * 7px) calc(var(--look-y) * 5px);
+  transition: opacity 180ms ease;
+}
 
 /* The antenna is the tell that it is paying attention: it leans toward the
    pointer a beat behind the eyes, then sways on its own. */
@@ -1291,11 +1305,35 @@ body { background: transparent; }
   transform-origin: center;
 }
 
-/* Tsundere — the eyes slide away and refuse to come back. This is what the
-   pet does when it is left alone: affection has to be asked for. */
-.pet[data-mood="tsundere"] .pet__eyes {
-  translate: calc(-9px + var(--look-x) * 2px) calc(3px + var(--look-y) * 1px);
+/* Sleeping — this is the resting state, not a sulk. The lids shut, the float
+   slows, the halo dims, and one drool bead shows at the corner. Any
+   interaction wakes it: there is no mood to apologise for and no line. */
+.pet[data-mood="sleeping"] .pet__eyes { translate: 0 0; }
+.pet[data-mood="sleeping"] .pet__halo { opacity: .45; }
+.pet[data-mood="sleeping"] .pet__drool { opacity: .8; }
+
+/* The drool is the nap's one bit of comedy, and it has to be legible at the
+   real 80px pet: a hairline strand disappears, so the strand is thicker than
+   the lid stroke and the bead is a proper drop. Drawn once, invisible outside
+   the nap — the waking face keeps the eyes as its only feature. */
+.pet__drool {
+  fill: var(--brand-field, #34322D);
+  opacity: 0;
+  transition: opacity 220ms ease;
 }
+.pet__drool-strand {
+  fill: none;
+  stroke: var(--brand-field, #34322D);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+}
+.pet__drool-bead { transform-box: fill-box; transform-origin: 50% 40%; }
+.pet[data-mood="sleeping"] .pet__drool-strand { animation: pet-drool-strand 4.2s ease-in-out infinite; }
+.pet[data-mood="sleeping"] .pet__drool-bead { animation: pet-drool-bead 4.2s ease-in-out infinite; }
+@keyframes pet-drool-strand { 0%, 100% { scale: 1 .9; } 50% { scale: 1 1.05; } }
+@keyframes pet-drool-bead { 0%, 100% { translate: 0 0; scale: .92; } 50% { translate: 0 .6px; scale: 1.05; } }
 
 /* Dragging — it hangs from the pointer and swings. */
 .pet[data-mood="dragging"] { animation: none; rotate: -8deg; }
@@ -1341,11 +1379,10 @@ body { background: transparent; }
 .pet[data-mood="happy"] .pet__halo { opacity: 1; }
 .pet[data-mood="curious"] .pet__halo { opacity: .9; }
 .pet[data-mood="thinking"] .pet__halo { opacity: .95; }
-.pet[data-mood="tsundere"] .pet__halo { opacity: .5; }
 .pet[data-mood="dragging"] .pet__shadow { transform: translateX(-50%) scale(.7); opacity: .28; }
 .pet[data-mood="happy"] .pet__shadow { transform: translateX(-50%) scale(1.1); }
 
-/* Asleep: the float slows and the eyes half-close. */
+/* Asleep: the float slows and the eyes shut — no half-close, no sulk. */
 .pet[data-look="sleepy"] { animation-duration: 7s; }
 
 @media (prefers-reduced-motion: reduce) {

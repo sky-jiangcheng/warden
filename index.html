@@ -313,7 +313,7 @@
         <div class="scope-form"><label for="topic-scope">当前主题的仓库归属</label><div class="form__row"><select class="field" id="topic-scope" aria-label="对话仓库归属" title="对话仓库归属；回复中不可改，空闲主题可改挂或清除"><option value="">不附加仓库</option></select></div><p class="meta" id="topic-scope-note">回复中不可改；空闲主题可改挂或清除。归属决定下次回复能否写入交接。</p></div>
       </div>
     </dialog>
-    <div class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="idle">
+    <div class="companion" id="companion-surface" aria-label="Warden 桌宠" data-mood="sleeping">
       <p class="companion__bubble" id="companion-bubble" role="status" aria-live="polite"></p>
       <div class="lantern" id="companion-drag" title="点我对话 · 拖动可移动" role="button" tabindex="0" aria-label="Warden 桌宠，点击打开对话，拖动可移动窗口">
         <!-- The bot: a vector character, not a stack of pictures.
@@ -330,7 +330,7 @@
 
              Parts are addressed by class so every animation lives in CSS;
              companion.ts only sets data-mood / data-look / --look-x / --look-y. -->
-        <div class="pet" id="pet" data-look="neutral">
+        <div class="pet" id="pet" data-mood="sleeping" data-look="sleepy">
           <span class="pet__halo" aria-hidden="true"></span>
           <span class="pet__shadow" aria-hidden="true"></span>
           <svg class="pet__bot" viewBox="0 0 100 100" role="img" aria-label="Warden 桌宠">
@@ -379,11 +379,26 @@
               <path class="pet__eye-smile pet__eye-smile--left" d="M30 57.8 Q39.2 49.4 48.4 57.8" />
               <path class="pet__eye-smile pet__eye-smile--right" d="M51.6 57.8 Q60.8 49.4 70 57.8" />
             </g>
+            <!-- Sleep is a closed lid, not a squint: two down-bowed arcs take
+                 over from the ellipses, drawn once and shown only while the
+                 pet naps. Pressing the ellipse flat made a slit, which reads as
+                 a squint at the user rather than as sleep. -->
+            <g class="pet__eyes--closed">
+              <path class="pet__lid pet__lid--left" d="M30 56.4 Q39.2 62 48.4 56.4" />
+              <path class="pet__lid pet__lid--right" d="M51.6 56.4 Q60.8 62 70 56.4" />
+            </g>
             <!-- No mouth at rest. The eyes are the whole face: a small mouth
                  under them narrowed the read to "emoji", and at 1× it becomes
                  a smudge. Surprise and error still get the round one below. -->
             <!-- the round mouth for surprise and error, hidden by default -->
             <circle class="pet__mouth--o" cx="50" cy="66.6" r="2.1" />
+            <!-- The drool: the nap's one bit of comedy. A short strand and a
+                 bead at the corner, drawn once and shown only while sleeping,
+                 so the resting face keeps the eyes as its only feature. -->
+            <g class="pet__drool">
+              <path class="pet__drool-strand" d="M52.6 65.2 Q53.1 68.4 53.8 70.8" />
+              <circle class="pet__drool-bead" cx="53.9" cy="72" r="2.5" />
+            </g>
             <!-- the thinking dots, hidden until data-mood=thinking -->
             <g class="pet__think">
               <circle cx="40" cy="66.5" r="1.7" />

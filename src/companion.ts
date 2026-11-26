@@ -16,7 +16,7 @@ import { desktop, invoke, pick, poll } from "./ui";
 /// pet's CSS keys off its own copy), so CSS owns every animation; this file
 /// only decides WHEN. The gaze lives on `data-look` and in the `--look-x` /
 /// `--look-y` custom properties. Idle motion is CSS loops; the timers here
-/// are the blink cycle, the sulk countdown and the reaction bubbles.
+/// are the blink cycle, the nap countdown and the reaction bubbles.
 type Mood =
   | "idle"
   | "curious"
@@ -24,13 +24,13 @@ type Mood =
   | "dragging"
   | "thinking"
   | "error"
-  | "tsundere"
+  | "sleeping"
   | "surprised";
 
 /// The gaze states. The bot's eyes are vector shapes, so "upleft" and friends
 /// are no longer separate pictures — they are the same two ellipses nudged by
 /// --look-x / --look-y, plus the two states CSS cannot derive from a pointer
-/// position: a blink and the half-closed sulk.
+/// position: a blink and the closed-eye nap.
 type Look =
   | "neutral"
   | "upleft"
@@ -40,12 +40,13 @@ type Look =
   | "blink"
   | "sleepy";
 
-const REACTIONS: Record<Exclude<Mood, "idle" | "thinking">, string> = {
+/// What the pet says when something happens. Sleeping is deliberately absent:
+/// a napping pet has nothing to say, and a bubble would break the pose.
+const REACTIONS: Record<Exclude<Mood, "idle" | "thinking" | "sleeping">, string> = {
   curious: "……有事？",
   happy: "哼，就一下。",
   dragging: "放、放我下来！",
   error: "才不是你的错。",
-  tsundere: "不理你了。",
   surprised: "吓、吓我一跳。",
 };
 
@@ -95,9 +96,12 @@ const POINTER_POLL_MS = 50;
 const BLINK_INTERVAL_MS = 3400;
 const BLINK_DURATION_MS = 130;
 
-/// After this long with no interaction it stops paying attention and
-/// sulks. It is the tsundere beat: it wants to be noticed.
-const SULK_AFTER_MS = 12000;
+/// The nap is the resting state, not a timeout. The pet opens its eyes
+/// asleep, wakes on any interaction, and drops back after this long without
+/// one. It used to sulk here instead — a shut eye plus "不理你了" — and that
+/// read as the default face, which the user rejected: a pet left alone should
+/// look asleep, not offended.
+const SLEEP_AFTER_MS = 6000;
 
 export function initCompanion(): void {
   const surface = pick<HTMLElement>("#companion-surface");
@@ -108,10 +112,10 @@ export function initCompanion(): void {
   let opening = false;
   let dragging = false;
   let thinking = false;
-  let sulking = false;
+  let napping = true;
   let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
   let moodTimer: ReturnType<typeof setTimeout> | undefined;
-  let sulkTimer: ReturnType<typeof setTimeout> | undefined;
+  let napTimer: ReturnType<typeof setTimeout> | undefined;
 
   /// The gaze direction the bot returns to after a blink. "blink" itself is
   /// never stored here: it is an overlay on the gaze, not a gaze.
@@ -135,7 +139,7 @@ export function initCompanion(): void {
     if (moodTimer) clearTimeout(moodTimer);
     if (ms > 0) {
       moodTimer = setTimeout(() => {
-        if (!dragging) {
+        if (!dragging && !napping) {
           surface.dataset.mood = "idle";
           pet.dataset.mood = "idle";
         }
@@ -222,14 +226,17 @@ export function initCompanion(): void {
       return;
     }
     opening = true;
-    resetSulk();
+    wake();
     setMood("happy", 900);
     say(REACTIONS.happy);
     try {
       await invoke("companion_show_chat");
     } catch {
       fail();
-    } finally { opening = false; }
+    } finally {
+      opening = false;
+      restSoon();
+    }
   }
 
   // ---- the blink cycle -------------------------------------------------
@@ -240,6 +247,9 @@ export function initCompanion(): void {
   // pointer between blinks.
   function scheduleBlink(): void {
     setTimeout(() => {
+      // A sleeping pet does not blink: the shut eye is already its face, and
+      // swapping in the blink frame would only flash the lids.
+      if (napping) { scheduleBlink(); return; }
       blinking = true;
       pet.dataset.look = "blink";
       setTimeout(() => {
@@ -250,31 +260,48 @@ export function initCompanion(): void {
     }, BLINK_INTERVAL_MS + Math.random() * 1800);
   }
 
-  // ---- the sulk --------------------------------------------------------
+  // ---- the nap ---------------------------------------------------------
   //
-  // Left alone long enough, it stops tracking the pointer and turns
-  // its face away. It is the tsundere part of the character: the affection
-  // has to be asked for. Any interaction — hover, click, drag, a generation
-  // starting — counts as being noticed and resets the countdown.
-  function resetSulk(): void {
-    sulking = false;
-    if (look === "sleepy") applyLook("neutral");
-    if (sulkTimer) clearTimeout(sulkTimer);
-    sulkTimer = setTimeout(() => {
+  // The nap is the resting state, not a punishment: the pet boots asleep, any
+  // interaction wakes it — hover, click, drag, a generation starting — and it
+  // drops back once that interaction is over. The eyes shut, the float slows
+  // and one drool bead shows at the corner. Nothing is said on the way down: a
+  // sleeping pet has no line, and a bubble would break the pose.
+  function sleep(): void {
+    if (napTimer) clearTimeout(napTimer);
+    napping = true;
+    blinking = false;
+    setTarget(0, 0);
+    setMood("sleeping");
+    applyLook("sleepy");
+  }
+
+  /// Wakes the pet and cancels the countdown. The caller picks the mood it
+  /// wakes into — curious on hover, happy on click, thinking on a run — and
+  /// calls `restSoon` when that beat is over, so the pet returns to the nap
+  /// instead of staring at the desktop.
+  function wake(): void {
+    if (napTimer) clearTimeout(napTimer);
+    if (napping) {
+      napping = false;
+      if (look === "sleepy") applyLook("neutral");
+      setMood("idle");
+    }
+  }
+
+  function restSoon(ms = SLEEP_AFTER_MS): void {
+    if (napTimer) clearTimeout(napTimer);
+    napTimer = setTimeout(() => {
       if (dragging || opening || thinking || document.hidden) return;
-      sulking = true;
-      setTarget(0, 0);
-      setMood("tsundere");
-      applyLook("sleepy");
-      say(REACTIONS.tsundere, 3200);
-    }, SULK_AFTER_MS);
+      sleep();
+    }, ms);
   }
 
   /// The pointer poll. It reads the OS cursor position and works out where
   /// the pointer is relative to the pet. `poll` owns the cadence: it pauses
   /// while the window is hidden and never overlaps two reads.
   async function readPointer(): Promise<void> {
-    if (dragging || sulking) return;
+    if (dragging || napping) return;
     const state = await invoke<PointerState>("companion_pointer");
     const scale = state.scaleFactor || 1;
     // The pet sits at the bottom of the window, under the bubble: its centre
@@ -305,13 +332,15 @@ export function initCompanion(): void {
   });
   mark.addEventListener("pointerenter", () => {
     if (!dragging) {
+      wake();
       setMood("curious");
       say(REACTIONS.curious);
-      resetSulk();
     }
   });
   mark.addEventListener("pointerleave", () => {
-    if (!dragging && !sulking) setMood("idle");
+    if (dragging) return;
+    setMood("idle");
+    restSoon();
   });
 
   mark.addEventListener("pointerdown", (event) => {
@@ -320,12 +349,13 @@ export function initCompanion(): void {
     dragging = true;
     lastDistance = Infinity;
     setTarget(0, 0);
+    wake();
     setMood("dragging");
     say(REACTIONS.dragging);
     void invoke("window_drag").catch(() => { fail(); }).finally(() => {
       dragging = false;
       setMood("idle");
-      resetSulk();
+      restSoon();
     });
   });
 
@@ -335,19 +365,23 @@ export function initCompanion(): void {
   // countdown restarts on both edges.
   void listen<boolean>("warden:thinking", (event) => {
     thinking = event.payload;
+    if (thinking) wake();
     setMood(thinking ? "thinking" : "idle");
-    resetSulk();
+    if (!thinking) restSoon();
   }).catch(() => { /* plain browser: no backend events */ });
 
   scheduleBlink();
-  resetSulk();
+  // The resting face is the nap: it opens its eyes asleep and wakes on the
+  // first sign of interest, so a pet nobody is looking at never stares.
+  sleep();
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (desktop && !reducedMotion) {
     poll(readPointer, POINTER_POLL_MS);
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         lastDistance = Infinity;
-        resetSulk();
+        wake();
+        restSoon();
       }
     });
   }
