@@ -1181,7 +1181,11 @@ body { background: transparent; }
 
 .pet__eye { transform-box: fill-box; transform-origin: center; }
 .pet[data-look="blink"] .pet__eye { scale: 1 .1; }
-.pet[data-look="sleepy"] .pet__eye { scale: 1 .35; }
+/* Sleepy is the only closed-eye look. Eyes shut, sparks and mouth gone:
+   a sleeping pet, not a pet that happens to be squinting at you. */
+.pet[data-look="sleepy"] .pet__eye { scale: 1 .1; }
+.pet[data-look="sleepy"] .pet__spark,
+.pet[data-look="sleepy"] .pet__mouth { opacity: 0; }
 
 .pet__mouth {
   fill: none;
@@ -1217,27 +1221,27 @@ body { background: transparent; }
 .pet__think circle:nth-child(3) { animation-delay: .32s; }
 
 /* ------------------------------------------------- the face, per mood */
-/* The default face has to read as "awake and looking at you": two upright
-   eyes with one highlight each, and a mouth short enough to stay a mouth.
-   Every other expression is a swap of that pair, never a variation of the
-   body — a hop alone is invisible in a still frame. All of the shapes are
-   drawn once in the markup; only opacity and scale move here. */
+/* The resting face is two big, clearly OPEN eyes: full ovals with a small
+   bright spark each, and a mouth small enough to stay a mouth. Nothing about
+   it may read as closed — closed eyes belong to sleep and to the blink beat,
+   nowhere else. Every other expression swaps this pair; the body is not the
+   message. */
 
-/* The highlight is what turns eyes into a gaze. It is knocked out of the
-   screen colour, offset into the upper left of each eye. */
+/* A spark is a highlight, not a hole. Keeping it small is what lets the oval
+   keep a closed outline at 1× — the earlier cut-out read as two slits. */
 .pet__spark { fill: var(--brand-ink, #F7F4EE); }
 
-/* Happy: the eyes become ^ arcs. */
+/* Happy: the open ovals become ^ arcs, wide enough to replace them. */
 .pet__eyes--smile {
   fill: none;
   stroke: var(--brand-field, #34322D);
-  stroke-width: 2.2;
+  stroke-width: 3.2;
   stroke-linecap: round;
   opacity: 0;
 }
 .pet[data-mood="happy"] .pet__eyes { opacity: 0; }
 .pet[data-mood="happy"] .pet__eyes--smile { opacity: 1; }
-.pet[data-mood="happy"] .pet__mouth { stroke-width: 2.8; }
+.pet[data-mood="happy"] .pet__mouth { stroke-width: 2.6; }
 
 /* Surprise and error: the smile gives way to a small round mouth. */
 .pet__mouth--o {

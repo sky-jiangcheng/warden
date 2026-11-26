@@ -351,19 +351,25 @@
                  "looking at you" rather than "drawn open". Both sit inside
                  .pet__eyes so a blink and the gaze move the pair together. -->
             <g class="pet__eyes">
-              <rect class="pet__eye pet__eye--left" x="36.3" y="48" width="9.4" height="12" rx="4.7" />
-              <rect class="pet__eye pet__eye--right" x="54.3" y="48" width="9.4" height="12" rx="4.7" />
-              <circle class="pet__spark pet__spark--left" cx="38.9" cy="51.4" r="1.5" />
-              <circle class="pet__spark pet__spark--right" cx="56.9" cy="51.4" r="1.5" />
+              <g class="pet__eye pet__eye--left">
+                <ellipse cx="40.4" cy="55.2" rx="8.5" ry="10.8" />
+                <circle class="pet__spark" cx="37.6" cy="50.6" r="2.9" />
+                <circle class="pet__spark pet__spark--small" cx="43.5" cy="59.8" r="1.4" />
+              </g>
+              <g class="pet__eye pet__eye--right">
+                <ellipse cx="59.6" cy="55.2" rx="8.5" ry="10.8" />
+                <circle class="pet__spark" cx="56.8" cy="50.6" r="2.9" />
+                <circle class="pet__spark pet__spark--small" cx="62.7" cy="59.8" r="1.4" />
+              </g>
             </g>
             <!-- Happy is a face, not only a hop: two ^ arcs, drawn once and
                  hidden until data-mood=happy. -->
             <g class="pet__eyes--smile">
-              <path class="pet__eye-smile pet__eye-smile--left" d="M36.4 54 Q41 48.6 45.6 54" />
-              <path class="pet__eye-smile pet__eye-smile--right" d="M54.4 54 Q59 48.6 63.6 54" />
+              <path class="pet__eye-smile pet__eye-smile--left" d="M31.9 57.8 Q40.4 49.9 48.9 57.8" />
+              <path class="pet__eye-smile pet__eye-smile--right" d="M51.1 57.8 Q59.6 49.9 68.1 57.8" />
             </g>
             <!-- the smile: short and low, so it is a mouth and not a third eye -->
-            <path class="pet__mouth" d="M45.2 65.4 Q50 68.9 54.8 65.4" />
+            <path class="pet__mouth" d="M46 69.5 Q50 72.5 54 69.5" />
             <!-- the round mouth for surprise and error, hidden by default -->
             <circle class="pet__mouth--o" cx="50" cy="66.6" r="2.1" />
             <!-- the thinking dots, hidden until data-mood=thinking -->
