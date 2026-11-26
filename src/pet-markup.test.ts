@@ -45,7 +45,6 @@ const PARTS = [
   "pet__spark",
   "pet__eyes--smile",
   "pet__eye-smile",
-  "pet__mouth",
   "pet__mouth--o",
   "pet__antenna",
   "pet__bulb",

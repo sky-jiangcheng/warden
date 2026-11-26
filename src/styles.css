@@ -1181,18 +1181,11 @@ body { background: transparent; }
 
 .pet__eye { transform-box: fill-box; transform-origin: center; }
 .pet[data-look="blink"] .pet__eye { scale: 1 .1; }
-/* Sleepy is the only closed-eye look. Eyes shut, sparks and mouth gone:
-   a sleeping pet, not a pet that happens to be squinting at you. */
+/* Sleepy is the only closed-eye look. Eyes shut, sparks gone, and the o
+   mouth hidden too: a sleeping pet, not a pet squinting at you. */
 .pet[data-look="sleepy"] .pet__eye { scale: 1 .1; }
 .pet[data-look="sleepy"] .pet__spark,
-.pet[data-look="sleepy"] .pet__mouth { opacity: 0; }
-
-.pet__mouth {
-  fill: none;
-  stroke: var(--brand-field, #34322D);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-}
+.pet[data-look="sleepy"] .pet__mouth--o { opacity: 0; }
 
 /* The antenna is the tell that it is paying attention: it leans toward the
    pointer a beat behind the eyes, then sways on its own. */
@@ -1241,17 +1234,15 @@ body { background: transparent; }
 }
 .pet[data-mood="happy"] .pet__eyes { opacity: 0; }
 .pet[data-mood="happy"] .pet__eyes--smile { opacity: 1; }
-.pet[data-mood="happy"] .pet__mouth { stroke-width: 2.6; }
 
-/* Surprise and error: the smile gives way to a small round mouth. */
+/* Surprise and error: a small round mouth — the only mouth this pet has.
+   The resting face has none; the eyes carry it. */
 .pet__mouth--o {
   fill: none;
   stroke: var(--brand-field, #34322D);
   stroke-width: 2;
   opacity: 0;
 }
-.pet[data-mood="surprised"] .pet__mouth,
-.pet[data-mood="error"] .pet__mouth { opacity: 0; }
 .pet[data-mood="surprised"] .pet__mouth--o,
 .pet[data-mood="error"] .pet__mouth--o { opacity: 1; }
 
@@ -1281,8 +1272,8 @@ body { background: transparent; }
 .pet[data-mood="happy"] { animation: pet-hop 560ms cubic-bezier(.3, .8, .4, 1); }
 .pet[data-mood="happy"] .pet__bulb { fill: var(--accent-light, #5FB3A6); }
 
-/* Thinking — the mouth gives way to three pulsing dots. */
-.pet[data-mood="thinking"] .pet__mouth { opacity: 0; }
+/* Thinking — the o mouth stays hidden and three pulsing dots carry the screen. */
+.pet[data-mood="thinking"] .pet__mouth--o { opacity: 0; }
 .pet[data-mood="thinking"] .pet__think { opacity: 1; }
 .pet[data-mood="thinking"] .pet__antenna { animation-duration: 2.1s; }
 
