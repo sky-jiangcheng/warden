@@ -346,17 +346,31 @@
             <rect class="pet__shell" x="17" y="28" width="66" height="56" rx="20" />
             <rect class="pet__screen" x="25" y="37" width="50" height="38" rx="14" />
             <!-- eyes move inside the screen, so the gaze is a translate -->
+            <!-- The face lives on a screen, so the eyes read as shapes, not
+                 dots: two uprights carry the gaze and one highlight each says
+                 "looking at you" rather than "drawn open". Both sit inside
+                 .pet__eyes so a blink and the gaze move the pair together. -->
             <g class="pet__eyes">
-              <ellipse class="pet__eye pet__eye--left" cx="40" cy="55" rx="5.2" ry="6.2" />
-              <ellipse class="pet__eye pet__eye--right" cx="60" cy="55" rx="5.2" ry="6.2" />
+              <rect class="pet__eye pet__eye--left" x="36.3" y="48" width="9.4" height="12" rx="4.7" />
+              <rect class="pet__eye pet__eye--right" x="54.3" y="48" width="9.4" height="12" rx="4.7" />
+              <circle class="pet__spark pet__spark--left" cx="38.9" cy="51.4" r="1.5" />
+              <circle class="pet__spark pet__spark--right" cx="56.9" cy="51.4" r="1.5" />
             </g>
-            <!-- the smile: a short arc, drawn once -->
-            <path class="pet__mouth" d="M43 66 Q50 70 57 66" />
+            <!-- Happy is a face, not only a hop: two ^ arcs, drawn once and
+                 hidden until data-mood=happy. -->
+            <g class="pet__eyes--smile">
+              <path class="pet__eye-smile pet__eye-smile--left" d="M36.4 54 Q41 48.6 45.6 54" />
+              <path class="pet__eye-smile pet__eye-smile--right" d="M54.4 54 Q59 48.6 63.6 54" />
+            </g>
+            <!-- the smile: short and low, so it is a mouth and not a third eye -->
+            <path class="pet__mouth" d="M45.2 65.4 Q50 68.9 54.8 65.4" />
+            <!-- the round mouth for surprise and error, hidden by default -->
+            <circle class="pet__mouth--o" cx="50" cy="66.6" r="2.1" />
             <!-- the thinking dots, hidden until data-mood=thinking -->
             <g class="pet__think">
-              <circle cx="37" cy="67" r="1.9" />
-              <circle cx="50" cy="67" r="1.9" />
-              <circle cx="63" cy="67" r="1.9" />
+              <circle cx="40" cy="66.5" r="1.7" />
+              <circle cx="50" cy="66.5" r="1.7" />
+              <circle cx="60" cy="66.5" r="1.7" />
             </g>
           </svg>
         </div>

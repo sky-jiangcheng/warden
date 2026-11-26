@@ -1216,6 +1216,48 @@ body { background: transparent; }
 .pet__think circle:nth-child(2) { animation-delay: .16s; }
 .pet__think circle:nth-child(3) { animation-delay: .32s; }
 
+/* ------------------------------------------------- the face, per mood */
+/* The default face has to read as "awake and looking at you": two upright
+   eyes with one highlight each, and a mouth short enough to stay a mouth.
+   Every other expression is a swap of that pair, never a variation of the
+   body — a hop alone is invisible in a still frame. All of the shapes are
+   drawn once in the markup; only opacity and scale move here. */
+
+/* The highlight is what turns eyes into a gaze. It is knocked out of the
+   screen colour, offset into the upper left of each eye. */
+.pet__spark { fill: var(--brand-ink, #F7F4EE); }
+
+/* Happy: the eyes become ^ arcs. */
+.pet__eyes--smile {
+  fill: none;
+  stroke: var(--brand-field, #34322D);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  opacity: 0;
+}
+.pet[data-mood="happy"] .pet__eyes { opacity: 0; }
+.pet[data-mood="happy"] .pet__eyes--smile { opacity: 1; }
+.pet[data-mood="happy"] .pet__mouth { stroke-width: 2.8; }
+
+/* Surprise and error: the smile gives way to a small round mouth. */
+.pet__mouth--o {
+  fill: none;
+  stroke: var(--brand-field, #34322D);
+  stroke-width: 2;
+  opacity: 0;
+}
+.pet[data-mood="surprised"] .pet__mouth,
+.pet[data-mood="error"] .pet__mouth { opacity: 0; }
+.pet[data-mood="surprised"] .pet__mouth--o,
+.pet[data-mood="error"] .pet__mouth--o { opacity: 1; }
+
+/* Thinking: the eyes narrow — attention has a shape — while the mouth is
+   already gone and the three dots carry the screen. */
+.pet[data-mood="thinking"] .pet__eye { scale: 1 .82; }
+
+/* Surprised: the eyes open wider, in step with the pop. */
+.pet[data-mood="surprised"] .pet__eye { scale: 1.16; }
+
 /* ---------------------------------------------------------- the motion */
 @keyframes pet-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
 @keyframes pet-antenna-sway { 0%, 100% { rotate: -2deg; } 50% { rotate: 2deg; } }
@@ -1230,7 +1272,8 @@ body { background: transparent; }
 /* Curious — lean in, and the antenna goes forward with it. */
 .pet[data-mood="curious"] { animation: pet-lean 2.4s ease-in-out infinite; }
 
-/* Happy — one hop, then settle. A whole-body beat, not a new face. */
+/* Happy — one hop, and the eyes turn into ^ for the beat: the face carries
+   the mood, because a hop alone does not survive a still frame. */
 .pet[data-mood="happy"] { animation: pet-hop 560ms cubic-bezier(.3, .8, .4, 1); }
 .pet[data-mood="happy"] .pet__bulb { fill: var(--accent-light, #5FB3A6); }
 
