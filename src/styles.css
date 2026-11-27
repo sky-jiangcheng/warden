@@ -847,6 +847,21 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .chat__msg__meta { display: block; font-size: 10px; line-height: 1.5; color: var(--text-tertiary); margin-bottom: 7px; }
 .chat__msg--assistant .chat__msg__meta { font-family: var(--font-display); font-size: 12px; color: var(--accent); }
 .chat__msg__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The model's inline reasoning, folded behind one row. Same disclosure shape
+   the IDE panels use; the answer below keeps the reading voice. */
+.chat__msg__think { margin: 0 0 10px; }
+.chat__msg__think > summary {
+  cursor: pointer; list-style: none;
+  color: var(--text-tertiary); font-size: 12px;
+}
+.chat__msg__think > summary::-webkit-details-marker { display: none; }
+.chat__msg__think > summary::before { content: "\25B8  "; }
+.chat__msg__think[open] > summary::before { content: "\25BE  "; }
+.chat__msg__think__body {
+  margin: 6px 0 0 2px; padding-left: 10px;
+  border-left: 2px solid var(--border-default);
+  color: var(--text-tertiary); font-size: 13px; line-height: 1.6;
+}
 /* The answer itself goes to the serif voice (ADR-0050's IBM Plex Serif —
    already vendored as woff2, no CDN, licence travels in src/assets/fonts).
    That single move is what makes the log read like Claude Desktop: a serif
@@ -869,8 +884,15 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .chat__form:focus-within { border-color: var(--border-default); }
 #chat-input { display: block; border: 0; outline: 0; resize: none; background: transparent; color: var(--text-primary); padding: 1px 2px 8px; font-size: 14px; line-height: 1.7; min-height: 65px; max-height: 132px; width: 100%; }
 #chat-input::placeholder { color: var(--text-tertiary); opacity: 1; }
-.composer-toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.model-pickers { display: flex; align-items: center; min-width: 0; flex: 1; gap: 6px; }
+/* The column form stretches its children, but a stretched flex item still
+   refuses to go below its min-content — and a select's automatic minimum is
+   its longest option. A long model name therefore used to push the send key
+   clean out of the composer and over its rounded corner. Pinning the toolbar
+   to the form's own width lets the pickers ellipsize instead of expand. */
+.composer-toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; }
+/* Belt to that brace: options can never bleed over the key, however the
+   selects inside decide to measure themselves. */
+.model-pickers { display: flex; align-items: center; min-width: 0; flex: 1; gap: 6px; overflow: hidden; }
 .model-pickers select { border: 0; background: transparent; color: var(--text-tertiary); font-size: 10px; padding: 6px 0; min-width: 0; text-overflow: ellipsis; width: auto; max-width: 44%; transition: color 120ms ease; }
 .model-pickers select:hover:not(:disabled) { color: var(--text-secondary); }
 .model-pickers select option { background: var(--bg-card); color: var(--text-primary); }
@@ -987,7 +1009,11 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
    its own rounded edge. Settings is a PAGE in the same window, so it fills
    the whole surface instead of floating as a modal. */
 body { background: transparent; }
-.app { border-radius: 16px; overflow: hidden; box-shadow: 0 18px 48px rgba(26,23,18,.24); }
+/* The window is borderless and its shadow is square, so the surface runs to
+   the edge: an inner radius here left a sliver of page colour between the
+   header's curve and the window frame — a rounded corner inside a rectangle,
+   which is the one shape the eye refuses. Square in, square out. */
+.app { overflow: hidden; box-shadow: 0 18px 48px rgba(26,23,18,.24); }
 .app[hidden] { display: none !important; }
 .view--settings {
   position: absolute;
@@ -995,7 +1021,6 @@ body { background: transparent; }
   display: flex;
   flex-direction: column;
   background: var(--bg-card);
-  border-radius: 16px;
   overflow: hidden;
 }
 .view--settings[hidden] { display: none !important; }
@@ -1013,7 +1038,6 @@ body { background: transparent; }
   display: flex;
   flex-direction: column;
   background: var(--bg-card);
-  border-radius: 16px;
   overflow: hidden;
 }
 .view--memory[hidden] { display: none !important; }

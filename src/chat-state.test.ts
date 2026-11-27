@@ -8,6 +8,8 @@ import {
   savedThreadLabel,
   sendBlocked,
   shouldAdoptThread,
+  splitThinking,
+  stripThinking,
 } from "./chat-state";
 
 // Acceptance criteria (product.md open question 6, roadmap engineering
@@ -174,5 +176,43 @@ describe("outline — the collapsed panel's one-line summary", () => {
   it("says so when there is nothing to show", () => {
     expect(outline("")).toBe("空");
     expect(outline("   \n\t\n")).toBe("空");
+  });
+});
+
+describe("stripThinking", () => {
+  it("removes a closed reasoning block", () => {
+    expect(stripThinking("<think>plan: read the note first</think>The retry budget was raised."))
+      .toBe("The retry budget was raised.");
+  });
+
+  it("recognises both spellings, any case, and reasoning", () => {
+    expect(stripThinking("<thinking>x</thinking>A.")).toBe("A.");
+    expect(stripThinking("<THINK>x</THINK>A.")).toBe("A.");
+    expect(stripThinking("<reasoning>x</reasoning>A.")).toBe("A.");
+  });
+
+  it("drops an unterminated block to the end (a streaming answer)", () => {
+    expect(stripThinking("Answer so far.\n<think>still thinking")).toBe("Answer so far.");
+  });
+
+  it("removes a stray tag and keeps the text around it", () => {
+    expect(stripThinking("Answer.</think>")).toBe("Answer.");
+  });
+});
+
+describe("splitThinking", () => {
+  it("splits the notes from the answer", () => {
+    expect(splitThinking("<think>plan: read the note first</think>The retry budget was raised."))
+      .toEqual({ thoughts: ["plan: read the note first"], body: "The retry budget was raised." });
+  });
+
+  it("treats an unterminated block as reasoning (a streaming answer)", () => {
+    expect(splitThinking("Answer so far.\n<think>still thinking"))
+      .toEqual({ thoughts: ["still thinking"], body: "Answer so far." });
+  });
+
+  it("keeps several blocks in order", () => {
+    expect(splitThinking("<think>a</think>Mid.<think>b</think>End."))
+      .toEqual({ thoughts: ["a", "b"], body: "Mid.End." });
   });
 });

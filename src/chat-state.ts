@@ -107,3 +107,33 @@ export function outline(output: string, max = 80): string {
   const text = first ?? "空";
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
+
+/** One assistant reply, split into its inline reasoning and the answer.
+ *
+ *  A gateway that does not separate reasoning_content leaves it in content,
+ *  wrapped in <think>…</think>. Warden draws answers as plain text (model
+ *  output is untrusted), so without this the notes land in the reply as
+ *  literal tags and prose. The caller folds the notes into a disclosure and
+ *  draws only `body` as the answer. An unterminated block is treated as
+ *  reasoning to the end of the text: streaming delivers the open tag long
+ *  before the close. The Cinder panes (VS Code, JetBrains, desktop) apply the
+ *  same rule, so one thread reads the same in all four places.
+ */
+export function splitThinking(content: string): { thoughts: string[]; body: string } {
+  const thoughts: string[] = [];
+  const body = String(content ?? "")
+    .replace(/<(think|thinking|reason|reasoning)>([\s\S]*?)(?:<\/\1>|$)/gi, (_, _tag: string, inner: string) => {
+      const text = inner.trim();
+      if (text) thoughts.push(text);
+      return "";
+    })
+    .replace(/<\/?(?:think|thinking|reason|reasoning)>/gi, "")
+    .replace(/^\s*\n+/, "")
+    .trimEnd();
+  return { thoughts, body };
+}
+
+/** The answer without its reasoning notes. */
+export function stripThinking(content: string): string {
+  return splitThinking(content).body;
+}

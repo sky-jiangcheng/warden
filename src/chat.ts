@@ -1,6 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
 import { browserNote, desktop, errorText, invoke, openSheet, pick, poll } from "./ui";
-import { COMPOSITION_GRACE_MS, contextEditable, draftAfterSend, outline, readIsStale, savedThreadLabel, sendBlocked, shouldAdoptThread } from "./chat-state";
+import { COMPOSITION_GRACE_MS, contextEditable, draftAfterSend, outline, readIsStale, savedThreadLabel, sendBlocked, shouldAdoptThread, splitThinking } from "./chat-state";
 
 type Thread = { id: string; title: string; path: string | null; createdAt: string; updatedAt: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; source: string; replyTo: string | null; createdAt: string; pending?: boolean; failed?: boolean };
@@ -236,7 +236,7 @@ export function initChat() {
       // Plain text is deliberate: model output, titles, paths and sources are
       // untrusted. Never interpolate them into markup, selectors, or URLs.
       const textEl = node.lastElementChild as HTMLElement;
-      if (textEl.textContent !== message.content) textEl.textContent = message.content;
+      renderMessageText(textEl, message.content);
       renderToolPanel(node, textEl, toolHere ? tool : null);
     }
     pick<HTMLElement>("#chat-loading").hidden = active.loaded || !active.thread;
@@ -720,4 +720,43 @@ export function initChat() {
     /// to change what the conversation is about.
     currentRepository(): string | null { return active.path; },
   };
+}
+
+/// Draws one message body: the answer as plain text, with the model's inline
+/// reasoning folded into a disclosure above it.
+///
+/// A gateway that does not separate reasoning_content leaves the notes in
+/// content. They are the model's working, not the answer, so they stay behind
+/// one row the way CodeBuddy shows them — and Warden still builds them with
+/// textContent, because model output is untrusted.
+///
+/// The markup is rebuilt only when the raw text changed (a streaming reply
+/// costs a rebuild per chunk; a settled thread costs none), and an open
+/// disclosure stays open across those rebuilds.
+function renderMessageText(el: HTMLElement, content: string): void {
+  const raw = content ?? "";
+  if (el.dataset.raw === raw) return;
+  el.dataset.raw = raw;
+  const wasOpen = el.querySelector("details")?.open ?? false;
+  const { thoughts, body } = splitThinking(raw);
+  if (!thoughts.length) {
+    el.textContent = body;
+    return;
+  }
+  el.textContent = "";
+  const details = document.createElement("details");
+  details.className = "chat__msg__think";
+  details.open = wasOpen;
+  const summary = document.createElement("summary");
+  summary.textContent = "深度思考";
+  details.append(summary);
+  for (const thought of thoughts) {
+    const part = document.createElement("div");
+    part.className = "chat__msg__think__body";
+    part.textContent = thought;
+    details.append(part);
+  }
+  const answer = document.createElement("div");
+  answer.textContent = body;
+  el.append(details, answer);
 }
