@@ -130,10 +130,12 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ),
         (
             "warden_git_diff",
-            "Show the uncommitted diff of the working tree. stat=true lists files only.",
+            "Show the uncommitted diff of the working tree, or the diff between two revisions when from and to are given (each a commit hash, branch or tag). stat=true lists files only.",
             object(
                 json!({
                     "stat": {"type": "boolean", "description": "List changed files instead of the patch"},
+                    "from": {"type": "string", "description": "Older revision of a range: commit hash, branch or tag"},
+                    "to": {"type": "string", "description": "Newer revision of a range: commit hash, branch or tag"},
                     "paths": {"type": "array", "items": {"type": "string"}, "description": "Optional relative paths to restrict the diff to"},
                 }),
                 &[],
@@ -141,9 +143,13 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ),
         (
             "warden_git_log",
-            "Show recent commits, one line each (hash, date, author, subject).",
+            "Show recent commits, one line each (hash, date, author, subject). Optional since filters by commit date (--since) and author by name (--author).",
             object(
-                json!({"limit": {"type": "number", "description": "How many commits (1–50, default 20)"}}),
+                json!({
+                    "limit": {"type": "number", "description": "How many commits (1–50, default 20)"},
+                    "since": {"type": "string", "description": "Only commits at or after this date. A bare YYYY-MM-DD means the start of that day (e.g. 2026-11-26)"},
+                    "author": {"type": "string", "description": "Only commits by this author (name substring)"},
+                }),
                 &[],
             ),
         ),
@@ -178,7 +184,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ),
         (
             "warden_grep",
-            "Search committed text in the repository with a fixed-string grep (git grep -n -I).",
+            "Search committed text in the repository with a fixed-string grep (git grep -n -I). Searches COMMITTED text only: it never sees uncommitted changes — use warden_git_diff for those.",
             object(
                 json!({
                     "pattern": string_prop("The literal text to find"),
@@ -452,6 +458,30 @@ fn build(name: &str, args: &Value, repository: &Path) -> Result<Vec<String>, Str
             } else {
                 argv.push("--unified=2".to_string());
             }
+            // Optional revision range: `git diff <from> <to>`. Both ends are
+            // validated as SINGLE revisions (a range or `@{` is refused, the
+            // same rule `warden_git_show`'s rev holds), and they must arrive
+            // together — one end alone would silently mean "working tree".
+            // The pathspec `--` stays LAST, so a rev can never be read as
+            // a path (or vice versa).
+            match (
+                args.get("from").and_then(Value::as_str),
+                args.get("to").and_then(Value::as_str),
+            ) {
+                (None, None) => {}
+                (Some(from), Some(to)) => {
+                    validate_rev(from)?;
+                    validate_rev(to)?;
+                    argv.push(from.to_string());
+                    argv.push(to.to_string());
+                }
+                _ => {
+                    return Err(
+                        "from and to must be given together: a revision range needs both ends"
+                            .into(),
+                    );
+                }
+            }
             extend_pathspecs(&mut argv, args.get("paths"), repository)?;
             argv
         }
@@ -464,7 +494,7 @@ fn build(name: &str, args: &Value, repository: &Path) -> Result<Vec<String>, Str
             if !(1..=50).contains(&limit) {
                 return Err("limit must be between 1 and 50".into());
             }
-            owned(&[
+            let mut argv = owned(&[
                 "git",
                 "--no-pager",
                 "log",
@@ -472,7 +502,24 @@ fn build(name: &str, args: &Value, repository: &Path) -> Result<Vec<String>, Str
                 &limit.to_string(),
                 "--date=short",
                 "--pretty=%h %ad %an %s",
-            ])
+            ]);
+            // Optional filters, each one fixed flag and one plain value.
+            // `--since` answers "what did I do TODAY" without the model
+            // fetching 20 commits and counting itself; `--author` does the
+            // same for a person's name. Both values are validated so a
+            // leading dash can never be read as an option.
+            if let Some(since) = args.get("since").and_then(Value::as_str) {
+                validate_filter_value(since, "since")?;
+                let since = normalize_date_arg(since);
+                argv.push("--since".to_string());
+                argv.push(since);
+            }
+            if let Some(author) = args.get("author").and_then(Value::as_str) {
+                validate_filter_value(author, "author")?;
+                argv.push("--author".to_string());
+                argv.push(author.to_string());
+            }
+            argv
         }
         "warden_git_branch" => owned(&["git", "--no-pager", "branch", "--list"]),
         "warden_git_show" => {
@@ -601,6 +648,48 @@ fn validate_rev(rev: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Validates a value that becomes ONE argv element of a filter flag
+/// (`--since`, `--author`): a plain string, never an option. The rules are
+/// `validate_rev`'s minus the revision charset — a date (`2026-11-26`) and
+/// an author name ("Jiang Cheng") legitimately carry characters a rev may
+/// not, but the option-prefix and control-character guards are the ones
+/// that keep the fixed argv honest.
+fn validate_filter_value(value: &str, field: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 100 || value.starts_with('-') || value.starts_with('+') {
+        return Err(format!(
+            "{field} must be 1–100 characters and cannot start with '-' or '+'"
+        ));
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Err(format!("{field} contains unsafe characters: {value}"));
+    }
+    Ok(())
+}
+
+/// Anchors a bare `YYYY-MM-DD` to the START of that day.
+///
+/// git's approxidate fills a date with NO time with the CURRENT time of
+/// day, so `--since 2026-11-26` asked at 22:17 means "since 22:17 on
+/// 2026-11-26" — the day's own earlier commits get filtered out, and the
+/// answer silently depends on when the question was asked. A value that
+/// already carries a time (or a relative phrase) is git's business and
+/// passes through untouched.
+fn normalize_date_arg(value: &str) -> String {
+    let bytes = value.as_bytes();
+    if bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
+    {
+        format!("{value} 00:00:00")
+    } else {
+        value.to_string()
+    }
 }
 
 fn list_dir(args: &Value, repository: &Path) -> Executed {
@@ -855,6 +944,130 @@ mod tests {
         assert!(none.ok && none.text.contains("no output"), "{}", none.text);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn diff_accepts_a_revision_range_and_refuses_a_half_one() {
+        let dir = repo("diff-range", false, 3);
+        // Two commits apart: the range shows what the older one lacks. The
+        // revs are resolved HERE (git's own syntax, including `~`) and the
+        // tool only ever sees hashes — `validate_rev` refuses `~`.
+        let hashes: Vec<String> = (0..2)
+            .map(|i| {
+                let out = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&dir)
+                    .args(["rev-parse", &format!("HEAD~{i}")])
+                    .output()
+                    .unwrap();
+                String::from_utf8(out.stdout).unwrap().trim().to_string()
+            })
+            .collect();
+        let older = &hashes[1];
+        let newer = &hashes[0];
+        let ranged = run(
+            "warden_git_diff",
+            &json!({"from": older, "to": newer}),
+            &dir,
+        );
+        assert!(ranged.ok, "{}", ranged.text);
+        assert!(
+            ranged.command.starts_with("git --no-pager diff --no-color"),
+            "{}",
+            ranged.command
+        );
+        // The revs travel BEFORE the pathspec `--`, never after it.
+        assert!(
+            ranged.command.ends_with(&format!("{older} {newer}")),
+            "{}",
+            ranged.command
+        );
+        assert!(ranged.text.contains("f2.txt"), "{}", ranged.text);
+
+        // A one-ended range is refused: one end alone would silently mean
+        // "diff against the working tree", which is a different question.
+        let half = run("warden_git_diff", &json!({"from": older}), &dir);
+        assert!(!half.ok, "{}", half.text);
+        assert!(half.text.contains("both ends"), "{}", half.text);
+        assert!(half.command.is_empty(), "a refusal ran nothing");
+
+        // And the range validator shares the rev rules: no ranges inside.
+        let nested = run(
+            "warden_git_diff",
+            &json!({"from": "a..b", "to": "HEAD"}),
+            &dir,
+        );
+        assert!(!nested.ok, "{}", nested.text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn log_filters_by_date_and_author() {
+        let dir = repo("log-filter", false, 3);
+        let today = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["log", "-1", "--format=%ad", "--date=short"])
+            .output()
+            .unwrap();
+        let today = String::from_utf8(today.stdout).unwrap().trim().to_string();
+
+        let since_today = run("warden_git_log", &json!({"since": today}), &dir);
+        assert!(since_today.ok, "{}", since_today.text);
+        // The bare date is anchored to the start of the day, so the
+        // command says what the description promises.
+        assert!(
+            since_today
+                .command
+                .contains(&format!("--since {today} 00:00:00")),
+            "{}",
+            since_today.command
+        );
+        assert_eq!(since_today.text.lines().count(), 3, "{}", since_today.text);
+
+        // A date AFTER the commits filters everything out, and git's
+        // empty log is an honest answer, not a failure.
+        let future = run("warden_git_log", &json!({"since": "2099-01-01"}), &dir);
+        assert!(future.ok, "{}", future.text);
+        assert!(
+            future.text.contains("no output") || future.text.is_empty(),
+            "{}",
+            future.text
+        );
+
+        let by_author = run("warden_git_log", &json!({"author": "t"}), &dir);
+        assert!(by_author.ok, "{}", by_author.text);
+        assert!(
+            by_author.command.contains("--author t"),
+            "{}",
+            by_author.command
+        );
+        assert_eq!(by_author.text.lines().count(), 3, "{}", by_author.text);
+
+        // A value that could read as an option is refused, not passed through.
+        for bad in ["-n", "+x", ""] {
+            let refused = run("warden_git_log", &json!({"since": bad}), &dir);
+            assert!(!refused.ok, "must refuse since={bad}: {}", refused.text);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bare_date_is_anchored_to_midnight_but_a_timestamp_is_not() {
+        assert_eq!(normalize_date_arg("2026-11-26"), "2026-11-26 00:00:00");
+        // A value that already carries a time is git's business.
+        assert_eq!(
+            normalize_date_arg("2026-11-26 22:17:00"),
+            "2026-11-26 22:17:00"
+        );
+        // Relative phrases and other shapes pass through untouched.
+        assert_eq!(normalize_date_arg("3 days ago"), "3 days ago");
+        // Not a date at all: wrong length or wrong separators.
+        assert_eq!(normalize_date_arg("2026-11-2"), "2026-11-2");
+        assert_eq!(normalize_date_arg("2026/11/26"), "2026/11/26");
+        // Month/day validity is git's business to reject; the shape check
+        // anchors it anyway and the command fails honestly.
+        assert_eq!(normalize_date_arg("2026-13-26"), "2026-13-26 00:00:00");
     }
 
     #[test]

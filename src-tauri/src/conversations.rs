@@ -155,7 +155,24 @@ fn system_prompt(
          read-only tools: use them for repository facts (metrics, notes, \
          wiki, project stats) instead of guessing. Report what a tool \
          returned; when it returns nothing, say so — never invent numbers. \
-         Answer in the user's language.",
+         Answer in the user's language.\n\
+         \n\
+         You also have Warden's own local read-only tools, which need no \
+         approval and measure the repository directly: warden_git_log \
+         (commit history), warden_git_diff (the working tree, or the range \
+         between two revisions), warden_git_show (one commit), \
+         warden_git_status, warden_git_branch, warden_grep (searches \
+         COMMITTED text only — uncommitted changes need warden_git_diff), \
+         warden_read_file and warden_list_dir.\n\
+         \n\
+         Route by what can be measured: commits, today's changes, the \
+         working tree and file contents come from the local git tools, \
+         checked live; metrics, notes, wiki and project stats come from \
+         Cinder's tools. The memory briefing below is background, not a \
+         live reading: when a local tool can answer the question, call it \
+         and answer from what it returned — and when you answer from the \
+         briefing instead, say it is memory and that a tool call can \
+         verify it.",
     );
     if let Some(path) = repository.filter(|path| !path.is_empty()) {
         prompt.push_str(&format!("\nCurrent repository: {path}"));
@@ -746,7 +763,50 @@ async fn memory_briefing(
     if text.is_empty() {
         return Ok(None);
     }
-    Ok(Some(truncate_chars(text, MEMORY_BRIEFING_CHARS)))
+    // The briefing is a fetch, not a fact: stamp the moment the client
+    // took it so the model can say how fresh what it read IS. "As of
+    // 21:40" separates a three-days-old handoff from a live tool answer,
+    // and the prompt already tells the model to prefer the latter — the
+    // stamp is what makes that comparison possible instead of a guess.
+    // The stamp goes LAST so a truncated briefing still carries it.
+    let text = truncate_chars(text, MEMORY_BRIEFING_CHARS);
+    let stamp = fetched_at_stamp();
+    Ok(Some(if stamp.is_empty() {
+        text
+    } else {
+        format!("{text}\n{stamp}")
+    }))
+}
+
+/// Local wall-clock time of the fetch, as one line the model can quote.
+/// An empty string when the clock cannot be read — the briefing then
+/// arrives without a freshness claim rather than with a wrong one.
+#[cfg(unix)]
+fn fetched_at_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as libc::time_t)
+        .unwrap_or(0);
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // localtime_r is the thread-safe form; a null return means the epoch
+    // value was out of range, not that time stopped.
+    if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
+        return String::new();
+    }
+    format!(
+        "[Client: this Cinder briefing was fetched at {:04}-{:02}-{:02} {:02}:{:02} local time; its handoffs and notes are no newer than this.]",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min
+    )
+}
+
+#[cfg(not(unix))]
+fn fetched_at_stamp() -> String {
+    String::new()
 }
 
 /// Cut on a CHARACTER boundary and say so. `str::truncate` would panic on a
@@ -2210,5 +2270,60 @@ diff --git a/README.md b/README.md
         assert!(cut.contains("truncated by the client"), "{cut}");
         // The marker is appended, never counted into the cap.
         assert!(cut.chars().count() > 7);
+    }
+
+    // The regression this section exists for: the model once said "I only
+    // have read-only tools, I cannot run git diff" while the local face
+    // sat in its tool list. The prompt must now NAME the local tools and
+    // state the measure-first rule, so the model knows what it may call.
+    #[test]
+    fn the_prompt_names_the_local_face_and_the_measure_first_rule() {
+        let prompt = system_prompt(Some("/repo"), &[], Some("memory text"), None, None);
+        // The local read-only face is named, incl. the grep caveat.
+        for tool in [
+            "warden_git_log",
+            "warden_git_diff",
+            "warden_git_show",
+            "warden_git_status",
+            "warden_git_branch",
+            "warden_grep",
+            "warden_read_file",
+            "warden_list_dir",
+        ] {
+            assert!(prompt.contains(tool), "prompt misses {tool}");
+        }
+        assert!(
+            prompt.contains("COMMITTED text only"),
+            "the grep caveat must be stated"
+        );
+        // The routing rule and the measure-first rule are stated.
+        assert!(prompt.contains("Route by what can be measured"), "{prompt}");
+        assert!(
+            prompt.contains("checked live"),
+            "live vs background must be explicit"
+        );
+        // The memory briefing is still marked as background, not fact.
+        assert!(
+            prompt.contains("background, not a live reading"),
+            "{prompt}"
+        );
+    }
+
+    // The briefing stamp: the model can quote how fresh the memory is,
+    // instead of guessing or treating a three-day-old handoff as current.
+    #[cfg(unix)]
+    #[test]
+    fn the_fetch_stamp_names_a_local_date_and_time() {
+        let stamp = fetched_at_stamp();
+        assert!(stamp.contains("fetched at"), "{stamp}");
+        assert!(stamp.contains("local time"), "{stamp}");
+        // The date part is ISO-shaped: YYYY-MM-DD HH:MM inside the line.
+        let start = stamp.find("fetched at ").expect("fetched at") + "fetched at ".len();
+        let tail = &stamp[start..];
+        let date = &tail[..10];
+        assert_eq!(&date[4..5], "-", "{stamp}");
+        assert_eq!(&date[7..8], "-", "{stamp}");
+        // YYYY-MM-DD (10) + space (1) + HH (2) → the colon sits at 13.
+        assert_eq!(&tail[13..14], ":", "{stamp}");
     }
 }
